@@ -1,11 +1,40 @@
 package pluginmgr
 
 import (
+	"context"
 	"errors"
 	"os"
 	"path/filepath"
 	"testing"
 )
+
+func TestUninstallRequiresDisablingAndRecoveringManagedHosts(t *testing.T) {
+	m, host := testManager(t)
+	ctx := context.Background()
+	if err := m.UninstallReady(ctx); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Stat(m.root); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("uninstall check wrote state: %v", err)
+	}
+	writeFixture(t, filepath.Join(host["codex"], "config.toml"), "[plugins.\"oil-codex-title@oil-codex-title-local\"]\nenabled = true\n")
+	mustInvoke(t, m, "enable", request{ID: "codex", Takeover: true})
+	if err := m.UninstallReady(ctx); err == nil {
+		t.Fatal("active plugin did not block uninstall")
+	}
+	mustInvoke(t, m, "disable", request{ID: "codex"})
+	if err := m.UninstallReady(ctx); err == nil {
+		t.Fatal("unrestored legacy plugin did not block uninstall")
+	}
+	mustInvoke(t, m, "restore", request{ID: "codex"})
+	if err := m.UninstallReady(ctx); err != nil {
+		t.Fatal(err)
+	}
+	writeFixture(t, m.stateFile(), "{malformed state")
+	if err := m.UninstallReady(ctx); err == nil {
+		t.Fatal("unreadable plugin state did not block uninstall")
+	}
+}
 
 func TestChangeTransactionRollsBackEarlierWriteOnConflict(t *testing.T) {
 	m, _ := testManager(t)

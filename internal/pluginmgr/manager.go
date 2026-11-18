@@ -106,6 +106,40 @@ func (m *Manager) Sync(ctx context.Context, id, expectedTitle, newTitle string) 
 	return orcasync.Sync(ctx, id, expectedTitle, newTitle)
 }
 
+// UninstallReady checks recorded registrations and backups without editing
+// user files or creating the plugin data directory.
+func (m *Manager) UninstallReady(ctx context.Context) error {
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	state, err := m.load()
+	if err != nil {
+		return fmt.Errorf("无法确认插件状态：%w", err)
+	}
+	if state.Pending != nil {
+		return fmt.Errorf("请先恢复未完成的插件变更（%s）", state.Pending.ID)
+	}
+	var active, takeover []string
+	for id, r := range state.Items {
+		if r.Enabled || len(r.Registration) != 0 || r.Entry != "" {
+			active = append(active, id)
+		}
+		if len(r.Takeover) != 0 {
+			takeover = append(takeover, id)
+		}
+	}
+	sort.Strings(active)
+	sort.Strings(takeover)
+	var problems []error
+	if len(active) != 0 {
+		problems = append(problems, fmt.Errorf("请先停用插件 %v", active))
+	}
+	if len(takeover) != 0 {
+		problems = append(problems, fmt.Errorf("请先恢复旧插件 %v", takeover))
+	}
+	return errors.Join(problems...)
+}
+
 func (m *Manager) Handle(ctx context.Context, method string, params json.RawMessage) (any, error) {
 	if method == "plugins.list" {
 		state, err := m.load()

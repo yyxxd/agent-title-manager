@@ -17,6 +17,8 @@
 
 **停用**撤下自己注册的入口，保留接管记录。**恢复**撤下现有入口并还原旧插件，或将独立插件回退到上一发行版本。检测到相关设置冲突时，恢复会停下来保留现有文件。处理冲突后可重试。备份和未完成操作保存在桌面数据目录的 `plugin-manager/state.json`。文件中可能存在宿主原配置，应保存在本机。
 
+卸载前需停用已启用的插件，并恢复被接管的旧宿主插件。卸载检查只读；未完成的变更或无法读取的注册状态会阻止卸载。
+
 管理器作用于桌面进程使用的用户配置目录。项目级 Hook、企业托管设置、其他配置目录及自定义旧插件由用户在对应宿主中管理。停用或恢复后重启宿主，使已运行的旧进程重新加载设置。旧插件迁移参考了 Agent Session Namer 及其上游 MIT 项目。 [Agent Session Namer](https://github.com/yyxxd/agent-session-namer) · [oil-oil/oil-codex-title](https://github.com/oil-oil/oil-codex-title)
 
 ## 独立插件
