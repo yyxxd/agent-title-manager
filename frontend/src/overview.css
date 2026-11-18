@@ -1,0 +1,244 @@
+.daily-overview {
+  container-type: inline-size;
+}
+
+.daily-overview .page-head {
+  margin-bottom: 16px;
+}
+
+.daily-overview-frame {
+  background: var(--surface);
+  border: 1px solid var(--rule);
+  border-radius: 9px;
+}
+
+.daily-overview-lead,
+.daily-overview-secondary {
+  display: grid;
+  margin: 0;
+}
+
+.daily-overview-lead {
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1.5fr);
+  padding: 18px 0 16px;
+}
+
+.daily-overview-lead > div {
+  padding-inline: 24px;
+}
+
+.daily-overview-lead > div + div {
+  border-inline-start: 1px solid var(--rule);
+}
+
+.daily-overview-lead dt,
+.daily-overview-secondary dt,
+.daily-overview-note {
+  color: var(--muted);
+}
+
+.daily-overview-lead dd:first-of-type {
+  font-size: 38px;
+  line-height: 1.2;
+  font-weight: 650;
+  letter-spacing: -.025em;
+  margin-block: 3px 1px;
+  overflow-wrap: anywhere;
+}
+
+.daily-overview-lead small {
+  font-size: 15px;
+  font-weight: 500;
+  color: var(--muted);
+  letter-spacing: 0;
+}
+
+.daily-overview-note {
+  font-size: 12px;
+  font-weight: 400;
+  letter-spacing: 0;
+}
+
+.daily-overview-secondary {
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  align-items: baseline;
+  column-gap: 16px;
+  padding: 10px 24px;
+  border-block-start: 1px solid var(--rule);
+  font-size: 13px;
+}
+
+.daily-overview-secondary > div {
+  display: flex;
+  align-items: baseline;
+  gap: 2px 8px;
+  flex-wrap: wrap;
+}
+
+.daily-overview-secondary dd {
+  font-weight: 600;
+}
+
+.daily-overview-secondary small {
+  display: inline-block;
+  margin-inline-start: 6px;
+  font-size: 12px;
+  font-weight: 400;
+  color: var(--muted);
+}
+
+.daily-overview-detail {
+  display: grid;
+  grid-template-columns: minmax(0, 1.45fr) minmax(0, 1fr);
+  gap: 16px;
+  margin-top: 16px;
+}
+
+.daily-overview .panel-head select {
+  width: auto;
+  max-width: 54%;
+  font-size: 13px;
+}
+
+.daily-overview th,
+.daily-overview td {
+  padding: 8px 12px;
+}
+
+.daily-overview-count {
+  font-weight: 650;
+}
+
+.daily-overview .daily-overview-bar-cell {
+  padding-inline: 4px 0;
+  width: 44%;
+}
+
+.daily-overview-bar {
+  height: 8px;
+  background: var(--raised);
+  border-radius: 2px;
+}
+
+.daily-overview-bar > span {
+  display: block;
+  height: 100%;
+  background: var(--accent);
+  border-radius: inherit;
+}
+
+.daily-overview-token-rows > div {
+  display: flex;
+  justify-content: space-between;
+  align-items: baseline;
+  gap: 8px;
+  padding: 8px 12px;
+}
+
+.daily-overview-token-rows > div + div {
+  border-block-start: 1px solid var(--rule);
+}
+
+.daily-overview-token-rows dt {
+  color: var(--muted);
+}
+
+.daily-overview-token-rows dd {
+  text-align: end;
+  font-weight: 600;
+}
+
+.daily-overview-models .daily-overview-note {
+  display: block;
+}
+
+.daily-overview-cell-label {
+  display: none;
+}
+
+@container (max-width: 660px) {
+  .daily-overview-detail {
+    grid-template-columns: 1fr;
+    gap: 0;
+  }
+
+  .daily-overview-models {
+    display: block;
+  }
+
+  .daily-overview-models thead {
+    display: none;
+  }
+
+  .daily-overview-models tbody {
+    display: block;
+  }
+
+  .daily-overview-models tr {
+    display: grid;
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+    align-items: start;
+    gap: 6px 12px;
+    padding: 10px 12px;
+  }
+
+  .daily-overview-models tr + tr {
+    border-block-start: 1px solid var(--rule);
+  }
+
+  .daily-overview-models th,
+  .daily-overview-models td {
+    padding: 0;
+    border: 0;
+    text-align: start;
+    white-space: normal;
+    overflow-wrap: anywhere;
+  }
+
+  .daily-overview-models th {
+    grid-column: 1 / -1;
+  }
+
+  .daily-overview-cell-label {
+    display: block;
+    color: var(--muted);
+    font-size: 12px;
+  }
+
+  .daily-overview-models td:not(:nth-child(2)) .daily-overview-note {
+    display: inline;
+  }
+}
+
+@container (max-width: 480px) {
+  .daily-overview .page-head :is(input, button),
+  .daily-overview .panel-head select {
+    min-height: 44px;
+  }
+
+  .daily-overview .page-head button {
+    min-width: 44px;
+  }
+
+  .daily-overview-lead > div,
+  .daily-overview-secondary {
+    padding-inline: 14px;
+  }
+
+  .daily-overview-lead dd:first-of-type {
+    font-size: 31px;
+  }
+
+  .daily-overview-secondary > div {
+    flex-direction: column;
+  }
+
+  .daily-overview-secondary small {
+    display: block;
+    margin-inline-start: 0;
+  }
+
+  .daily-overview .daily-overview-bar-cell {
+    width: 37%;
+  }
+}
