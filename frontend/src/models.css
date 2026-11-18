@@ -1,0 +1,110 @@
+.model-settings .model-switch {
+  position: relative;
+  display: flex;
+  justify-content: space-between;
+  cursor: pointer;
+}
+
+.model-switch input {
+  position: absolute;
+  inset-inline-end: 14px;
+  opacity: 0;
+}
+
+.model-switch-track {
+  display: flex;
+  align-items: center;
+  flex: 0 0 38px;
+  height: 22px;
+  padding: 2px;
+  border: 1px solid var(--control);
+  border-radius: 12px;
+  background: var(--hover);
+}
+
+.model-switch-track::before {
+  content: "";
+  width: 16px;
+  height: 16px;
+  border-radius: 50%;
+  background: var(--muted);
+}
+
+.model-switch input:checked + .model-switch-track {
+  background: var(--accent);
+  border-color: var(--accent);
+  justify-content: flex-end;
+}
+
+.model-switch input:checked + .model-switch-track::before {
+  background: var(--surface);
+}
+
+.model-switch input:focus-visible + .model-switch-track {
+  outline: 2px solid var(--accent);
+  outline-offset: 3px;
+}
+
+.model-switch:has(input:disabled) { cursor: default; }
+.model-switch input:disabled + .model-switch-track { opacity: .58; }
+
+@media (forced-colors: active) {
+  .model-switch-track { border-color: ButtonText; }
+  .model-switch-track::before { background: ButtonText; }
+  .model-switch input:checked + .model-switch-track { border-color: Highlight; }
+  .model-switch input:checked + .model-switch-track::before { background: Highlight; }
+}
+
+.model-settings .model-api > label:not(.model-switch), .model-api .model-endpoints {
+  grid-template-columns: minmax(110px, 1fr) minmax(0, 2fr);
+}
+
+.model-api .model-endpoints {
+  min-height: 0;
+  row-gap: 5px;
+  border-block-start: 1px solid var(--rule);
+  color: var(--muted);
+  font-size: 13px;
+  background: var(--ground);
+}
+
+.model-endpoints dd { min-width: 0; }
+.model-endpoints code { color: var(--ink); }
+.model-key-note { padding: 0 14px 7px; }
+
+.model-discovery { padding: 0 14px 10px; }
+.model-discovery-controls { display: flex; justify-content: flex-end; gap: 8px; }
+.model-discovery-controls input { max-width: 230px; }
+.model-discovery .notice { margin: 8px 0 0; }
+
+.model-options {
+  max-height: 15rem;
+  overflow-y: auto;
+  margin: 8px 0 0;
+  padding: 3px;
+  border: 1px solid var(--rule);
+  border-radius: 7px;
+  list-style: none;
+}
+
+.model-options li + li { border-top: 1px solid var(--rule); }
+.model-options button {
+  display: grid;
+  width: 100%;
+  text-align: start;
+  white-space: normal;
+  overflow-wrap: anywhere;
+  border-color: transparent;
+}
+
+.model-options button:focus-visible { outline-offset: -2px; }
+.model-options button[aria-pressed="true"] { background: var(--raised); font-weight: 600; }
+
+@media (max-width: 480px) {
+  .model-settings .model-api > label:not(.model-switch), .model-api .model-endpoints {
+    grid-template-columns: minmax(0, 1fr);
+    gap: 4px;
+  }
+
+  .model-endpoints dd + dt { margin-top: 4px; }
+}

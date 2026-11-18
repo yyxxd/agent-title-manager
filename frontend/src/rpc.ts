@@ -55,11 +55,16 @@ export type Daily = Counts & {
   byModel?: ModelUsage[] | null;
 };
 
-export type Settings = {
+export type ApiProtocol = 'chat' | 'responses' | 'anthropic' | 'gemini';
+
+export type ApiTarget = { apiProtocol: ApiProtocol; apiBaseUrl: string };
+export type ApiEndpoints = { generationUrl: string; modelsUrl: string };
+export type ApiModel = { id: string; name?: string };
+
+export type Settings = ApiTarget & {
   provider: 'api' | 'codex';
   codexModel: string;
   fast: boolean;
-  apiBaseUrl: string;
   apiModel: string;
   hasApiKey: boolean;
   fallbackEnabled: boolean;
