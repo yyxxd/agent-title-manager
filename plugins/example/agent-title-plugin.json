@@ -1,0 +1,9 @@
+{
+  "schemaVersion": 1,
+  "id": "example",
+  "name": "外部宿主标题示例",
+  "version": "0.1.0",
+  "kind": "agent",
+  "host": "external",
+  "entry": "index.mjs"
+}
