@@ -12,9 +12,8 @@ type codexEvent struct {
 	Tier    string `json:"service_tier"`
 	Message string `json:"message"`
 	Item    struct {
-		Type    string `json:"type"`
-		Text    string `json:"text"`
-		Message string `json:"message"`
+		Type string `json:"type"`
+		Text string `json:"text"`
 	} `json:"item"`
 	Error struct {
 		Status  int    `json:"status"`
@@ -27,6 +26,7 @@ type codexTrace struct {
 	text, tier                    string
 	usage                         usage
 	failed, done, tool, confirmed bool
+	itemError                     bool
 }
 
 func parseCodex(raw []byte, truncated bool, runErr, ctxErr error) modelResult {
@@ -48,7 +48,7 @@ func parseCodex(raw []byte, truncated bool, runErr, ctxErr error) modelResult {
 	case truncated:
 		r.status = "invalid_response"
 		r.message = errOutputLimit.Error()
-	case runErr != nil || trace.failed:
+	case runErr != nil || trace.failed || trace.itemError:
 		r.message = "Codex 命名失败，请检查订阅、模型与 CLI"
 		r.confirmed = trace.confirmed && !trace.done && trace.text == "" && r.usage == (usage{})
 	case !trace.done:
@@ -85,14 +85,14 @@ func (t *codexTrace) apply(e codexEvent) {
 	case "item.started", "item.updated", "item.completed":
 		switch e.Item.Type {
 		case "agent_message":
-			if e.Type == "item.completed" {
+			if e.Type == "item.completed" && !t.done {
 				t.text = strings.TrimSpace(e.Item.Text)
+				// CLI 的技能/MCP 告警也用 item.error 表示。有后续有效决策及 turn.completed 时可继续。
+				t.itemError = false
 			}
 		case "reasoning", "plan", "":
 		case "error":
-			if !strings.HasPrefix(e.Item.Message, "Exceeded skills context budget.") {
-				t.failed = true
-			}
+			t.itemError = true
 		default:
 			t.tool = true
 		}
