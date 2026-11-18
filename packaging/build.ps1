@@ -1,0 +1,53 @@
+[CmdletBinding()]
+param(
+    [Parameter(Mandatory)][string]$NodeDistribution,
+    [string]$MakeNsis = 'makensis.exe',
+    [string]$Version = '0.1.0',
+    [switch]$NoInstaller
+)
+
+$ErrorActionPreference = 'Stop'
+$root = Split-Path $PSScriptRoot -Parent
+if ($Version -notmatch '^\d+\.\d+\.\d+$') { throw 'Version must use X.Y.Z.' }
+$node = (Resolve-Path -LiteralPath $NodeDistribution).Path
+foreach ($name in @('node.exe', 'LICENSE')) {
+    if (-not (Test-Path -LiteralPath (Join-Path $node $name) -PathType Leaf)) {
+        throw "The official Node Windows x64 distribution must contain $name."
+    }
+}
+
+function Invoke-Checked {
+    param([string]$Program, [string[]]$Arguments)
+    & $Program @Arguments
+    if ($LASTEXITCODE -ne 0) { throw "$Program exited with code $LASTEXITCODE." }
+}
+
+Push-Location $root
+try {
+    $env:GOOS = 'windows'
+    $env:GOARCH = 'amd64'
+    $env:CGO_ENABLED = '0'
+    $stage = Join-Path $root "out\windows-x64-$Version-$([guid]::NewGuid().ToString('N').Substring(0, 8))"
+    New-Item -ItemType Directory -Path (Join-Path $stage 'plugins') -Force | Out-Null
+    Invoke-Checked 'pnpm' @('--dir', 'frontend', 'install', '--frozen-lockfile')
+    Invoke-Checked 'pnpm' @('--dir', 'frontend', 'build')
+    Invoke-Checked 'go' @('test', './...')
+    Invoke-Checked 'go' @('build', '-trimpath', '-tags', 'production', '-ldflags', '-s -w -H windowsgui', '-o', (Join-Path $stage 'AgentTitleManager.exe'), './cmd/atm')
+    Invoke-Checked 'go' @('build', '-trimpath', '-ldflags', '-s -w', '-o', (Join-Path $stage 'atm-bridge.exe'), './cmd/atm-bridge')
+    foreach ($id in @('codex', 'claude', 'pi', 'example')) {
+        Copy-Item -LiteralPath "plugins\$id" -Destination "$stage\plugins\$id" -Recurse
+    }
+    Copy-Item -LiteralPath "$node\node.exe" -Destination "$stage\plugins\node.exe"
+    Copy-Item -LiteralPath "$node\LICENSE" -Destination "$stage\plugins\NODE-LICENSE.txt"
+    Copy-Item -LiteralPath 'LICENSE' -Destination "$stage\LICENSE.txt"
+    Copy-Item -LiteralPath 'internal\engine\LICENSE.naming' -Destination "$stage\OIL-CODEX-TITLE-LICENSE.txt"
+    Copy-Item -LiteralPath 'plugins\THIRD_PARTY_NOTICES.md' -Destination "$stage\plugins\THIRD_PARTY_NOTICES.md"
+    if (-not $NoInstaller) {
+        $installer = Join-Path $root "out\AgentTitleManager-$Version-windows-x64-setup.exe"
+        Invoke-Checked $MakeNsis @('/INPUTCHARSET', 'UTF8', "/DPAYLOAD=$stage", "/DOUTPUT=$installer", "/DVERSION=$Version", 'packaging\installer.nsi')
+        Get-FileHash -Algorithm SHA256 -LiteralPath $installer
+    }
+    Write-Output "Windows bundle: $stage"
+} finally {
+    Pop-Location
+}
