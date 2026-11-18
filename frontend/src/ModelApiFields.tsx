@@ -22,10 +22,15 @@ export function ApiFields({
   const { apiBaseUrl, apiProtocol, apiModel, hasApiKey } = settings;
   const target = { apiBaseUrl, apiProtocol };
   const hasAddress = !!apiBaseUrl.trim();
-  const endpointKey = JSON.stringify([apiProtocol, apiBaseUrl, apiModel, credentialRevision]);
-  const resolved = useLoad(() => hasAddress
-    ? rpc<ApiEndpoints>('providers.endpoints', { ...target, apiModel: apiModel || undefined })
-    : Promise.resolve(undefined), endpointKey);
+  const targetKey = JSON.stringify([apiProtocol, apiBaseUrl]);
+  const listing = useLoad(() => hasAddress
+    ? rpc<ApiEndpoints>('providers.endpoints', target)
+    : Promise.resolve(undefined), targetKey);
+  const generation = useLoad(() => hasAddress && apiModel
+    ? rpc<ApiEndpoints>('providers.endpoints', { ...target, apiModel })
+    : Promise.resolve(undefined), JSON.stringify([targetKey, apiModel]));
+  const generationUrl = listing.value && (apiModel ? generation.value?.generationUrl : listing.value.generationUrl);
+  const listingUnavailable = listing.value?.modelsUrl === '';
   const modelInput = useRef<HTMLInputElement>(null);
   const keyId = useId();
   const canUseSavedKey = hasApiKey && !addressChanged;
@@ -36,29 +41,34 @@ export function ApiFields({
       {protocols.map(([value, label]) => <option key={value} value={value}>{label}</option>)}
     </select></label>
     <label>Base URL<input type="url" placeholder="https://…" value={apiBaseUrl} onChange={(event) => edit('apiBaseUrl', event.target.value)} /></label>
-    {hasAddress && <EndpointPreview value={resolved.value} error={resolved.error} />}
+    <EndpointPreview modelsUrl={listing.value?.modelsUrl} generationUrl={generationUrl}
+      addressError={listing.error} generationError={listing.value ? generation.error : undefined} />
     <label>API 密钥<input autoComplete="new-password" type="password" value={keyValue} disabled={removeKey}
       placeholder={canUseSavedKey ? '已保存密钥' : '输入密钥'} aria-describedby={keyNeedsAttention ? keyId : undefined}
       onChange={(event) => setKey(event.target.value)} /></label>
     {keyNeedsAttention && <p className="model-key-note muted" id={keyId}>地址已更改。保存前请替换或移除旧密钥。</p>}
     {hasApiKey && <ModelSwitch checked={removeKey} busy={busy} onChange={setRemoveKey}>保存时移除旧密钥</ModelSwitch>}
     <label>API 模型<input ref={modelInput} placeholder="输入模型 ID" value={apiModel} onChange={(event) => edit('apiModel', event.target.value)} /></label>
-    <ModelDiscovery key={JSON.stringify([apiProtocol, apiBaseUrl, credentialRevision])}
-      target={target} apiKey={apiKey} blocked={!hasAddress || !!resolved.error || resolved.value?.modelsUrl === ''}
-      listingUnavailable={resolved.value?.modelsUrl === ''} selected={apiModel} onSelect={(id) => {
+    <ModelDiscovery key={JSON.stringify([targetKey, credentialRevision])}
+      target={target} apiKey={apiKey} blocked={!listing.value?.modelsUrl}
+      listingUnavailable={listingUnavailable} selected={apiModel} onSelect={(id) => {
         edit('apiModel', id);
         modelInput.current?.focus();
       }} />
   </div>;
 }
 
-function EndpointPreview({ value, error }: { value?: ApiEndpoints; error?: string }) {
-  if (error) return <Status error={error} />;
-  if (!value) return null;
-  return <dl className="model-endpoints setting-row" aria-label="实际请求地址">
-    {value.generationUrl && <><dt>生成地址</dt><dd><code>{value.generationUrl}</code></dd></>}
-    {value.modelsUrl && <><dt>模型列表地址</dt><dd><code>{value.modelsUrl}</code></dd></>}
-  </dl>;
+function EndpointPreview({ generationUrl, modelsUrl, addressError, generationError }: {
+  generationUrl?: string; modelsUrl?: string; addressError?: string; generationError?: string;
+}) {
+  if (addressError) return <Status error={addressError} />;
+  return <>
+    {(generationUrl || modelsUrl) && <dl className="model-endpoints setting-row" aria-label="实际请求地址">
+      {generationUrl && <><dt>生成地址</dt><dd><code>{generationUrl}</code></dd></>}
+      {modelsUrl && <><dt>模型列表地址</dt><dd><code>{modelsUrl}</code></dd></>}
+    </dl>}
+    {generationError && <Status error={`无法预览生成地址。${generationError}`} />}
+  </>;
 }
 
 function ModelDiscovery({ target, apiKey, blocked, listingUnavailable, selected, onSelect }: {
