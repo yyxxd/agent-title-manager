@@ -1,0 +1,53 @@
+.plugin-copy .plugin-detail {
+  white-space: pre-line;
+}
+
+.record-row .record-head {
+  gap: 5px 12px;
+}
+
+.record-copy {
+  min-width: 0;
+}
+
+.record-statuses {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  gap: 4px;
+  flex: 0 0 auto;
+  max-width: 100%;
+}
+
+.record-status {
+  border-radius: 5px;
+  padding: 2px 7px;
+  background: var(--raised);
+  color: var(--muted);
+  font-size: 12px;
+  font-weight: 600;
+  line-height: 18px;
+  overflow-wrap: anywhere;
+}
+
+.record-status:is([data-status="applied"], [data-status="synced"]) {
+  background: light-dark(#e3f2ed, #233f38);
+  color: var(--accent);
+}
+
+.record-status:is([data-status="protected"], [data-status="interrupted"], [data-status="skipped"], [data-status="stale"]) {
+  background: light-dark(#f9edda, #463723);
+  color: light-dark(#794a10, #fad59d);
+}
+
+.record-status:is([data-status="failed"], [data-status="invalid_response"], [data-status="rejected_tool"]) {
+  background: var(--wash);
+  color: var(--error);
+}
+
+@media (max-width: 480px) {
+  .record-row .record-head {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr);
+  }
+}

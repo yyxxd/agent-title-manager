@@ -2,6 +2,7 @@ import { RefreshCw } from 'lucide-react';
 import { useState } from 'react';
 import { agentName, formatTime, providerName, rpc, token, type Attempt, type RecordItem } from './rpc';
 import { ConfirmDialog, Empty, Section, Status, useAction, useLoad } from './ui';
+import './plugin-record-rows.css';
 
 const states: Record<string, string> = {
   queued: '待处理', running: '命名中', candidate: '候选待领取', claimed: '待读回',
@@ -52,14 +53,16 @@ function RecordRow({ item, busy, confirming, error, confirm, cancel, sync }: {
 }) {
   return <article className="record-row">
     <div className="record-head">
-      <div>
+      <div className="record-copy">
         <h3>{item.title || '会话标题尚未生成'}</h3>
-        <p className="muted">{agentName(item.agent)} · {formatTime(item.updatedAt)} · {states[item.status] ?? item.status}</p>
+        <p className="muted">{agentName(item.agent)} · {formatTime(item.updatedAt)}</p>
       </div>
-      {item.syncStatus && <span className={item.syncStatus === 'failed' ? 'sync error-text' : 'sync'}>{syncStates[item.syncStatus] ?? item.syncStatus}</span>}
+      <div className="record-statuses">
+        <span className="record-status" data-status={item.status}>{states[item.status] ?? item.status}</span>
+        {item.syncStatus && <span className="record-status" data-status={item.syncStatus}>{syncStates[item.syncStatus] ?? item.syncStatus}</span>}
+      </div>
     </div>
     {item.syncError && <p>{item.syncError}</p>}
-    {item.syncStatus === 'protected' && !item.syncError && <p className="muted">当前 Orca 标题可能由用户设置，已保留。</p>}
     <div className="actions">
       {item.syncStatus === 'failed' && <button disabled={busy} onClick={() => sync('retry')}>重试同步</button>}
       {item.syncStatus === 'protected' && <button disabled={busy} onClick={confirm}>采用 Agent 标题</button>}
