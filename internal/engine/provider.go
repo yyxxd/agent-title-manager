@@ -13,12 +13,13 @@ const decisionSchema = `{"type":"object","properties":{"action":{"type":"string"
 var namingPolicy string
 
 type providerTest struct {
-	Provider   string  `json:"provider"`
-	APIBaseURL *string `json:"apiBaseUrl"`
-	APIModel   *string `json:"apiModel"`
-	APIKey     *string `json:"apiKey"`
-	CodexModel *string `json:"codexModel"`
-	Fast       *bool   `json:"fast"`
+	Provider    string  `json:"provider"`
+	APIProtocol *string `json:"apiProtocol"`
+	APIBaseURL  *string `json:"apiBaseUrl"`
+	APIModel    *string `json:"apiModel"`
+	APIKey      *string `json:"apiKey"`
+	CodexModel  *string `json:"codexModel"`
+	Fast        *bool   `json:"fast"`
 }
 type testResult struct {
 	Provider string `json:"provider"`
@@ -31,27 +32,23 @@ func (e *Engine) testProvider(ctx context.Context, p providerTest) (testResult, 
 	if err != nil {
 		return testResult{}, err
 	}
-	oldURL := s.APIBaseURL
+	saved := s
 	if p.Provider != "" {
 		s.Provider = p.Provider
 	}
 	patch(&s.CodexModel, p.CodexModel)
 	patch(&s.Fast, p.Fast)
+	patch(&s.APIProtocol, p.APIProtocol)
 	patch(&s.APIBaseURL, p.APIBaseURL)
 	patch(&s.APIModel, p.APIModel)
+	s.apiLegacy = saved.useLegacy(s.APIProtocol, s.APIBaseURL)
 	if err := validateSettings(&s); err != nil {
 		return testResult{}, err
 	}
-	if s.APIBaseURL != oldURL {
-		secret = nil
-	}
-	if p.APIKey != nil && s.Provider == "api" {
-		if !validString(*p.APIKey, 4096) {
-			return testResult{}, errors.New("API 密钥格式无效")
-		}
-		secret, err = credential([]byte(*p.APIKey), false)
+	if s.Provider == "api" {
+		secret, err = draftAPIKey(saved, s.APIBaseURL, secret, p.APIKey)
 		if err != nil {
-			return testResult{}, errors.New("无法处理 API 密钥")
+			return testResult{}, err
 		}
 	}
 	ctx, cancel := context.WithCancel(ctx)
@@ -70,6 +67,16 @@ func (e *Engine) testProvider(ctx context.Context, p providerTest) (testResult, 
 	}
 	model, _, _ := providerInfo(s.Provider, s)
 	return testResult{s.Provider, model, true}, nil
+}
+
+func draftAPIKey(saved Settings, base string, secret []byte, key *string) ([]byte, error) {
+	if key != nil {
+		return protectAPIKey(*key)
+	}
+	if !saved.sameAPIAddress(base) {
+		return nil, nil
+	}
+	return secret, nil
 }
 
 func (e *Engine) runProvider(ctx context.Context, req attemptRequest, start func() error) modelResult {

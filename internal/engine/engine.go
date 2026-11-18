@@ -143,6 +143,10 @@ func (e *Engine) Handle(ctx context.Context, method string, params json.RawMessa
 		return dispatch(params, func(p settingsPatch) (Settings, error) { return e.saveSettings(ctx, p) })
 	case "providers.test":
 		return dispatch(params, func(p providerTest) (testResult, error) { return e.testProvider(ctx, p) })
+	case "providers.models":
+		return dispatch(params, func(p modelsRequest) (modelCatalog, error) { return e.listModels(ctx, p) })
+	case "providers.endpoints":
+		return dispatch(params, func(p endpointRequest) (apiEndpoints, error) { return e.previewEndpoints(ctx, p) })
 	case "stats.daily":
 		return dispatch(params, func(p dateRequest) (dailyStats, error) { return e.daily(ctx, p) })
 	case "records.list":

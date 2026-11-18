@@ -40,7 +40,7 @@ func TestCodexJSONUsageAndFailure(t *testing.T) {
 }
 
 func TestAPIMissingCacheAndInvalidPayload(t *testing.T) {
-	r := parseAPI(strings.NewReader(`{"choices":[{"message":{"content":"invalid"}}],"usage":{"prompt_tokens":15,"completion_tokens":0}}`))
+	r := parseAPI(protocolChat, strings.NewReader(`{"choices":[{"message":{"content":"invalid"}}],"usage":{"prompt_tokens":15,"completion_tokens":0}}`))
 	if r.status != "invalid_response" || r.usage.Input == nil || *r.usage.Input != 15 || r.usage.Cached != nil ||
 		r.usage.Output == nil || *r.usage.Output != 0 {
 		t.Fatal(r)
