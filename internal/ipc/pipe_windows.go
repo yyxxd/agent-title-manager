@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"errors"
 	"io"
+	"io/fs"
 	"net"
 	"sync"
 	"time"
@@ -15,6 +16,23 @@ import (
 )
 
 const timeout = 900 * time.Millisecond
+
+func IsRunning(scope string) (bool, error) {
+	name, _, err := identity(scope)
+	if err != nil {
+		return false, err
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), timeout)
+	defer cancel()
+	connection, err := winio.DialPipeContext(ctx, name)
+	if errors.Is(err, fs.ErrNotExist) {
+		return false, nil
+	}
+	if err != nil {
+		return false, err
+	}
+	return true, connection.Close()
+}
 
 func Listen(scope string) (net.Listener, error) {
 	name, acl, err := identity(scope)

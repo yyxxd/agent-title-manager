@@ -74,6 +74,7 @@ done:
 SectionEnd
 
 Section "Uninstall"
+  Call un.RequireReady
   SetShellVarContext current
   ReadRegStr $0 HKCU "${UNINSTALL_KEY}" "InstallLocation"
   StrCmp $0 $INSTDIR 0 removeFiles
@@ -96,3 +97,22 @@ removeFiles:
   Delete "$INSTDIR\Uninstall.exe"
   RMDir "$INSTDIR"
 SectionEnd
+
+Function un.RequireReady
+  ClearErrors
+  ExecWait '"$INSTDIR\AgentTitleManager.exe" --check-uninstall' $0
+  IfErrors cannotCheck
+  StrCmp $0 0 ready
+  StrCmp $0 2 running
+  MessageBox MB_ICONEXCLAMATION|MB_OK "请在“Agent 插件”中停用适配器并恢复接管的旧版插件。退出桌面应用后重新卸载。" /SD IDOK
+  Goto blocked
+running:
+  MessageBox MB_ICONEXCLAMATION|MB_OK "Agent Title Manager 正在运行。请在托盘菜单中退出，再重新卸载。" /SD IDOK
+  Goto blocked
+cannotCheck:
+  MessageBox MB_ICONEXCLAMATION|MB_OK "无法检查插件是否已安全停用。请修复安装后重新卸载。" /SD IDOK
+blocked:
+  SetErrorLevel 3
+  Abort
+ready:
+FunctionEnd

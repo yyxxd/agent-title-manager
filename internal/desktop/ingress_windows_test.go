@@ -107,7 +107,7 @@ func assertBinding(t *testing.T, received <-chan json.RawMessage) {
 		if err := json.Unmarshal(raw, &fields); err != nil {
 			t.Fatal(err)
 		}
-		if fields["orcaNativeHandle"] != nil || fieldString(fields, "orcaTitleOrigin") != "manual" ||
+		if fieldString(fields, "orcaNativeHandle") != "native" || fieldString(fields, "orcaTitleOrigin") != "manual" ||
 			fieldString(fields, "orcaTitle") != "宿主读取的标题" || fieldString(fields, "orcaSessionId") != "orca" {
 			t.Fatalf("unsanitized binding: %s", raw)
 		}

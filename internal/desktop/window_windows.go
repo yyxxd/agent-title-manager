@@ -6,6 +6,7 @@ import (
 	"os"
 	"path/filepath"
 	"slices"
+	"sync/atomic"
 
 	"github.com/wailsapp/wails/v3/pkg/application"
 	"github.com/wailsapp/wails/v3/pkg/events"
@@ -17,7 +18,7 @@ var icon []byte
 const appName = "Agent Title Manager"
 
 func Run(dir string, assets fs.FS, service *Service) error {
-	var window *application.WebviewWindow
+	var primary atomic.Pointer[application.WebviewWindow]
 	app := application.New(application.Options{
 		Name:     appName,
 		Icon:     icon,
@@ -30,17 +31,18 @@ func Run(dir string, assets fs.FS, service *Service) error {
 		SingleInstance: &application.SingleInstanceOptions{
 			UniqueID: "com.yyxxd.agent-title-manager" + service.scope,
 			OnSecondInstanceLaunch: func(data application.SecondInstanceData) {
-				if window != nil && !slices.Contains(data.Args, "--background") {
+				if window := primary.Load(); window != nil && !slices.Contains(data.Args, "--background") {
 					show(window)
 				}
 			},
 		},
 	})
-	window = app.Window.NewWithOptions(application.WebviewWindowOptions{
+	window := app.Window.NewWithOptions(application.WebviewWindowOptions{
 		Title: appName, Width: 1080, Height: 780, MinWidth: 450, MinHeight: 450,
 		URL: "/", Hidden: slices.Contains(os.Args[1:], "--background"),
 		BackgroundColour: application.NewRGB(23, 23, 25),
 	})
+	primary.Store(window)
 	window.RegisterHook(events.Common.WindowClosing, func(event *application.WindowEvent) {
 		event.Cancel()
 		window.Hide()

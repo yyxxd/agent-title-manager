@@ -10,7 +10,10 @@ import (
 	"time"
 )
 
-type eventKey struct{ agent, session, revision string }
+type eventKey struct {
+	agent, session, revision string
+	nativeOnly               bool
+}
 
 type pendingEvent struct {
 	key    eventKey
@@ -18,7 +21,6 @@ type pendingEvent struct {
 }
 
 type eventIngress struct {
-	cancel  context.CancelFunc
 	done    chan struct{}
 	queue   chan pendingEvent
 	mutex   sync.Mutex
@@ -26,17 +28,16 @@ type eventIngress struct {
 }
 
 func startIngress(parent context.Context, backend Backend) *eventIngress {
-	ctx, cancel := context.WithCancel(parent)
 	ingress := &eventIngress{
-		cancel: cancel, done: make(chan struct{}), queue: make(chan pendingEvent, 24),
+		done: make(chan struct{}), queue: make(chan pendingEvent, 24),
 		pending: make(map[eventKey]struct{}),
 	}
-	go ingress.run(ctx, backend)
+	go ingress.run(context.WithoutCancel(parent), backend)
 	return ingress
 }
 
 func (ingress *eventIngress) stop() {
-	ingress.cancel()
+	close(ingress.queue)
 	<-ingress.done
 }
 
@@ -50,19 +51,29 @@ func (s *Service) pluginEvent(ctx context.Context, method string, params json.Ra
 		return nil, errors.New("Agent 插件未启用或目前不可用")
 	}
 	if method != "event.submit" {
+		if method == "title.claim" && s.ingress.sessionPending(agent, fieldString(fields, "sessionId")) {
+			return map[string]any{"candidate": nil, "status": "ingress_pending"}, nil
+		}
 		canonical, err := canonicalParams(fields, "agent", "sessionId", "currentTitle", "revision", "id", "observedTitle")
 		if err != nil {
 			return nil, err
 		}
 		return s.backend.Engine(ctx, method, canonical)
 	}
-	key := eventKey{agent, fieldString(fields, "sessionId"), fieldString(fields, "revision")}
+	key := eventKey{agent, fieldString(fields, "sessionId"), fieldString(fields, "revision"), string(fields["nativeTitleOnly"]) == "true"}
 	if key.session == "" || key.revision == "" {
 		return nil, errors.New("缺少会话 ID 或版本")
 	}
 	event := pendingEvent{key, fields}
-	if ctx.Err() == nil && s.ingress.add(event) {
-		return map[string]bool{"accepted": true}, nil
+	if ctx.Err() != nil {
+		return nil, ctx.Err()
+	}
+	queued, duplicate, err := s.ingress.add(event)
+	if err != nil {
+		return nil, err
+	}
+	if queued {
+		return map[string]any{"accepted": true, "status": "ingress_pending", "duplicate": duplicate}, nil
 	}
 	body, err := event.params(false)
 	if err != nil {
@@ -79,21 +90,21 @@ func (s *Service) pluginEnabled(ctx context.Context, id string) bool {
 	return err == nil && enabled
 }
 
-func (ingress *eventIngress) add(event pendingEvent) bool {
+func (ingress *eventIngress) add(event pendingEvent) (queued, duplicate bool, err error) {
 	ingress.mutex.Lock()
 	defer ingress.mutex.Unlock()
 	if _, found := ingress.pending[event.key]; found {
-		return true
+		return true, true, nil
 	}
 	if !event.needsBinding() && !ingress.hasSession(event.key) {
-		return false
+		return false, false, nil
 	}
 	select {
 	case ingress.queue <- event:
 		ingress.pending[event.key] = struct{}{}
-		return true
+		return true, false, nil
 	default:
-		return false
+		return false, false, errors.New("ingress_busy: 事件核验队列已满，请重试")
 	}
 }
 
@@ -106,23 +117,21 @@ func (ingress *eventIngress) hasSession(key eventKey) bool {
 	return false
 }
 
+func (ingress *eventIngress) sessionPending(agent, session string) bool {
+	ingress.mutex.Lock()
+	defer ingress.mutex.Unlock()
+	return ingress.hasSession(eventKey{agent: agent, session: session})
+}
+
 func (ingress *eventIngress) run(ctx context.Context, backend Backend) {
 	defer close(ingress.done)
-	for {
-		select {
-		case <-ctx.Done():
-			return
-		case event := <-ingress.queue:
-			if ctx.Err() != nil {
-				return
-			}
-			if err := event.forward(ctx, backend); err != nil && ctx.Err() == nil {
-				log.Print("后台提交被拒绝，未记录会话内容")
-			}
-			ingress.mutex.Lock()
-			delete(ingress.pending, event.key)
-			ingress.mutex.Unlock()
+	for event := range ingress.queue {
+		if err := event.forward(ctx, backend); err != nil {
+			log.Print("后台提交被拒绝，未记录会话内容")
 		}
+		ingress.mutex.Lock()
+		delete(ingress.pending, event.key)
+		ingress.mutex.Unlock()
 	}
 }
 
@@ -130,7 +139,7 @@ func (event pendingEvent) forward(ctx context.Context, backend Backend) error {
 	agent := event.key.agent
 	var bound bool
 	if event.needsBinding() && backend.ResolveTitleOrigin != nil {
-		bindingCtx, cancel := context.WithTimeout(ctx, 1500*time.Millisecond)
+		bindingCtx, cancel := context.WithTimeout(ctx, 2*time.Second)
 		handle := fieldString(event.fields, "orcaNativeHandle")
 		orcaID := fieldString(event.fields, "orcaSessionId")
 		title, origin, approved := backend.ResolveTitleOrigin(bindingCtx, agent, event.key.session, handle, orcaID)
@@ -144,6 +153,11 @@ func (event pendingEvent) forward(ctx context.Context, backend Backend) error {
 			event.fields["orcaTitleOrigin"], _ = json.Marshal(origin)
 		}
 	}
+	if event.key.nativeOnly && !bound {
+		return nil
+	}
+	ctx, cancel := context.WithTimeout(ctx, 3*time.Second)
+	defer cancel()
 	enabled, err := backend.Enabled(ctx, agent)
 	if err != nil {
 		return err
@@ -165,9 +179,10 @@ func (event pendingEvent) needsBinding() bool {
 }
 
 func (event pendingEvent) params(bound bool) (json.RawMessage, error) {
-	fields := []string{"agent", "sessionId", "revision", "currentTitle", "titleOrigin", "nativeTitleOnly", "project", "turns"}
+	fields := []string{"agent", "sessionId", "revision", "currentTitle", "titleOrigin", "nativeTitleOnly",
+		"originalGoal", "confirmationOnly", "project", "turns"}
 	if bound {
-		fields = append(fields, "orcaSessionId", "orcaTitle", "orcaTitleOrigin")
+		fields = append(fields, "orcaSessionId", "orcaTitle", "orcaTitleOrigin", "orcaNativeHandle")
 	}
 	return canonicalParams(event.fields, fields...)
 }

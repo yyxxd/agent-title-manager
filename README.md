@@ -12,7 +12,7 @@ Windows 桌面应用，在本机管理 Codex、Claude、Pi 等 Agent 的自动�
 
 关闭窗口后应用继续驻留托盘。可通过托盘菜单或“模型与规则”的“退出桌面应用”退出。Windows 登录启动默认关闭，可在同一页面打开。
 
-卸载前请在“Agent 插件”停用适配器。若需要恢复接管前的旧插件，在卸载前使用对应插件的“恢复”。卸载程序移除应用文件、开始菜单入口和登录启动项，保留 `%LOCALAPPDATA%\AgentTitleManager` 中的用户数据。
+卸载前请在“Agent 插件”停用适配器，并用“恢复”撤销旧版插件接管，再从托盘退出。应用运行中、插件仍启用或旧版接管待恢复时，卸载程序会暂停。卸载成功后保留 `%LOCALAPPDATA%\AgentTitleManager` 中的用户数据。
 
 ## Windows x64 构建
 
@@ -28,6 +28,8 @@ Windows 桌面应用，在本机管理 Codex、Claude、Pi 等 Agent 的自动�
 
 ## 插件通信
 
-适配器启动 `atm-bridge.exe rpc`，在 stdin 提交一个 UTF-8 JSON 对象，在 stdout 读取一行响应。协议 v1 允许 `event.submit`、`title.claim` 和 `title.ack`。响应为 `{"ok":true,"result":...}` 或 `{"ok":false,"error":"..."}`。桌面未运行、插件未启用或超时后，适配器应继续原生会话。社区插件可使用包含 `agent-title-plugin.json` 的本地目录，或指定 GitHub 仓库和完整提交 SHA。
+适配器启动 `atm-bridge.exe rpc`，在 stdin 提交一个 UTF-8 JSON 对象，在 stdout 读取一行响应。协议 v1 允许 `event.submit`、`title.claim` 和 `title.ack`。响应为 `{"ok":true,"result":...}` 或 `{"ok":false,"error":"..."}`。桌面未运行、插件未启用或超时后，适配器应继续原生会话。后台可在收到 `ingress_busy:` 时有限重试同一提交。收到 `ingress_pending` 时等待候选，无需重提事件。
+
+社区插件可使用包含 `agent-title-plugin.json` 的本地目录，或指定 GitHub 仓库和完整提交 SHA。
 
 来自原 `oil-codex-title` 插件的代码和命名提示词保留其 MIT 许可和署名。安装包包含 `OIL-CODEX-TITLE-LICENSE.txt` 及插件目录的许可文件。
