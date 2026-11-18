@@ -128,7 +128,7 @@ func TestLocalDayUsesAttemptStartAndSeparatesConfirmedWrites(t *testing.T) {
 	}
 	for _, date := range []string{"2026-01-10", "2026-01-11"} {
 		s := call[dailyStats](t, statsEngine, "stats.daily", dateRequest{date})
-		if s.Attempts != 1 || s.InputTokens != 5 || s.Renames != 0 || s.UnknownUsage != 0 {
+		if s.Attempts != 1 || !hasCount(s.InputTokens, 5) || s.Renames != 0 || s.UnknownUsage != 0 {
 			t.Fatal(s)
 		}
 	}

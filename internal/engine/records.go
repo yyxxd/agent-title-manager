@@ -12,7 +12,8 @@ type listRequest struct {
 }
 
 type recordList struct {
-	Items []record `json:"items"`
+	Items        []record        `json:"items"`
+	TestAttempts []attemptRecord `json:"testAttempts"`
 }
 
 type record struct {
@@ -36,13 +37,15 @@ type attemptRecord struct {
 	ActualTier    string `json:"actualTier"`
 	Status        string `json:"status"`
 	StartedAt     string `json:"startedAt"`
-	InputTokens   int64  `json:"inputTokens"`
-	OutputTokens  int64  `json:"outputTokens"`
-	CachedTokens  int64  `json:"cachedTokens"`
+	InputTokens   *int64 `json:"inputTokens"`
+	OutputTokens  *int64 `json:"outputTokens"`
+	CachedTokens  *int64 `json:"cachedTokens"`
 	UsageKnown    bool   `json:"usageKnown"`
 }
 
 const newestEvents = ` FROM events ORDER BY updated DESC,rowid DESC LIMIT ?`
+const attemptFields = `SELECT event_id,provider,model,source,requested_tier,actual_tier,status,started,
+	input_tokens,output_tokens,cached_tokens FROM attempts`
 
 func (e *Engine) records(ctx context.Context, p listRequest) (recordList, error) {
 	limit := p.Limit
@@ -58,7 +61,13 @@ func (e *Engine) records(ctx context.Context, p listRequest) (recordList, error)
 		if err != nil {
 			return recordList{}, err
 		}
-		return recordList{items}, listAttempts(ctx, tx, local, items, limit)
+		if err := listAttempts(ctx, tx, local, items, limit); err != nil {
+			return recordList{}, err
+		}
+		tests := []attemptRecord{}
+		err = readAttempts(ctx, tx, local, attemptFields+` WHERE event_id IS NULL ORDER BY id DESC LIMIT ?`,
+			limit, func(_ string, item attemptRecord) { tests = append(tests, item) })
+		return recordList{items, tests}, err
 	})
 }
 
@@ -88,18 +97,25 @@ func listAttempts(ctx context.Context, tx *sql.Tx, local *time.Location, items [
 	for i, item := range items {
 		index[item.ID] = i
 	}
-	rows, err := tx.QueryContext(ctx, `SELECT event_id,provider,model,source,requested_tier,actual_tier,status,started,
-		input_tokens,output_tokens,cached_tokens FROM attempts WHERE event_id IN (SELECT id`+newestEvents+`) ORDER BY id`, limit)
+	return readAttempts(ctx, tx, local, attemptFields+` WHERE event_id IN (SELECT id`+newestEvents+`) ORDER BY id`,
+		limit, func(id string, item attemptRecord) {
+			i := index[id]
+			items[i].Attempts = append(items[i].Attempts, item)
+		})
+}
+
+func readAttempts(ctx context.Context, tx *sql.Tx, local *time.Location, query string, limit int, add func(string, attemptRecord)) error {
+	rows, err := tx.QueryContext(ctx, query, limit)
 	if err != nil {
 		return err
 	}
 	defer rows.Close()
 	for rows.Next() {
 		var item attemptRecord
-		var id string
+		var id sql.NullString
 		var started int64
-		var input, output, cached sql.NullInt64
-		err = rows.Scan(&id, &item.Provider, &item.Model, &item.Source, &item.RequestedTier, &item.ActualTier, &item.Status, &started, &input, &output, &cached)
+		err = rows.Scan(&id, &item.Provider, &item.Model, &item.Source, &item.RequestedTier, &item.ActualTier,
+			&item.Status, &started, &item.InputTokens, &item.OutputTokens, &item.CachedTokens)
 		if err != nil {
 			return err
 		}
@@ -107,10 +123,8 @@ func listAttempts(ctx context.Context, tx *sql.Tx, local *time.Location, items [
 			item.ActualTier = "unknown"
 		}
 		item.StartedAt = formatTime(started, local)
-		item.InputTokens, item.OutputTokens, item.CachedTokens = input.Int64, output.Int64, cached.Int64
-		item.UsageKnown = input.Valid && output.Valid && cached.Valid
-		i := index[id]
-		items[i].Attempts = append(items[i].Attempts, item)
+		item.UsageKnown = item.InputTokens != nil && item.OutputTokens != nil && item.CachedTokens != nil
+		add(id.String, item)
 	}
 	return rows.Err()
 }

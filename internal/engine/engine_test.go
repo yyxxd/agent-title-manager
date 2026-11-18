@@ -122,10 +122,14 @@ func TestConcurrentSubmissionAndReadback(t *testing.T) {
 	}
 	eventually(t, func() bool { return latest(t, e).SyncStatus == "synced" })
 	s := call[dailyStats](t, e, "stats.daily", dateRequest{})
-	if s.Attempts != 1 || s.Renames != 1 || s.CachedTokens != 12 || s.InputTokens != 50 || s.OutputTokens != 8 ||
+	if s.Attempts != 1 || s.Renames != 1 || !hasCount(s.CachedTokens, 12) || !hasCount(s.InputTokens, 50) || !hasCount(s.OutputTokens, 8) ||
 		s.UnknownUsage != 0 || requests.Load() != 1 || writes.Load() != 2 {
 		t.Fatal(s, requests.Load(), writes.Load())
 	}
+}
+
+func hasCount(count *int64, expected int64) bool {
+	return count != nil && *count == expected
 }
 
 func submitConcurrently(t *testing.T, e *Engine, p submission) {
