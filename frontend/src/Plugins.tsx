@@ -54,7 +54,7 @@ export function Plugins() {
       <div className="plugin-copy">
         <h3>{plugin.name}</h3>
         <div className="muted item-meta">{plugin.version && <span>v{plugin.version}</span>}<span>{states[plugin.status] ?? plugin.status}</span></div>
-        <PluginDetail detail={plugin.detail} />
+        <PluginDetail detail={plugin.detail} status={plugin.status} />
         {plugin.entryPath && <details><summary>启动入口</summary><code>{plugin.entryPath}</code></details>}
       </div>
       <div className="actions">
@@ -79,13 +79,14 @@ export function Plugins() {
   }
 }
 
-function PluginDetail({ detail }: { detail?: string }) {
+function PluginDetail({ detail, status }: Pick<Plugin, 'detail' | 'status'>) {
   const text = detail?.trim();
   if (!text) return null;
-  if (text.length > 120 || /[\r\n]/.test(text)) {
+  const canCollapse = status === 'enabled' || status === 'disabled';
+  if (canCollapse && (text.length > 120 || /[\r\n]/.test(text))) {
     return <details><summary>使用说明</summary><p className="plugin-detail">{text}</p></details>;
   }
-  return <p className="muted">{text}</p>;
+  return <p className="muted plugin-detail">{text}</p>;
 }
 
 function Transfer({ id, busy, dismiss, submit }: {
