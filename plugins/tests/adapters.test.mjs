@@ -136,6 +136,43 @@ test("Claude UserPromptSubmit 遇到仍在入队的候选只领取一次", async
   assert.equal(claims, 1);
 });
 
+test("Claude 确认轮忽略宿主记账，保留附件、工具及额外上下文", async t => {
+  const attachment = fields => ({ type: "attachment", attachment: fields });
+  const promptSnapshot = attachment({ type: "prompt_snapshot", systemPrompt: ["Fixture system prompt"], tools: [],
+    reminderFold: false, echoWireToolInputs: true, contextRendering: "fixture" });
+  const hook = { type: "hook_success", hookEvent: "Stop", content: "", stdout: "{}\n", stderr: "", exitCode: 0 };
+  const cases = [
+    ["纯确认", [], [], true],
+    ["确认前的文件", [attachment({ type: "file" })], []],
+    ["确认后的图片", [], [attachment({ type: "image" })]],
+    ["额外上下文", [], [attachment({ type: "instructions", files: [{ content: "Fixture context" }] })]],
+    ["未知附件", [], [attachment({ type: "unknown" })]],
+    ["未知快照字段", [], [attachment({ ...promptSnapshot.attachment, content: "Fixture context" })]],
+    ["Hook 上下文", [attachment({ ...hook, content: "Fixture context" })], []],
+    ["Hook 输出", [], [attachment({ ...hook, stdout: '{"additionalContext":"Fixture context"}' })]],
+    ["Hook 错误输出", [], [attachment({ ...hook, stderr: "Fixture error" })]],
+    ["工具 Hook", [], [attachment({ ...hook, hookEvent: "PostToolUse" })]],
+    ["工具结果", [], [{ type: "user", uuid: "tool-result", message: { content: [{ type: "tool_result" }] } }]],
+    ["工具调用", [], [{ type: "assistant", uuid: "tool-call", message: {
+      content: [{ type: "text", text: "Checking fixture" }, { type: "tool_use" }],
+    } }]],
+    ["更换话题", [{ type: "user", uuid: "topic", message: { content: "Switch to another topic" } }], []],
+  ];
+  for (const [name, before, after, confirmationOnly] of cases) await t.test(name, async subtest => {
+    const { root, input } = await claudeFixture(subtest, [
+      promptSnapshot, attachment(hook), { type: "custom-title", customTitle: "验证标题" }, ...before,
+      { type: "user", uuid: "latest-user", message: { content: [{ type: "text", text: "OK" }] } }, ...after,
+      { type: "assistant", uuid: "latest-answer", message: { content: [{ type: "text", text: "Acknowledged" }] } },
+      attachment(hook),
+    ]);
+    let submitted;
+    await handleClaude("stop", { ...input, hook_event_name: "Stop" },
+      async (method, params) => { assert.equal(method, "event.submit"); submitted = params; }, undefined, binding, root);
+    assert.equal(submitted.confirmationOnly, confirmationOnly);
+    assert.equal(submitted.currentTitle, "验证标题");
+  });
+});
+
 test("Claude 长记录从文件开头取目标；尾部确认有原生附件时保留正常处理", async t => {
   const fill = { type: "progress", data: "x".repeat(800 * 1024) };
   const boundary = { type: "assistant", uuid: "previous-answer", message: { content: "之前的完整答复" } };
