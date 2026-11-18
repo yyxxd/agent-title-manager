@@ -15,12 +15,14 @@ type usage struct {
 }
 
 type modelResult struct {
-	decision   decision
-	usage      usage
-	actualTier string
-	status     string
-	message    string
-	confirmed  bool
+	decision    decision
+	usage       usage
+	actualTier  string
+	actualModel string
+	status      string
+	message     string
+	confirmed   bool
+	failure     failureCode
 }
 
 type decision struct {
@@ -101,7 +103,7 @@ func (e *Engine) finishModel(job *modelJob, r modelResult) error {
 		if err != nil {
 			return false, err
 		}
-		title, status, finalized := modelOutcome(base, current, r, job.settings.MaxTitleLength, now)
+		title, status, finalized, reason := modelOutcome(base, current, r, job.settings.MaxTitleLength, now)
 		if status == "candidate" {
 			conflict, err := titleConflict(ctx, tx, job.id, title)
 			if err != nil {
@@ -111,30 +113,34 @@ func (e *Engine) finishModel(job *modelJob, r modelResult) error {
 				title, status, finalized = base, "kept", &now
 			}
 		}
-		_, err = tx.ExecContext(ctx, `UPDATE events SET status=?,title=?,updated=?,finalized=? WHERE id=? AND status='running'`,
-			status, title, now, finalized, job.id)
+		_, err = tx.ExecContext(ctx, `UPDATE events SET status=?,title=?,updated=?,finalized=?,
+			failure_code=?,failure_length=?,failure_limit=? WHERE id=? AND status='running'`,
+			status, title, now, finalized, reason.Code, reason.Length, reason.Limit, job.id)
 		return true, err
 	})
 	return err
 }
 
-func modelOutcome(base string, current bool, r modelResult, maxLength int, now int64) (string, string, *int64) {
+func modelOutcome(base string, current bool, r modelResult, maxLength int, now int64) (string, string, *int64, failureReason) {
 	switch {
 	case !current || r.status == "stale":
-		return base, "stale", nil
+		return base, "stale", nil, failureReason{}
 	case r.status == "disabled":
-		return base, "disabled", nil
+		return base, "disabled", nil, failureReason{}
 	case r.status == "interrupted":
-		return base, "interrupted", nil
+		return base, "interrupted", nil, failureReason{Code: r.failure}
 	case r.status != "completed":
-		return base, "failed", nil
+		if r.failure == "" {
+			r.failure = failureGeneric
+		}
+		return base, "failed", nil, failureReason{Code: r.failure}
 	case r.decision.Action == "keep" || r.decision.Title == base:
-		return base, "kept", &now
-	case validTitle(r.decision.Title, maxLength):
-		return r.decision.Title, "candidate", nil
-	default:
-		return base, "failed", nil
+		return base, "kept", &now, failureReason{}
 	}
+	if reason := titleFailure(r.decision.Title, maxLength); reason.Code != "" {
+		return base, "failed", nil, reason
+	}
+	return r.decision.Title, "candidate", nil, failureReason{}
 }
 
 func (e *Engine) invoke(parent context.Context, req attemptRequest) (modelResult, error) {
@@ -167,8 +173,8 @@ func (e *Engine) invoke(parent context.Context, req attemptRequest) (modelResult
 	}
 	finishCtx, finishCancel := context.WithTimeout(context.Background(), 3*time.Second)
 	defer finishCancel()
-	_, err := e.db.ExecContext(finishCtx, `UPDATE attempts SET status=?,actual_tier=?,input_tokens=?,output_tokens=?,cached_tokens=? WHERE id=?`,
-		r.status, r.actualTier, r.usage.Input, r.usage.Output, r.usage.Cached, id)
+	_, err := e.db.ExecContext(finishCtx, `UPDATE attempts SET status=?,actual_tier=?,actual_model=?,input_tokens=?,output_tokens=?,cached_tokens=? WHERE id=?`,
+		r.status, r.actualTier, r.actualModel, r.usage.Input, r.usage.Output, r.usage.Cached, id)
 	return r, err
 }
 
@@ -205,6 +211,9 @@ func (e *Engine) startAttempt(ctx context.Context, req attemptRequest) (int64, e
 }
 
 func providerInfo(provider string, s Settings) (model, source, tier string) {
+	if provider == "claude" {
+		return s.ClaudeModel, "claude_subscription", "default"
+	}
 	if provider == "api" {
 		source := "openai_compatible"
 		switch s.APIProtocol {
@@ -237,6 +246,7 @@ func response(data []byte, u usage, tier string) modelResult {
 	if err != nil {
 		r.status = "invalid_response"
 		r.message = err.Error()
+		r.failure = failureResponse
 	}
 	return r
 }

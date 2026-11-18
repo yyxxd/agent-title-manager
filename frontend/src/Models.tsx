@@ -1,7 +1,8 @@
-import { useEffect, useRef, useState, type FormEvent } from 'react';
+import { useEffect, useRef, useState, type FormEvent, type ReactNode } from 'react';
 import { AppearanceRow, type AppearanceControl } from './Appearance';
 import { ApiFields } from './ModelApiFields';
 import { ModelSwitch } from './ModelSwitch';
+import { nativeChoice, SubscriptionFields, useSubscriptionDraft } from './SubscriptionFields';
 import { rpc, type Preferences, type Settings } from './rpc';
 import { Empty, Section, Status, useAction, useLoad } from './ui';
 import './models.css';
@@ -17,7 +18,7 @@ export function Models({ appearance }: { appearance: AppearanceControl }) {
 }
 
 function ModelForm({ initial }: { initial: Settings }) {
-  const { settings, edit, save, test, actions, credentials } = useModelDraft(initial);
+  const { settings, edit, editNative, save, test, actions, credentials, catalog, selected } = useModelDraft(initial);
   const { provider, fallbackEnabled } = settings;
   const apiDetails = useRef<HTMLDetailsElement>(null);
   useEffect(() => {
@@ -26,7 +27,17 @@ function ModelForm({ initial }: { initial: Settings }) {
 
   return <form onSubmit={save}>
     <fieldset disabled={actions.busy} aria-busy={actions.busy}>
-      <ProviderFields settings={settings} edit={edit} busy={actions.busy} />
+      <ProviderFields settings={settings} edit={edit} busy={actions.busy}
+        native={provider !== 'api' && <SubscriptionFields key={provider} provider={provider}
+          choice={nativeChoice(settings, provider)} catalog={catalog} selected={selected}
+          onRefresh={() => {
+            actions.reset();
+            catalog.refresh();
+          }}
+          onChange={(choice) => {
+            actions.reset();
+            editNative(provider, choice);
+          }} />} />
       <details className="settings-disclosure" ref={apiDetails} onInvalidCapture={() => {
         if (apiDetails.current) apiDetails.current.open = true;
       }}>
@@ -34,9 +45,7 @@ function ModelForm({ initial }: { initial: Settings }) {
         <ApiFields settings={settings} edit={edit} {...credentials} busy={actions.busy} />
       </details>
       <Section title="标题规则">
-        <div className="settings-rows">
-          <label>标题最大长度<input type="number" min="8" max="48" required value={Number.isNaN(settings.maxTitleLength) ? '' : settings.maxTitleLength} onChange={(event) => edit('maxTitleLength', event.target.valueAsNumber)} /></label>
-        </div>
+        <TitleLengthOptions value={settings.maxTitleLength} onChange={(length) => edit('maxTitleLength', length)} />
       </Section>
       <div className="form-actions">
         <button type="button" onClick={() => {
@@ -50,21 +59,41 @@ function ModelForm({ initial }: { initial: Settings }) {
   </form>;
 }
 
+const titleLengthOptions = [
+  { value: 15, label: '简短', example: '🧩 会话标题｜自动命名' },
+  { value: 30, label: '详细', example: '🧩 会话标题｜自动命名并同步到 Orca' },
+];
+
+function TitleLengthOptions({ value, onChange }: { value: number; onChange: (length: number) => void }) {
+  return <fieldset className="title-length-options" aria-label="标题长度">
+    {titleLengthOptions.map((option) => <label className="title-length-option" key={option.value}>
+      <input type="radio" name="title-length" value={option.value} checked={value === option.value}
+        onChange={() => onChange(option.value)} />
+      <span><strong>{option.label}</strong><span className="title-length-example">{option.example}</span></span>
+    </label>)}
+  </fieldset>;
+}
+
 type Edit = <K extends keyof Settings>(field: K, value: Settings[K]) => void;
 
 function useModelDraft(initial: Settings) {
   const [settings, setSettings] = useState(() => ({ ...initial, apiProtocol: initial.apiProtocol ?? 'chat' }));
   const [saved, setSaved] = useState(settings);
+  const { catalog, selected, editNative, nativeDraft } = useSubscriptionDraft(settings, setSettings);
   const actions = useAction();
   const credentials = useCredentialDraft(settings.apiBaseUrl, saved.apiBaseUrl);
   const { addressChanged, keyValue, removeKey, apiKey, setKey, setRemoveKey } = credentials;
 
-  const edit: Edit = (field, value) => setSettings((old) => ({ ...old, [field]: value }));
+  const edit: Edit = (field, value) => {
+    actions.reset();
+    if (field === 'provider' && value !== settings.provider) catalog.refresh();
+    setSettings((old) => ({ ...old, [field]: value }));
+  };
   function save(event: FormEvent) {
     event.preventDefault();
     void actions.run(async () => {
       try {
-        const { hasApiKey: _, ...payload } = settings;
+        const { hasApiKey: _, ...payload } = nativeDraft();
         if (addressChanged && saved.hasApiKey && !keyValue && !removeKey) {
           throw new Error('API 地址已更改，请输入新密钥或开启「保存时移除旧密钥」。');
         }
@@ -83,15 +112,15 @@ function useModelDraft(initial: Settings) {
   }
   function test() {
     return actions.run(async () => {
-      const { provider, codexModel, fast, apiProtocol, apiBaseUrl, apiModel } = settings;
+      const { provider, codexModel, codexEffort, claudeModel, claudeEffort, fast, maxTitleLength, apiProtocol, apiBaseUrl, apiModel } = nativeDraft(true);
       if (provider === 'api' && (!apiBaseUrl.trim() || !apiModel.trim())) throw new Error('请先填写 API 地址和模型。');
-      const target = provider === 'api' ? { apiProtocol, apiBaseUrl, apiModel, apiKey } : { codexModel, fast };
-      const result = await rpc<{ ok: boolean; model: string }>('providers.test', { provider, ...target });
+      const target = provider === 'api' ? { apiProtocol, apiBaseUrl, apiModel, apiKey } : { codexModel, codexEffort, claudeModel, claudeEffort, fast };
+      const result = await rpc<{ ok: boolean; model: string }>('providers.test', { provider, maxTitleLength, ...target });
       if (!result.ok) throw new Error('连接测试未通过。');
       return result.model ? `连接成功 · ${result.model}` : '连接成功。';
     });
   }
-  return { settings, edit, save, test, actions, credentials };
+  return { settings, edit, editNative, save, test, actions, credentials, catalog, selected };
 }
 
 function useCredentialDraft(address: string, savedAddress: string) {
@@ -114,15 +143,15 @@ function useCredentialDraft(address: string, savedAddress: string) {
   };
 }
 
-function ProviderFields({ settings, edit, busy }: { settings: Settings; edit: Edit; busy: boolean }) {
+function ProviderFields({ settings, edit, busy, native }: { settings: Settings; edit: Edit; busy: boolean; native: ReactNode }) {
   return <Section title="命名来源">
     <div className="settings-rows">
       <label>首选来源<select value={settings.provider} onChange={(event) => edit('provider', event.target.value as Settings['provider'])}>
-        <option value="codex">Codex 订阅</option><option value="api">自定义 API</option>
+        <option value="codex">Codex 订阅</option><option value="claude">Claude Code</option><option value="api">自定义 API</option>
       </select></label>
-      <label>Codex 模型<input value={settings.codexModel} onChange={(event) => edit('codexModel', event.target.value)} /></label>
-      <ModelSwitch checked={settings.fast} busy={busy} onChange={(checked) => edit('fast', checked)}>请求 Codex Fast 档位</ModelSwitch>
-      <ModelSwitch checked={settings.fallbackEnabled} busy={busy} onChange={(checked) => edit('fallbackEnabled', checked)}>Codex 确认失败时改用 API</ModelSwitch>
+      {native}
+      {settings.provider === "codex" && <ModelSwitch checked={settings.fast} busy={busy} onChange={(checked) => edit('fast', checked)}>请求 Codex Fast 档位</ModelSwitch>}
+      {settings.provider === "codex" && <ModelSwitch checked={settings.fallbackEnabled} busy={busy} onChange={(checked) => edit('fallbackEnabled', checked)}>Codex 确认失败时改用 API</ModelSwitch>}
     </div>
   </Section>;
 }

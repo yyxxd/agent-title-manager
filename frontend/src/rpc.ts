@@ -60,10 +60,16 @@ export type ApiProtocol = 'chat' | 'responses' | 'anthropic' | 'gemini';
 export type ApiTarget = { apiProtocol: ApiProtocol; apiBaseUrl: string };
 export type ApiEndpoints = { generationUrl: string; modelsUrl: string };
 export type ApiModel = { id: string; name?: string };
+export type NativeProvider = 'codex' | 'claude';
+export type SubscriptionModel = ApiModel & { resolvedModel?: string; efforts: string[]; defaultEffort?: string };
+export type SubscriptionCatalog = { items: SubscriptionModel[]; notice?: string; authRequired?: boolean };
 
 export type Settings = ApiTarget & {
-  provider: 'api' | 'codex';
+  provider: 'api' | NativeProvider;
   codexModel: string;
+  codexEffort: string;
+  claudeModel: string;
+  claudeEffort: string;
   fast: boolean;
   apiModel: string;
   hasApiKey: boolean;
@@ -84,6 +90,7 @@ export type Plugin = {
 export type Attempt = TokenUsage & {
   provider: string;
   model: string;
+  actualModel?: string;
   status: string;
   startedAt?: string;
   requestedTier?: string;
@@ -99,6 +106,7 @@ export type RecordItem = {
   updatedAt: string;
   syncStatus?: string;
   syncError?: string;
+  failure?: { code: string; length?: number; limit?: number };
   attempts: Attempt[] | null;
 };
 
@@ -106,7 +114,7 @@ export type Preferences = { startup: boolean; startupAvailable: boolean };
 
 const agents: Record<string, string> = { codex: 'Codex', claude: 'Claude', pi: 'Pi', orca: 'Orca' };
 export const agentName = (id: string) => Object.hasOwn(agents, id) ? agents[id] : id;
-export const providerName = (id: string) => id === 'api' ? '自定义 API' : agentName(id);
+export const providerName = (id: string) => id === 'api' ? '自定义 API' : id === 'claude' ? 'Claude Code' : agentName(id);
 export const num = (value: number) => new Intl.NumberFormat('zh-CN').format(value);
 export const token = (value?: number | null, missing = '—') => typeof value === 'number' ? num(value) : missing;
 export const formatTime = (value: string) => new Date(value).toLocaleString('zh-CN', { hour12: false });

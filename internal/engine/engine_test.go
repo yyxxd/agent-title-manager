@@ -117,6 +117,9 @@ func TestConcurrentSubmissionAndReadback(t *testing.T) {
 		}
 	}
 	eventually(t, func() bool { return latest(t, e).SyncStatus == "failed" })
+	if r := latest(t, e); r.Status != "applied" || r.Failure != nil {
+		t.Fatal(r)
+	}
 	if !call[accepted](t, e, "sync.retry", idRequest{c.ID}).Accepted {
 		t.Fatal("重试未入队")
 	}

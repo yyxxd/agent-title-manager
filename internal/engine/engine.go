@@ -29,6 +29,10 @@ type Engine struct {
 	closeErr            error
 	modelWake, syncWake chan struct{}
 	generate            func(context.Context, attemptRequest, func() error) modelResult
+	catalog             func(context.Context, string) (subscriptionCatalog, error)
+	catalogMu           sync.Mutex
+	catalogSequence     uint64
+	catalogSnapshots    map[string]subscriptionSnapshot
 	syncer              func(context.Context, string, string, string) error
 	isEnabled           func(context.Context, string) bool
 	now                 func() time.Time
@@ -64,6 +68,7 @@ func Open(dataDir string, syncer func(context.Context, string, string, string) e
 	e := &Engine{db: db, dir: dataDir, lock: lock, ctx: ctx, cancel: cancel, now: time.Now,
 		modelWake: make(chan struct{}, 1), syncWake: make(chan struct{}, 1), syncer: syncer}
 	e.generate = e.runProvider
+	e.catalog = e.subscriptionModels
 	if len(enabled) == 1 {
 		e.isEnabled = enabled[0]
 	}
@@ -145,10 +150,16 @@ func (e *Engine) Handle(ctx context.Context, method string, params json.RawMessa
 		return dispatch(params, func(p providerTest) (testResult, error) { return e.testProvider(ctx, p) })
 	case "providers.models":
 		return dispatch(params, func(p modelsRequest) (modelCatalog, error) { return e.listModels(ctx, p) })
+	case "providers.subscriptionModels":
+		return dispatch(params, func(p subscriptionRequest) (subscriptionCatalog, error) {
+			return e.refreshSubscription(ctx, p.Provider)
+		})
 	case "providers.endpoints":
 		return dispatch(params, func(p endpointRequest) (apiEndpoints, error) { return e.previewEndpoints(ctx, p) })
 	case "stats.daily":
 		return dispatch(params, func(p dateRequest) (dailyStats, error) { return e.daily(ctx, p) })
+	case "stats.range":
+		return dispatch(params, func(p dateRangeRequest) (dailyStats, error) { return e.dateRange(ctx, p) })
 	case "records.list":
 		return dispatch(params, func(p listRequest) (recordList, error) { return e.records(ctx, p) })
 	case "sync.retry", "sync.adopt":

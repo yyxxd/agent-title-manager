@@ -62,6 +62,27 @@ UPDATE settings SET api_legacy=1 WHERE api_url<>'';
 PRAGMA user_version=3;
 `
 
+const schemaV4 = `
+ALTER TABLE events ADD COLUMN failure_code TEXT NOT NULL DEFAULT '';
+ALTER TABLE events ADD COLUMN failure_length INTEGER;
+ALTER TABLE events ADD COLUMN failure_limit INTEGER;
+PRAGMA user_version=4;
+`
+
+const schemaV5 = `
+UPDATE settings SET max_length=CASE WHEN max_length<=22 THEN 15 ELSE 30 END
+	WHERE id=1 AND max_length NOT IN (15,30);
+PRAGMA user_version=5;
+`
+
+const schemaV6 = `
+ALTER TABLE settings ADD COLUMN codex_effort TEXT NOT NULL DEFAULT 'low';
+ALTER TABLE settings ADD COLUMN claude_model TEXT NOT NULL DEFAULT '';
+ALTER TABLE settings ADD COLUMN claude_effort TEXT NOT NULL DEFAULT '';
+ALTER TABLE attempts ADD COLUMN actual_model TEXT NOT NULL DEFAULT '';
+PRAGMA user_version=6;
+`
+
 func initialize(db *sql.DB) error {
 	for _, pragmas := range []string{"PRAGMA busy_timeout=2500", "PRAGMA foreign_keys=ON", "PRAGMA journal_mode=WAL", "PRAGMA secure_delete=ON"} {
 		if _, err := db.Exec(pragmas); err != nil {
@@ -92,9 +113,30 @@ func initialize(db *sql.DB) error {
 		if _, err = tx.Exec(schemaV3); err != nil {
 			return err
 		}
+		fallthrough
 	case 3:
+		if _, err = tx.Exec(schemaV4); err != nil {
+			return err
+		}
+		fallthrough
+	case 4:
+		if _, err = tx.Exec(schemaV5); err != nil {
+			return err
+		}
+		fallthrough
+	case 5:
+		if _, err = tx.Exec(schemaV6); err != nil {
+			return err
+		}
+		fallthrough
+	case 6:
 	default:
 		return fmt.Errorf("无法读取数据库版本 %d", version)
+	}
+	if version == 0 {
+		if _, err = tx.Exec("UPDATE settings SET codex_model='',codex_effort='' WHERE id=1"); err != nil {
+			return err
+		}
 	}
 	for _, recovery := range []string{
 		"UPDATE attempts SET status='interrupted' WHERE status='running'",

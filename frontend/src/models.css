@@ -41,9 +41,10 @@
 }
 
 .model-switch input:focus-visible + .model-switch-track {
-  outline: 2px solid var(--accent);
-  outline-offset: 3px;
+  outline: 2px solid var(--focus-color);
+  outline-offset: -2px;
 }
+.model-switch input:checked:focus-visible + .model-switch-track { outline-color: var(--on-accent); }
 
 .model-switch:has(input:disabled) { cursor: default; }
 .model-switch input:disabled + .model-switch-track { opacity: .58; }
@@ -52,30 +53,28 @@
   .model-switch-track { border-color: ButtonText; }
   .model-switch-track::before { background: ButtonText; }
   .model-switch input:checked + .model-switch-track { border-color: Highlight; }
+  .model-switch input:checked:focus-visible + .model-switch-track { outline-color: Highlight; }
   .model-switch input:checked + .model-switch-track::before { background: Highlight; }
 }
 
-.model-settings .model-api > label:not(.model-switch), .model-api .model-endpoints {
-  grid-template-columns: minmax(110px, 1fr) minmax(0, 2fr);
+@media (min-width: 481px) {
+  .model-settings :is(.setting-row, .settings-rows > label) {
+    grid-template-columns: minmax(0, 1fr) minmax(0, clamp(230px, 50%, 500px));
+  }
 }
 
-.model-api .model-endpoints {
-  min-height: 0;
-  row-gap: 5px;
-  border-block-start: 1px solid var(--rule);
-  color: var(--muted);
-  font-size: 13px;
-  background: var(--ground);
-}
+.model-key-note { padding: 0 16px 7px; }
 
-.model-endpoints dd { min-width: 0; }
-.model-endpoints code { color: var(--ink); }
-.model-key-note { padding: 0 14px 7px; }
-
-.model-discovery { padding: 0 14px 10px; }
+.model-discovery { padding: 0 16px 10px; }
 .model-discovery-controls { display: flex; justify-content: flex-end; gap: 8px; }
 .model-discovery-controls input { max-width: 230px; }
 .model-discovery .notice { margin: 8px 0 0; }
+
+.subscription-controls { display: flex; gap: 8px; min-width: 0; }
+.subscription-controls .model-picker-trigger { flex: 1; min-width: 0; justify-content: space-between; }
+.subscription-controls .model-picker-trigger span { overflow: hidden; text-overflow: ellipsis; }
+.subscription-controls .model-picker-trigger svg { flex: none; }
+.subscription-controls .notice { overflow-wrap: anywhere; }
 
 .model-options {
   max-height: 15rem;
@@ -97,14 +96,30 @@
   border-color: transparent;
 }
 
-.model-options button:focus-visible { outline-offset: -2px; }
 .model-options button[aria-pressed="true"] { background: var(--raised); font-weight: 600; }
 
+.title-length-options { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px; padding: 10px 16px; }
+.title-length-option {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  align-items: start;
+  gap: 8px;
+  padding: 8px 10px;
+  border: 1px solid var(--rule);
+  border-radius: 6px;
+  cursor: pointer;
+}
+.title-length-option:hover { background: var(--field-hover); }
+.title-length-option:has(input:checked) { border-color: var(--accent); background: var(--blue-bg); }
+.title-length-option:has(input:focus-visible) { outline: 2px solid var(--focus-color); outline-offset: -2px; }
+.title-length-option input { margin: 4px 0 0; accent-color: var(--accent); outline: none; }
+.title-length-option input:disabled { cursor: not-allowed; }
+.title-length-example { display: block; color: var(--muted); font-size: 13px; overflow-wrap: anywhere; }
+
 @media (max-width: 480px) {
-  .model-settings .model-api > label:not(.model-switch), .model-api .model-endpoints {
+  .title-length-options { grid-template-columns: minmax(0, 1fr); }
+  .model-settings .model-api > :is(label:not(.model-switch), .api-url-row) {
     grid-template-columns: minmax(0, 1fr);
     gap: 4px;
   }
-
-  .model-endpoints dd + dt { margin-top: 4px; }
 }
