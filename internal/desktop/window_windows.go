@@ -1,0 +1,94 @@
+package desktop
+
+import (
+	_ "embed"
+	"io/fs"
+	"os"
+	"path/filepath"
+	"slices"
+	"strings"
+	"sync/atomic"
+
+	"github.com/wailsapp/wails/v3/pkg/application"
+	"github.com/wailsapp/wails/v3/pkg/events"
+	"github.com/wailsapp/wails/v3/pkg/w32"
+)
+
+//go:embed icon.png
+var icon []byte
+
+const appName = "Agent Title Manager"
+
+//go:embed version.txt
+var defaultVersion string
+
+var buildVersion string
+
+func versionedAppName() string {
+	version := buildVersion
+	if version == "" {
+		version = strings.TrimSpace(defaultVersion)
+	}
+	return appName + " " + version
+}
+
+func Run(dir string, assets fs.FS, service *Service) error {
+	index, err := fs.ReadFile(assets, "index.html")
+	if err != nil {
+		return err
+	}
+	preference := loadAppearance(dir, w32.IsCurrentlyDarkMode())
+	service.appearance = preference
+	var primary atomic.Pointer[application.WebviewWindow]
+	app := application.New(application.Options{
+		Name:     appName,
+		Icon:     icon,
+		Assets:   application.AssetOptions{Handler: application.BundledAssetFileServer(assets), Middleware: preference.initialPage(index)},
+		Services: []application.Service{application.NewService(service)},
+		Windows: application.WindowsOptions{
+			DisableQuitOnLastWindowClosed: true,
+			WebviewUserDataPath:           filepath.Join(dir, "WebView2"),
+		},
+		SingleInstance: &application.SingleInstanceOptions{
+			UniqueID: "com.yyxxd.agent-title-manager" + service.scope,
+			OnSecondInstanceLaunch: func(data application.SecondInstanceData) {
+				if window := primary.Load(); window != nil && !slices.Contains(data.Args, "--background") {
+					show(window)
+				}
+			},
+		},
+	})
+	initial := preference.snapshot()
+	background, foreground := initial.colours()
+	window := app.Window.NewWithOptions(application.WebviewWindowOptions{
+		Title: versionedAppName(), Width: 1080, Height: 780, MinWidth: 450, MinHeight: 450,
+		URL: "/", Hidden: slices.Contains(os.Args[1:], "--background"),
+		BackgroundColour: background,
+		Windows:          appearanceWindowOptions(initial, background, foreground),
+	})
+	primary.Store(window)
+	window.RegisterHook(events.Common.WindowClosing, func(event *application.WindowEvent) {
+		event.Cancel()
+		window.Hide()
+	})
+	service.quit = app.Quit
+	connectAppearance(app, window, service)
+	setupTray(app, window)
+	return app.Run()
+}
+
+func show(window *application.WebviewWindow) {
+	window.Show()
+	window.Restore()
+	window.Focus()
+}
+
+func setupTray(app *application.App, window *application.WebviewWindow) {
+	menu := application.NewMenu()
+	menu.Add("打开 Agent Title Manager").OnClick(func(_ *application.Context) { show(window) })
+	menu.AddSeparator()
+	menu.Add("退出").OnClick(func(_ *application.Context) { app.Quit() })
+	tray := app.SystemTray.New().SetIcon(icon).SetMenu(menu)
+	tray.SetTooltip(versionedAppName())
+	tray.OnClick(func() { show(window) })
+}
