@@ -4,6 +4,11 @@ import { basename, dirname, isAbsolute, join, relative, resolve } from "node:pat
 import { fingerprint, isTextConfirmation, nativeOrigin, recentTurns, safeID, textOf } from "./client.mjs";
 
 const maxTailBytes = 768 * 1024;
+const promptSnapshotFields = new Set(["type", "systemPrompt", "tools", "cliPrefix", "reminderFold", "systemTurns",
+  "toolChangeHeader", "inlineTools", "keptReminders", "echoWireToolInputs", "contextRendering"]);
+const hookSuccessFields = new Set(["type", "hookName", "toolUseID", "hookEvent", "content", "stdout",
+  "stderr", "exitCode", "command", "durationMs"]);
+const bookkeepingHooks = new Set(["SessionStart", "UserPromptSubmit", "Stop"]);
 
 export function identify(input, configDir = process.env.CLAUDE_CONFIG_DIR || join(homedir(), ".claude")) {
   const sessionId = input.session_id;
@@ -66,12 +71,24 @@ function cleanUser(content) {
   return textOf(content).replace(/<(system-reminder|local-command-caveat|ide_opened_file|ide_selection)>[\s\S]*?<\/\1>/g, "").trim();
 }
 
+function isBookkeeping(attachment) {
+  // 转录中的提示词快照只是宿主对当前环境的记录。
+  if (attachment?.type === "prompt_snapshot") {
+    return Array.isArray(attachment.systemPrompt) && Object.keys(attachment).every(key => promptSnapshotFields.has(key));
+  }
+  if (attachment?.type !== "hook_success" || typeof attachment.stdout !== "string") return false;
+  const stdout = attachment.stdout.trim();
+  return bookkeepingHooks.has(attachment.hookEvent) && attachment.exitCode === 0 &&
+    attachment.content === "" && attachment.stderr === "" && (!stdout || /^\{\s*\}$/.test(stdout)) &&
+    Object.keys(attachment).every(key => hookSuccessFields.has(key));
+}
+
 function collect(line, sessionId) {
   let record;
   try { record = JSON.parse(line); } catch { return undefined; }
   if (!record || (record.sessionId && record.sessionId !== sessionId) || record.isSidechain) return undefined;
   if (record.type === "custom-title" && typeof record.customTitle === "string") return { title: record.customTitle };
-  if (record.type === "attachment") return { extra: true };
+  if (record.type === "attachment") return isBookkeeping(record.attachment) ? undefined : { extra: true };
   if (!safeID(record.uuid) || record.isMeta || record.isSynthetic || record.isCompactSummary) return undefined;
   const role = record.type;
   if (role !== "user" && role !== "assistant") return undefined;
@@ -85,8 +102,10 @@ function collect(line, sessionId) {
     const extras = record.attachments?.length || record.message?.attachments?.length || record.imagePasteIds?.length;
     return { id: record.uuid, role, text, confirmation: !extras && isTextConfirmation(content) };
   }
-  return text ? { id: record.uuid, role, text, final: !parts.some(part => part?.type === "tool_use") &&
-    record.message?.stop_reason !== "tool_use" } : parts.length ? { extra: true } : undefined;
+  const tools = parts.some(part => typeof part?.type === "string" && /(?:^|_)tool_(?:use|result)$/.test(part.type)) ||
+    record.message?.stop_reason === "tool_use";
+  if (text) return { id: record.uuid, role, text, final: !tools, extra: tools };
+  if (parts.length || tools) return { extra: true };
 }
 
 export function originalGoal({ path, sessionId }) {

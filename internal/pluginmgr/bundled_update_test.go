@@ -2,7 +2,6 @@ package pluginmgr
 
 import (
 	"context"
-	"os"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -15,9 +14,11 @@ func TestEnabledBuiltinDiscoversAndAppliesBundledUpdate(t *testing.T) {
 	const original = "[plugins.\"oil-codex-title@oil-codex-title-local\"]\nenabled = true\n"
 	writeFixture(t, config, original)
 	hooks := filepath.Join(home, "hooks.json")
+	packageFixture(t, filepath.Join(m.bundled, "codex"), "codex", "codex", "0.1.0")
 	mustInvoke(t, m, "enable", request{ID: "codex", Takeover: true})
-	v1Hooks := readFixture(t, hooks)
-	packageFixture(t, filepath.Join(m.bundled, "codex"), "codex", "codex", "2.0.0")
+	v1Dir := useOldCodexRegistration(t, m, hooks)
+	writeFixture(t, hooks, strings.Replace(readFixture(t, hooks), "{", `{"userEdit":true,`, 1))
+	packageFixture(t, filepath.Join(m.bundled, "codex"), "codex", "codex", "0.1.1")
 	listed, err := m.Handle(context.Background(), "plugins.list", nil)
 	if err != nil {
 		t.Fatal(err)
@@ -25,23 +26,49 @@ func TestEnabledBuiltinDiscoversAndAppliesBundledUpdate(t *testing.T) {
 	items := listed.(struct {
 		Items []Item `json:"items"`
 	}).Items
-	if list := items[0]; !list.Enabled || list.Version != "1.0.0" || list.AvailableVersion != "2.0.0" {
+	if list := items[0]; !list.Enabled || list.Version != "0.1.0" || list.AvailableVersion != "0.1.1" {
 		t.Fatalf("upgrade is not visible: %+v", list)
 	}
 	got := mustInvoke(t, m, "update", request{ID: "codex", Source: "bundled"})
-	if !got.Enabled || !got.CanRestore || got.Version != "2.0.0" || got.AvailableVersion != "" || got.Status != "action_required" {
+	if !got.Enabled || !got.CanRestore || got.Version != "0.1.1" || got.AvailableVersion != "" || got.Status != "action_required" {
 		t.Fatalf("unexpected upgraded state: %+v", got)
 	}
-	if content := readFixture(t, hooks); content == v1Hooks || strings.Count(content, "test-entry.mjs") != 2 {
+	if content := readFixture(t, hooks); strings.Contains(content, v1Dir) || strings.Count(content, "test-entry.mjs") != 2 {
 		t.Fatal("upgrade did not replace both old hook registrations")
 	}
 	mustInvoke(t, m, "restore", request{ID: "codex"})
 	if readFixture(t, config) != original {
 		t.Fatal("upgrade lost legacy takeover information")
 	}
-	if _, err := os.Stat(hooks); !os.IsNotExist(err) {
-		t.Fatal("upgrade left manager-owned hooks after recovery")
+	if content := readFixture(t, hooks); strings.Contains(content, "test-entry.mjs") || !strings.Contains(content, `"userEdit": true`) {
+		t.Fatal("recovery did not preserve the user edit and remove manager-owned hooks")
 	}
+}
+
+func useOldCodexRegistration(t *testing.T, m *Manager, settings string) string {
+	t.Helper()
+	state, err := m.load()
+	if err != nil {
+		t.Fatal(err)
+	}
+	old := state.Items["codex"]
+	node, err := m.findExecutable("node.exe", true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	script := filepath.Join(m.packageDir(old.release), old.Manifest.Entry)
+	old.Entry = "\"" + node + "\" \"" + script + "\""
+	owned, err := registration(host{id: "codex", settings: settings}, old.Registration[0].Before, old.Entry, true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	writeFixture(t, settings, string(owned.After.Data))
+	old.Registration = []change{owned}
+	state.Items["codex"] = old
+	if err := m.save(state); err != nil {
+		t.Fatal(err)
+	}
+	return old.Dir
 }
 
 func TestBundledUpdateFailureKeepsOldHostRegistration(t *testing.T) {
