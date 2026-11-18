@@ -65,7 +65,15 @@ func TestProviderProtocolRoundTrips(t *testing.T) {
 			if s := call[Settings](t, e, "settings.get", nil); s.APIProtocol != protocolChat || s.APIBaseURL != "" {
 				t.Fatal(s)
 			}
-			call[Settings](t, e, "settings.save", testDraft)
+			p.APIBaseURL += fixture.generation
+			testDraft["apiBaseUrl"] = p.APIBaseURL
+			if s := call[Settings](t, e, "settings.save", testDraft); s.APIBaseURL != p.APIBaseURL {
+				t.Fatal(s.APIBaseURL, p.APIBaseURL)
+			}
+			if full := call[apiEndpoints](t, e, "providers.endpoints", p); full != endpoints {
+				t.Fatal(full, endpoints)
+			}
+			call[modelCatalog](t, e, "providers.models", p)
 			verifyProtocolNaming(t, e, fixture.source, false)
 			call[Settings](t, e, "settings.save", map[string]any{"provider": "codex", "fallbackEnabled": true})
 			verifyProtocolNaming(t, e, fixture.source, true)
@@ -181,6 +189,7 @@ func TestProviderEndpoints(t *testing.T) {
 		{protocolChat, "/proxy/v1/chat/completions", "", "/proxy/v1/chat/completions", "/proxy/v1/models"},
 		{protocolResponses, "", "demo", "/v1/responses", "/v1/models"},
 		{protocolResponses, "/proxy", "", "/proxy/responses", "/proxy/models"},
+		{protocolResponses, "/proxy/chat/completions/bridge", "", "/proxy/chat/completions/bridge/responses", "/proxy/chat/completions/bridge/models"},
 		{protocolResponses, "/proxy/v2/responses", "", "/proxy/v2/responses", "/proxy/v2/models"},
 		{protocolAnthropic, "", "demo", "/v1/messages", "/v1/models"},
 		{protocolAnthropic, "/claude", "", "/claude/v1/messages", "/claude/v1/models"},
@@ -188,6 +197,7 @@ func TestProviderEndpoints(t *testing.T) {
 		{protocolAnthropic, "/claude/messages", "", "/claude/messages", "/claude/models"},
 		{protocolGemini, "", "models/demo", "/v1beta/models/demo:generateContent", "/v1beta/models"},
 		{protocolGemini, "/proxy", "publisher/demo", "/proxy/models/publisher/demo:generateContent", "/proxy/models"},
+		{protocolGemini, "/proxy/responses-adapter", "demo", "/proxy/responses-adapter/models/demo:generateContent", "/proxy/responses-adapter/models"},
 		{protocolGemini, "/proxy/v1beta/models", "", "/proxy/v1beta/models/{model}:generateContent", "/proxy/v1beta/models"},
 		{protocolGemini, "/proxy/v1/models/demo:generateContent", "", "/proxy/v1/models/demo:generateContent", "/proxy/v1/models"},
 		{protocolGemini, "/proxy/v1/models/demo:generateContent", "new", "/proxy/v1/models/new:generateContent", "/proxy/v1/models"},
@@ -200,23 +210,80 @@ func TestProviderEndpoints(t *testing.T) {
 	}
 }
 
+func TestProviderConflictingFullEndpoints(t *testing.T) {
+	e := engineAt(t, t.TempDir(), nil)
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		t.Errorf("协议冲突时发出了 HTTP 请求 %s %s", r.Method, r.URL.Path)
+		w.WriteHeader(http.StatusBadRequest)
+	}))
+	defer server.Close()
+	const want = "API 协议与地址不匹配，请切换协议或修改 API 地址"
+	for _, fixture := range protocolFixtures {
+		for _, selection := range protocolFixtures {
+			if fixture.protocol == selection.protocol {
+				continue
+			}
+			t.Run(fixture.protocol+"-to-"+selection.protocol, func(t *testing.T) {
+				base := server.URL + "/proxy" + fixture.generation + "/"
+				assertProviderEndpointMismatch(t, e, selection.protocol, base, want)
+			})
+		}
+	}
+	if stats := call[dailyStats](t, e, "stats.daily", dateRequest{}); stats.Attempts != 0 {
+		t.Fatal(stats)
+	}
+}
+
+func assertProviderEndpointMismatch(t *testing.T, e *Engine, protocol, base, want string) {
+	t.Helper()
+	ctx := context.Background()
+	p, err := json.Marshal(map[string]any{"provider": "api", "apiProtocol": protocol, "apiBaseUrl": base, "apiModel": "demo"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, method := range []string{"providers.endpoints", "providers.models", "providers.test", "settings.save"} {
+		if _, err := e.Handle(ctx, method, p); err == nil || err.Error() != want {
+			t.Errorf("%s: %v, want %q", method, err, want)
+		}
+	}
+	s := Settings{APIProtocol: protocol, APIBaseURL: base, APIModel: "demo"}
+	result := runAPI(ctx, s, nil, "", nil, func() error {
+		t.Error("协议冲突时开始了真实命名尝试")
+		return nil
+	})
+	if result.status != "failed" || result.message != want {
+		t.Errorf("真实命名: %+v, want %q", result, want)
+	}
+}
+
 func TestLegacyProviderMigration(t *testing.T) {
-	for _, path := range []string{"", "/relay", "/relay/v1", "/relay/chat/completions"} {
+	for _, path := range []string{"", "/relay", "/relay/v1", "/relay/chat/completions", "/relay/v1/responses", "/relay/v1/messages", "/relay/v1beta/models/demo:generateContent"} {
 		t.Run("旧地址"+path, func(t *testing.T) {
-			dir := t.TempDir()
-			e := openLegacyEngine(t, dir, path)
+			generationPath := path
+			if !strings.HasSuffix(path, "/chat/completions") {
+				generationPath += "/chat/completions"
+			}
+			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				if r.Method != http.MethodPost || r.URL.Path != generationPath {
+					t.Error(r.Method, r.URL.Path, generationPath)
+					w.WriteHeader(http.StatusNotFound)
+					return
+				}
+				_, _ = w.Write([]byte(usageReply))
+			}))
+			defer server.Close()
+			e := openLegacyEngine(t, t.TempDir(), server.URL+path)
 			s := call[Settings](t, e, "settings.get", nil)
 			if s.APIProtocol != protocolChat || !s.apiLegacy || s.APIModel != "demo" {
 				t.Fatal(s)
 			}
 			p := endpointRequest{protocolChat, s.APIBaseURL, "other"}
 			got := call[apiEndpoints](t, e, "providers.endpoints", p)
-			expected := s.APIBaseURL
-			if !strings.HasSuffix(path, "/chat/completions") {
-				expected += "/chat/completions"
+			if got.GenerationURL != server.URL+generationPath {
+				t.Fatal(got, generationPath)
 			}
-			if got.GenerationURL != expected {
-				t.Fatal(got, expected)
+			if result := call[testResult](t, e, "providers.test", providerTest{}); !result.OK {
+				t.Fatal(result)
 			}
 			if s := call[Settings](t, e, "settings.save", p); !s.apiLegacy {
 				t.Fatal("保存模型时丢失旧路径")
@@ -229,7 +296,7 @@ func TestLegacyProviderMigration(t *testing.T) {
 	}
 }
 
-func openLegacyEngine(t *testing.T, dir, path string) *Engine {
+func openLegacyEngine(t *testing.T, dir, base string) *Engine {
 	t.Helper()
 	db, err := sql.Open("sqlite", filepath.Join(dir, "engine.sqlite3"))
 	if err != nil {
@@ -239,7 +306,7 @@ func openLegacyEngine(t *testing.T, dir, path string) *Engine {
 		db.Close()
 		t.Fatal(err)
 	}
-	_, err = db.Exec("UPDATE settings SET provider='api',api_url=?,api_model='demo'", "https://example.invalid"+path)
+	_, err = db.Exec("UPDATE settings SET provider='api',api_url=?,api_model='demo'", base)
 	if closeErr := db.Close(); err != nil || closeErr != nil {
 		t.Fatal(err, closeErr)
 	}

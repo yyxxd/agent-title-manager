@@ -14,6 +14,11 @@ const (
 	protocolResponses = "responses"
 	protocolAnthropic = "anthropic"
 	protocolGemini    = "gemini"
+
+	chatGenerationSuffix      = "/chat/completions"
+	responsesGenerationSuffix = "/responses"
+	anthropicGenerationSuffix = "/messages"
+	geminiGenerationSuffix    = ":generateContent"
 )
 
 type endpointRequest struct {
@@ -64,18 +69,22 @@ func resolveEndpoints(protocol, base, model string, legacy bool) (apiEndpoints, 
 	if !validString(model, 256) {
 		return apiEndpoints{}, errors.New("模型名称格式无效")
 	}
-	if protocol == protocolGemini {
-		return geminiEndpoints(u, model)
-	}
-	if legacy {
+	if protocol == protocolChat && legacy {
 		generation := u
-		if !strings.HasSuffix(u.Path, "/chat/completions") {
+		if !strings.HasSuffix(u.Path, chatGenerationSuffix) {
 			generation = u.JoinPath("chat", "completions")
 		}
-		prefix := strings.TrimSuffix(generation.EscapedPath(), "/chat/completions")
+		prefix := strings.TrimSuffix(generation.EscapedPath(), chatGenerationSuffix)
 		return apiEndpoints{generation.String(), withAPIPath(u, prefix+"/models")}, nil
 	}
-	return standardEndpoints(u, protocol), nil
+	path := strings.TrimRight(u.EscapedPath(), "/")
+	if actual := endpointProtocol(path); actual != "" && actual != protocol {
+		return apiEndpoints{}, errors.New("API 协议与地址不匹配，请切换协议或修改 API 地址")
+	}
+	if protocol == protocolGemini {
+		return geminiEndpoints(u, path, model)
+	}
+	return standardEndpoints(u, path, protocol), nil
 }
 
 func parseAPIBase(base string) (*url.URL, error) {
@@ -94,15 +103,29 @@ func parseAPIBase(base string) (*url.URL, error) {
 
 var apiVersionPath = regexp.MustCompile(`(?:^|/)v[0-9]+(?:[a-z]+[0-9]*)?(?:/|$)`)
 
-func standardEndpoints(u *url.URL, protocol string) apiEndpoints {
-	suffix := "/chat/completions"
+func endpointProtocol(path string) string {
+	switch {
+	case strings.HasSuffix(path, chatGenerationSuffix):
+		return protocolChat
+	case strings.HasSuffix(path, responsesGenerationSuffix):
+		return protocolResponses
+	case strings.HasSuffix(path, anthropicGenerationSuffix):
+		return protocolAnthropic
+	case geminiGenerationMarker(path) >= 0:
+		return protocolGemini
+	default:
+		return ""
+	}
+}
+
+func standardEndpoints(u *url.URL, prefix, protocol string) apiEndpoints {
+	suffix := chatGenerationSuffix
 	switch protocol {
 	case protocolResponses:
-		suffix = "/responses"
+		suffix = responsesGenerationSuffix
 	case protocolAnthropic:
-		suffix = "/messages"
+		suffix = anthropicGenerationSuffix
 	}
-	prefix := strings.TrimRight(u.EscapedPath(), "/")
 	switch {
 	case strings.HasSuffix(prefix, suffix):
 		prefix = strings.TrimSuffix(prefix, suffix)
@@ -114,11 +137,17 @@ func standardEndpoints(u *url.URL, protocol string) apiEndpoints {
 	return apiEndpoints{withAPIPath(u, prefix+suffix), withAPIPath(u, prefix+"/models")}
 }
 
-func geminiEndpoints(u *url.URL, model string) (apiEndpoints, error) {
-	prefix := strings.TrimRight(u.EscapedPath(), "/")
-	marker := strings.LastIndex(prefix, "/models/")
+func geminiGenerationMarker(path string) int {
+	if strings.HasSuffix(path, geminiGenerationSuffix) {
+		return strings.LastIndex(path, "/models/")
+	}
+	return -1
+}
+
+func geminiEndpoints(u *url.URL, prefix, model string) (apiEndpoints, error) {
+	marker := geminiGenerationMarker(prefix)
 	switch {
-	case marker >= 0 && strings.HasSuffix(prefix, ":generateContent"):
+	case marker >= 0:
 		if model == "" {
 			return apiEndpoints{withAPIPath(u, prefix), withAPIPath(u, prefix[:marker]+"/models")}, nil
 		}
@@ -133,9 +162,9 @@ func geminiEndpoints(u *url.URL, model string) (apiEndpoints, error) {
 		return apiEndpoints{}, err
 	}
 	modelsPath := prefix + "/models"
-	generation := withAPIPath(u, modelsPath+"/"+modelPath+":generateContent")
+	generation := withAPIPath(u, modelsPath+"/"+modelPath+geminiGenerationSuffix)
 	if model == "" {
-		generation = withAPIPath(u, modelsPath) + "/{model}:generateContent"
+		generation = withAPIPath(u, modelsPath) + "/{model}" + geminiGenerationSuffix
 	}
 	return apiEndpoints{generation, withAPIPath(u, modelsPath)}, nil
 }
