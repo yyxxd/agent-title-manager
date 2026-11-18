@@ -1,7 +1,7 @@
 {
   "name": "agent-title-manager",
   "private": true,
-  "version": "0.1.1",
+  "version": "0.1.2",
   "type": "module",
   "scripts": {"build": "tsc --noEmit && vite build", "dev": "vite"},
   "dependencies": {"lucide-react": "0.468.0", "react": "19.2.0", "react-dom": "19.2.0"},
