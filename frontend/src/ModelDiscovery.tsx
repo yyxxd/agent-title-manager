@@ -1,5 +1,5 @@
 import { Check, ChevronDown, RefreshCw, Search, X } from 'lucide-react';
-import { useId, useRef, useState, type RefObject } from 'react';
+import { useEffect, useId, useRef, useState, type RefObject } from 'react';
 import { rpc, type ApiModel, type ApiTarget } from './rpc';
 import { Status, useAction } from './ui';
 export function PopupClose({ panelId, label }: { panelId: string; label: string }) {
@@ -21,6 +21,12 @@ export function ModelDiscovery({ target, apiKey, blocked, listingUnavailable, se
   const action = useAction();
   const normalized = query.trim().toLowerCase();
   const filtered = items?.filter(({ id, name }) => id.toLowerCase().includes(normalized) || name?.toLowerCase().includes(normalized));
+
+  useEffect(() => {
+    if (items?.length && panel.current?.matches(':popover-open')) {
+      searchInput.current?.focus({ preventScroll: true });
+    }
+  }, [items]);
 
   function fetchModels() {
     setItems(undefined);
