@@ -40,7 +40,7 @@ Claude Code 命名来源使用原版 CLI 的 `claude.ai` 登录，适用于 Code
 
 更新应用图标时，替换 `internal/desktop/icon.png` 后运行 `go generate ./cmd/atm`，并提交两个架构的资源文件。打包脚本会检查资源文件是否与源图一致。
 
-脚本执行前端构建和 Go 测试，将桌面可执行文件、bridge、内置插件和 Node.js 组装至 `out\windows-x64-*`，默认生成 `out\AgentTitleManager-0.1.5-windows-x64-setup.exe`。默认版本从 `internal/desktop/version.txt` 读取。当前构建产物未签名。
+脚本执行前端构建和 Go 测试，将桌面可执行文件、bridge、内置插件和 Node.js 组装至 `out\windows-x64-*`，默认生成 `out\AgentTitleManager-0.1.6-windows-x64-setup.exe`。默认版本从 `internal/desktop/version.txt` 读取。当前构建产物未签名。
 
 测试可为桌面应用和 bridge 同时设置绝对路径 `ATM_DATA_DIR`，隔离 SQLite、WebView2 数据及命名管道。验证安装程序时使用独立目录，例如 `setup.exe /S /NoIntegration /D=C:\temp\atm-sandbox`。插件操作仍须使用独立 Agent 配置与会话样本。
 
