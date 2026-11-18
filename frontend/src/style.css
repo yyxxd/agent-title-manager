@@ -157,7 +157,7 @@ summary { cursor: pointer; color: var(--muted); }
 .attempt-list span { color: var(--muted); font-size: 13px; }
 
 dialog { width: min(430px, calc(100% - 28px)); padding: 18px; border: 1px solid var(--control); border-radius: 10px; color: var(--ink); background: var(--surface); }
-dialog::backdrop { background: #06091470; }
+dialog::backdrop { background: #09090c70; }
 dialog .actions { justify-content: flex-end; }
 .dialog-copy { margin: 8px 0 16px; }
 

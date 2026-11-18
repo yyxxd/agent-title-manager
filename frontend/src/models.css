@@ -55,24 +55,15 @@
   .model-switch input:checked + .model-switch-track::before { background: Highlight; }
 }
 
-.model-settings .model-api > label:not(.model-switch), .model-api .model-endpoints {
-  grid-template-columns: minmax(110px, 1fr) minmax(0, 2fr);
+@media (min-width: 481px) {
+  .model-settings :is(.setting-row, .settings-rows > label) {
+    grid-template-columns: minmax(0, 1fr) minmax(0, clamp(230px, 50%, 500px));
+  }
 }
 
-.model-api .model-endpoints {
-  min-height: 0;
-  row-gap: 5px;
-  border-block-start: 1px solid var(--rule);
-  color: var(--muted);
-  font-size: 13px;
-  background: var(--ground);
-}
+.model-key-note { padding: 0 16px 7px; }
 
-.model-endpoints dd { min-width: 0; }
-.model-endpoints code { color: var(--ink); }
-.model-key-note { padding: 0 14px 7px; }
-
-.model-discovery { padding: 0 14px 10px; }
+.model-discovery { padding: 0 16px 10px; }
 .model-discovery-controls { display: flex; justify-content: flex-end; gap: 8px; }
 .model-discovery-controls input { max-width: 230px; }
 .model-discovery .notice { margin: 8px 0 0; }
@@ -101,10 +92,8 @@
 .model-options button[aria-pressed="true"] { background: var(--raised); font-weight: 600; }
 
 @media (max-width: 480px) {
-  .model-settings .model-api > label:not(.model-switch), .model-api .model-endpoints {
+  .model-settings .model-api > :is(label:not(.model-switch), .api-url-row) {
     grid-template-columns: minmax(0, 1fr);
     gap: 4px;
   }
-
-  .model-endpoints dd + dt { margin-top: 4px; }
 }

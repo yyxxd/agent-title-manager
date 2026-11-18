@@ -1,8 +1,8 @@
 
 /* Small controls share color, shape and interaction states. */
 :root {
-  --field-hover: light-dark(#f3f6fc, #1d2a3d);
-  --popup-shadow: light-dark(0 9px 25px #253e651f, 0 9px 25px #0006);
+  --field-hover: light-dark(#f8f8fa, #323238);
+  --popup-shadow: light-dark(0 9px 25px #2020271f, 0 9px 25px #0006);
 }
 .daily-overview .page-head .actions { flex-wrap: nowrap; }
 button.date-trigger, select, input:not([type="checkbox"], [type="radio"]) {
@@ -51,9 +51,9 @@ button.date-trigger {
 .calendar-days button[data-outside=true] { color: var(--muted); }
 .calendar-days button[aria-current=date] { border-color: var(--control); }
 .calendar-days button[aria-pressed=true],
-.calendar-days button[aria-pressed=true]:hover { background: var(--accent-solid); color: var(--on-accent); font-weight: 650; }
+.calendar-days button[aria-pressed=true]:hover { background: var(--accent); color: var(--on-accent); font-weight: 650; }
 .calendar-days :focus-visible { outline-offset: -2px; }
-.calendar-days button:disabled { opacity: 1; color: light-dark(#697890, #8395b0); background: transparent; }
+.calendar-days button:disabled { opacity: 1; color: light-dark(#73737d, #9c9ca8); background: transparent; }
 .calendar-footer {
   min-height: 28px;
   margin-top: 7px;
@@ -165,7 +165,7 @@ summary:hover { color: var(--accent); }
 }
 .calendar-days button[data-range-edge=true]:not([data-outside=true]) {
   color: var(--on-accent);
-  background: var(--accent-solid);
+  background: var(--accent);
   font-weight: 650;
 }
 @media (max-width: 540px) {
@@ -175,9 +175,6 @@ summary:hover { color: var(--accent); }
   .date-presets button:not(.primary) { padding-inline: 5px; }
   .daily-overview .calendar-days button { min-height: 27px; }
 }
-nav button[aria-current]:hover:not(:disabled) { background: var(--surface); color: var(--accent); }
-
-.model-settings .model-api > .api-url-row { grid-template-columns: minmax(110px, 1fr) minmax(0, 2fr); }
 .api-url-field { min-width: 0; display: flex; align-items: center; gap: 5px; }
 .api-url-field input { flex: 1 1 0; }
 button.endpoint-trigger { flex: 0 0 34px; color: var(--muted); background: transparent; }
@@ -225,7 +222,6 @@ button.popup-close:disabled { background: transparent; color: var(--muted); opac
 .model-picker .model-options button:hover { background: var(--hover); }
 .model-picker .model-options button[aria-pressed=true] { background: var(--blue-bg); color: var(--accent); }
 .model-picker .model-options small { display: block; font-weight: 400; }
-@media (max-width: 480px) { .model-settings .model-api > .api-url-row { grid-template-columns: minmax(0, 1fr); gap: 4px; } }
 @media (prefers-reduced-motion: reduce) { .settings-popup:popover-open { animation: none; } }
 
 .endpoint-values code { font: 12px/1.55 "Cascadia Mono", Consolas, monospace; }
