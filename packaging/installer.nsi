@@ -64,7 +64,7 @@ runtimeFound:
   SetOutPath "$INSTDIR"
   WriteUninstaller "$INSTDIR\Uninstall.exe"
   StrCmp $Isolated 1 done
-  CreateShortCut "$SMPROGRAMS\Agent Title Manager.lnk" "$INSTDIR\AgentTitleManager.exe"
+  CreateShortCut "$SMPROGRAMS\Agent Title Manager.lnk" "$INSTDIR\AgentTitleManager.exe" "" "$INSTDIR\AgentTitleManager.exe" 0
   WriteRegStr HKCU "${UNINSTALL_KEY}" "DisplayName" "Agent Title Manager"
   WriteRegStr HKCU "${UNINSTALL_KEY}" "DisplayVersion" "${VERSION}"
   WriteRegStr HKCU "${UNINSTALL_KEY}" "InstallLocation" "$INSTDIR"
@@ -72,6 +72,9 @@ runtimeFound:
   WriteRegStr HKCU "${UNINSTALL_KEY}" "UninstallString" '"$INSTDIR\Uninstall.exe"'
   WriteRegDWORD HKCU "${UNINSTALL_KEY}" "NoModify" 1
   WriteRegDWORD HKCU "${UNINSTALL_KEY}" "NoRepair" 1
+  ; SHCNE_UPDATEITEM / SHCNF_PATHW: refresh only the replaced EXE and Start menu shortcut.
+  System::Call 'shell32::SHChangeNotify(i 0x2000, i 0x5, w "$INSTDIR\AgentTitleManager.exe", p 0)'
+  System::Call 'shell32::SHChangeNotify(i 0x2000, i 0x5, w "$SMPROGRAMS\Agent Title Manager.lnk", p 0)'
 done:
 SectionEnd
 
