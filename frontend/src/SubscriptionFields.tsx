@@ -40,8 +40,12 @@ export function useSubscriptionDraft(settings: Settings, setSettings: Dispatch<S
     setSettings((old) => old.provider !== source ? old : withNativeChoice(old, source, next));
   }
 
-  function nativeDraft() {
+  function nativeDraft(testing = false) {
     if (provider === 'api' || !choice) return settings;
+    if (catalog.value?.authRequired) {
+      if (testing) throw new Error(catalog.value.notice ?? '未登录');
+      return settings;
+    }
     if (!choice.model) throw new Error('请先选择命名模型。');
     if (catalog.value && !selected) throw new Error('当前模型已不在 CLI 目录中，请重新选择。');
     if (!selected || !choice.effort) return settings;
@@ -65,17 +69,22 @@ export function SubscriptionFields({ provider, choice, catalog, selected, onChan
   const popup = useRef<HTMLDivElement>(null);
   const search = useRef<HTMLInputElement>(null);
   const [query, setQuery] = useState('');
-  const items = value?.items;
+  const loggedOut = value?.authRequired === true;
+  const items = loggedOut ? undefined : value?.items;
   const missing = !!items && !!choice.model && !selected;
   const busy = !value && !error;
+  const disabled = busy || loggedOut;
+  const visibleChoice = disabled ? undefined : choice;
   const emptyMessage = '此 CLI 当前没有可见模型。';
   const normalized = query.trim().toLowerCase();
   const filtered = items?.filter(({ id, name, resolvedModel }) =>
     [id, name, resolvedModel].some((part) => part?.toLowerCase().includes(normalized)));
   const label = `${providerName(provider)} 模型`;
   useEffect(() => {
-    if (items?.length && popup.current?.matches(':popover-open')) search.current?.focus({ preventScroll: true });
-  }, [items]);
+    if (!popup.current?.matches(':popover-open')) return;
+    if (loggedOut) popup.current.hidePopover();
+    else if (items?.length) search.current?.focus({ preventScroll: true });
+  }, [items, loggedOut]);
 
   function choose(id: string) {
     const model = items?.find((item) => item.id === id);
@@ -88,8 +97,11 @@ export function SubscriptionFields({ provider, choice, catalog, selected, onChan
     <div className="setting-row subscription-row">
       <span id={labelId}>{label}</span>
       <div className="subscription-controls">
-        <button type="button" className="model-picker-trigger" popoverTarget={panelId} aria-labelledby={`${labelId} ${panelId}-selection`}>
-          <span id={`${panelId}-selection`} title={selected?.resolvedModel || choice.model}>{selected?.name || choice.model || '选择模型'}</span>
+        <button type="button" className="model-picker-trigger" popoverTarget={panelId} disabled={disabled}
+          aria-labelledby={`${labelId} ${panelId}-selection`}>
+          <span id={`${panelId}-selection`} title={selected?.resolvedModel || visibleChoice?.model}>
+            {selected?.name || visibleChoice?.model || '选择模型'}
+          </span>
           <ChevronDown size={14} aria-hidden="true" />
         </button>
         <div id={panelId} ref={popup} popover="auto" className="settings-popup model-picker" role="dialog"
@@ -109,16 +121,15 @@ export function SubscriptionFields({ provider, choice, catalog, selected, onChan
         </button>
       </div>
     </div>
-    <label>思考强度<select value={selected && choice.effort ? effortFor(selected, choice.effort) : choice.effort}
+    <label>思考强度<select value={selected && choice.effort ? effortFor(selected, choice.effort) : visibleChoice?.effort ?? ''}
       disabled={!selected?.efforts.length} onChange={(event) => onChange({ ...choice, effort: event.target.value })}>
-      <option value="">跟随 CLI{selected?.defaultEffort ? `（默认 ${selected.defaultEffort}）` : ''}</option>
-      {!selected && choice.effort && <option value={choice.effort}>{choice.effort}</option>}
+      <option value="">{disabled ? '—' : '跟随 CLI'}{selected?.defaultEffort ? `（默认 ${selected.defaultEffort}）` : ''}</option>
+      {!selected && visibleChoice?.effort && <option value={visibleChoice.effort}>{visibleChoice.effort}</option>}
       {selected?.efforts.map((effort) => <option key={effort} value={effort}>{effort}</option>)}
     </select></label>
     <div className="subscription-status">
       <Status error={error || (missing ? '当前模型已不在 CLI 目录中，请重新选择。' : undefined)}
-        message={busy ? '正在读取 CLI 模型目录…' : !items?.length ? emptyMessage : undefined} />
-      <Status message={value?.notice} />
+        message={loggedOut ? '未登录' : busy ? '正在读取 CLI 模型目录…' : !items?.length ? emptyMessage : undefined} />
       <small className="muted">目录显示 CLI 可见的模型。订阅资格与额度以手动连接测试为准。</small>
     </div>
   </>;

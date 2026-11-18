@@ -121,7 +121,7 @@ Orca 绑定字段可选。`orcaSessionId` 是 Orca 原始 ID。Pi 适配器可�
 
 `providers.models {"apiProtocol":"anthropic","apiBaseUrl":"https://api.example.com"}` 向本次指定地址发 GET，返回 `{"items":[{"id":"demo","name":"Demo"}]}`，其中 `name` 可省略。支持供应商返回的分页游标。列表请求有独立超时，未保存的地址也可使用。若供应商不提供模型列表，可直接填写模型 ID。此调用不计入命名用量。
 
-`providers.subscriptionModels {"provider":"codex"}` 读取原生 CLI 可见模型。响应 `items` 每项包含精确 `id`、`efforts`，还可提供 `name`、`resolvedModel`、`defaultEffort`。Claude 在隔离模式下未检测到原生订阅登录时会返回 `notice`。目录读取只使用 CLI 元数据，模型使用资格与额度由连接测试确认。
+`providers.subscriptionModels {"provider":"codex"}` 在确认原生登录后读取 CLI 可见模型。响应 `items` 每项包含精确 `id`、`efforts`，还可提供 `name`、`resolvedModel`、`defaultEffort`。未登录时返回空 `items`、`authRequired: true` 和 `notice`，CLI 缺失和查询失败返回 RPC 错误。目录读取只使用 CLI 元数据，模型使用资格与额度由连接测试确认。
 
 `providers.test` 发送合成连接测试请求，无真实会话历史，可能产生模型用量。可测试已保存值或覆盖本次参数。示例 `{"provider":"api","apiProtocol":"responses","apiBaseUrl":"https://api.example.com/v1","apiModel":"demo"}`。可另传 `apiKey`，Codex 可另传 `codexModel`、`fast`。成功返回 `{"provider":"api","model":"demo","ok":true}`，失败返回外层 RPC 错误。不保存覆盖字段，不走备用服务。
 

@@ -62,7 +62,7 @@ export type ApiEndpoints = { generationUrl: string; modelsUrl: string };
 export type ApiModel = { id: string; name?: string };
 export type NativeProvider = 'codex' | 'claude';
 export type SubscriptionModel = ApiModel & { resolvedModel?: string; efforts: string[]; defaultEffort?: string };
-export type SubscriptionCatalog = { items: SubscriptionModel[]; notice?: string };
+export type SubscriptionCatalog = { items: SubscriptionModel[]; notice?: string; authRequired?: boolean };
 
 export type Settings = ApiTarget & {
   provider: 'api' | NativeProvider;

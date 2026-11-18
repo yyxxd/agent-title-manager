@@ -22,8 +22,9 @@ type subscriptionModel struct {
 }
 
 type subscriptionCatalog struct {
-	Items  []subscriptionModel `json:"items"`
-	Notice string              `json:"notice,omitempty"`
+	Items        []subscriptionModel `json:"items"`
+	Notice       string              `json:"notice,omitempty"`
+	AuthRequired bool                `json:"authRequired,omitempty"`
 }
 
 type subscriptionRequest struct {
@@ -64,7 +65,7 @@ func (e *Engine) subscriptionForValidation(ctx context.Context, provider string)
 	snapshot := e.catalogSnapshots[provider]
 	e.catalogMu.Unlock()
 	// 短时间内用界面刚读取的目录验证同一份草稿。手动刷新会覆盖这份目录。
-	if snapshot.err == nil && time.Since(snapshot.loaded) < 2*time.Minute {
+	if snapshot.err == nil && !snapshot.catalog.AuthRequired && time.Since(snapshot.loaded) < 2*time.Minute {
 		return snapshot.catalog, nil
 	}
 	return e.refreshSubscription(ctx, provider)
@@ -74,6 +75,17 @@ var (
 	errCatalogProtocol = errors.New("此 CLI 版本无法读取模型目录，请更新 CLI")
 	errCatalogTimeout  = errors.New("读取模型目录超时，请刷新重试")
 )
+
+type subscriptionLoginError string
+
+func (e subscriptionLoginError) Error() string { return string(e) }
+
+func subscriptionAuthError(auth modelResult) error {
+	if auth.failure == failureCodexLogin || auth.failure == failureClaudeLogin {
+		return subscriptionLoginError(auth.message)
+	}
+	return errors.New(auth.message)
+}
 
 func (e *Engine) subscriptionModels(ctx context.Context, provider string) (subscriptionCatalog, error) {
 	ctx, cancel := context.WithTimeout(ctx, 25*time.Second)
@@ -85,17 +97,20 @@ func (e *Engine) subscriptionModels(ctx context.Context, provider string) (subsc
 	defer os.RemoveAll(dir)
 
 	var items []subscriptionModel
-	var notice string
 	switch provider {
 	case "codex":
 		items, err = codexModels(ctx, dir)
 	case "claude":
-		items, notice, err = claudeModels(ctx, dir)
+		items, err = claudeModels(ctx, dir)
 	}
 	if errors.Is(ctx.Err(), context.DeadlineExceeded) {
 		return subscriptionCatalog{}, errCatalogTimeout
 	}
-	return subscriptionCatalog{Items: cleanCatalog(items), Notice: notice}, err
+	var login subscriptionLoginError
+	if errors.As(err, &login) {
+		return subscriptionCatalog{Items: []subscriptionModel{}, Notice: login.Error(), AuthRequired: true}, nil
+	}
+	return subscriptionCatalog{Items: cleanCatalog(items)}, err
 }
 
 func cleanCatalog(items []subscriptionModel) []subscriptionModel {
@@ -190,12 +205,12 @@ func readCLIReply[T any](s cliStream, match func(T) bool) (T, error) {
 
 func (e *Engine) checkSubscription(ctx context.Context, s Settings) error {
 	model, effort := s.nativeChoice(s.Provider)
-	if model == "" {
-		return errors.New("请先选择命名模型")
-	}
 	catalog, err := e.subscriptionForValidation(ctx, s.Provider)
 	if err != nil {
 		return fmt.Errorf("无法验证命名模型：%w", err)
+	}
+	if catalog.AuthRequired {
+		return errors.New(catalog.Notice)
 	}
 	return validateSubscription(catalog.Items, model, effort)
 }

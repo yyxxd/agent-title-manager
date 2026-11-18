@@ -12,7 +12,7 @@ Windows 桌面应用，在本机管理 Codex、Claude、Pi 等 Agent 的自动�
 
 Claude 完成第一轮对话后会在后台生成标题。候选就绪后，发送下一条消息或重新打开该会话时应用。
 
-Claude Code 命名来源使用原版 CLI 的 `claude.ai` 登录，适用于 Codex、Claude 和 Pi 会话。应用隔离用户设置注入的令牌和网关地址。未检测到原生登录时仍可浏览 CLI 模型目录，连接测试会提示检查登录。
+Claude Code 命名来源使用原版 CLI 的 `claude.ai` 登录，适用于 Codex、Claude 和 Pi 会话。应用隔离用户设置注入的令牌和网关地址。登录后可读取模型目录，未登录时暂停选择并保留已保存的模型和思考强度。
 
 配置自定义 API 时，选择 OpenAI Chat Completions、OpenAI Responses、Anthropic Messages 或 Gemini 协议，再填写 Base URL。应用会按协议补全请求地址并显示预览。可用当前草稿获取模型列表并搜索选择，也可手动填写模型 ID。已有 0.1.1 API 配置默认沿用 Chat Completions 和原请求地址。
 

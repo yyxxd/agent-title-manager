@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"encoding/json"
 	"errors"
+	"os"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -28,13 +29,6 @@ func TestSubscriptionCatalogs(t *testing.T) {
 	if empty, err := e.subscriptionModels(t.Context(), "codex"); err != nil || empty.Items == nil || len(empty.Items) != 0 {
 		t.Fatal(empty, err)
 	}
-	mode("noauth")
-	if _, err := e.subscriptionModels(t.Context(), "codex"); err == nil || !strings.Contains(err.Error(), "登录") {
-		t.Fatal(err)
-	}
-	if claude, err := e.subscriptionModels(t.Context(), "claude"); err != nil || !strings.Contains(claude.Notice, "登录") {
-		t.Fatal(claude, err)
-	}
 	mode("old")
 	for _, provider := range []string{"codex", "claude"} {
 		if _, err := e.subscriptionModels(t.Context(), provider); !errors.Is(err, errCatalogProtocol) {
@@ -56,6 +50,44 @@ func TestSubscriptionCatalogs(t *testing.T) {
 		if _, err := e.subscriptionModels(t.Context(), provider); err == nil || !strings.Contains(err.Error(), "找不到") {
 			t.Fatal(provider, err)
 		}
+	}
+}
+
+func TestSubscriptionCatalogRequiresLogin(t *testing.T) {
+	mode := installSubscriptionFixtures(t)
+	e := engineAt(t, t.TempDir(), nil)
+	saved := call[Settings](t, e, "settings.save", map[string]string{
+		"provider": "claude", "claudeModel": "fixture-claude", "claudeEffort": "max",
+	})
+	for _, fixture := range []struct{ provider, auth string }{
+		{"codex", "noauth"}, {"claude", "noauth"}, {"claude", "injected-oauth"},
+	} {
+		mode(fixture.auth)
+		catalog := call[subscriptionCatalog](t, e, "providers.subscriptionModels", subscriptionRequest{fixture.provider})
+		if !catalog.AuthRequired || catalog.Items == nil || len(catalog.Items) != 0 || !strings.Contains(catalog.Notice, "登录") {
+			t.Fatal(fixture, catalog)
+		}
+		args, _ := json.Marshal(map[string]string{"provider": fixture.provider})
+		assertRPCError(t, e, "providers.test", args, "登录")
+	}
+	binary, err := claudeExecutable()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Stat(filepath.Join(filepath.Dir(binary), "unauthenticated-catalog.started")); !errors.Is(err, os.ErrNotExist) {
+		t.Fatal("未登录时启动了目录子进程", err)
+	}
+	if data := call[recordList](t, e, "records.list", listRequest{}); len(data.TestAttempts) != 0 {
+		t.Fatal(data.TestAttempts)
+	}
+	if settings := call[Settings](t, e, "settings.get", nil); settings != saved {
+		t.Fatal(settings, saved)
+	}
+	mode("")
+	catalog := call[subscriptionCatalog](t, e, "providers.subscriptionModels", subscriptionRequest{"claude"})
+	if catalog.AuthRequired || len(catalog.Items) != 2 || catalog.Items[0].ID != saved.ClaudeModel ||
+		len(catalog.Items[0].Efforts) != 1 || catalog.Items[0].Efforts[0] != saved.ClaudeEffort {
+		t.Fatal(catalog)
 	}
 }
 

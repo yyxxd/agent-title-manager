@@ -15,7 +15,7 @@ func codexModels(ctx context.Context, dir string) ([]subscriptionModel, error) {
 		return nil, errors.New("找不到原生 Codex CLI")
 	}
 	if auth := codexAuth(ctx, binary, dir); auth.status != "" {
-		return nil, errors.New(auth.message)
+		return nil, subscriptionAuthError(auth)
 	}
 	cmd := codexCommand(ctx, binary, dir, "app-server", "--listen", "stdio://",
 		"-c", nativeCodexProvider, "-c", fileAuth, "-c", `openai_base_url=""`,

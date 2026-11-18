@@ -85,20 +85,22 @@ func claudeAuth(ctx context.Context, binary, dir string) modelResult {
 		failure: failureClaudeLogin}
 }
 
-func claudeModels(ctx context.Context, dir string) ([]subscriptionModel, string, error) {
+func claudeModels(ctx context.Context, dir string) ([]subscriptionModel, error) {
 	binary, err := claudeExecutable()
 	if err != nil {
-		return nil, "", errors.New("找不到原生 Claude Code CLI")
+		return nil, errors.New("找不到原生 Claude Code CLI")
 	}
 	if err := checkClaudeManagedSettings(); err != nil {
-		return nil, "", err
+		return nil, err
+	}
+	if auth := claudeAuth(ctx, binary, dir); auth.status != "" {
+		return nil, subscriptionAuthError(auth)
+	}
+	if err := checkClaudeManagedSettings(); err != nil {
+		return nil, err
 	}
 	args := append(claudePrintArgs(), "--input-format", "stream-json", "--output-format", "stream-json", "--verbose")
-	items, err := readCLIStream(claudeCommand(ctx, binary, dir, args...), readClaudeCatalog)
-	if err != nil {
-		return nil, "", err
-	}
-	return items, claudeAuth(ctx, binary, dir).message, nil
+	return readCLIStream(claudeCommand(ctx, binary, dir, args...), readClaudeCatalog)
 }
 
 func readClaudeCatalog(s cliStream) ([]subscriptionModel, error) {

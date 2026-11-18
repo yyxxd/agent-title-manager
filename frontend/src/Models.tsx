@@ -108,7 +108,7 @@ function useModelDraft(initial: Settings) {
   }
   function test() {
     return actions.run(async () => {
-      const { provider, codexModel, codexEffort, claudeModel, claudeEffort, fast, maxTitleLength, apiProtocol, apiBaseUrl, apiModel } = nativeDraft();
+      const { provider, codexModel, codexEffort, claudeModel, claudeEffort, fast, maxTitleLength, apiProtocol, apiBaseUrl, apiModel } = nativeDraft(true);
       if (provider === 'api' && (!apiBaseUrl.trim() || !apiModel.trim())) throw new Error('请先填写 API 地址和模型。');
       const target = provider === 'api' ? { apiProtocol, apiBaseUrl, apiModel, apiKey } : { codexModel, codexEffort, claudeModel, claudeEffort, fast };
       const result = await rpc<{ ok: boolean; model: string }>('providers.test', { provider, maxTitleLength, ...target });

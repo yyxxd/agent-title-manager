@@ -80,6 +80,7 @@ func fixtureCodex(args []string, mode string) int {
 		}
 		fmt.Println("Logged in using ChatGPT")
 	case "app-server":
+		noteUnauthorizedCatalog(mode)
 		if !slices.Contains(args, nativeCodexProvider) || slices.Contains(args, "--ignore-user-config") {
 			return 92
 		}
@@ -163,6 +164,7 @@ func fixtureClaude(args []string, mode string) int {
 		return 0
 	}
 	if slices.Contains(args, "--input-format") {
+		noteUnauthorizedCatalog(mode)
 		return fixtureClaudeStream(mode)
 	}
 	if !slices.Contains(args, "fixture-claude") || !slices.Contains(args, "--effort") ||
@@ -189,6 +191,15 @@ func fixtureClaude(args []string, mode string) int {
 	}
 	fmt.Printf(`{"type":"result","subtype":"success","is_error":false,"structured_output":{"action":%q,"title":%q},"usage":{"input_tokens":7,"output_tokens":3,"cache_creation_input_tokens":5,"cache_read_input_tokens":2},"modelUsage":{"fixture-resolved":{}}}`+"\n", action, title)
 	return 0
+}
+
+func noteUnauthorizedCatalog(mode string) {
+	if mode == "noauth" || mode == "injected-oauth" {
+		path := filepath.Join(filepath.Dir(os.Args[0]), "unauthenticated-catalog.started")
+		if err := os.WriteFile(path, []byte(mode), 0600); err != nil {
+			os.Exit(100)
+		}
+	}
 }
 
 func fixtureClaudeStream(mode string) int {
