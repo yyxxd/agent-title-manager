@@ -13,6 +13,8 @@
 
 随附适配器位于桌面发布目录的 `plugins/codex`、`plugins/claude` 和 `plugins/pi`。Codex 和 Claude 需要 Node 22 或更新版。管理器优先选择随附的 `node.exe`，并可从 `PATH` 查找。适配器通过同目录的 `atm-runtime.json` 获得原生桥接程序路径。
 
+如果新版桌面应用附带更高版本的内置适配器，插件页会显示可用版本。选择更新后，管理器替换现有注册并保留启用状态与接管备份。Codex 更新后需在 `/hooks` 审核新 Hook。
+
 若插件页检测到支持接管的旧版，需明确选择接管。支持已知市场 ID 的 `oil-codex-title`、包缓存中的同款 Codex 停止 Hook、Claude 用户配置中的 `session-namer/namer.py` 以及 Pi 用户全局的 `extensions/auto-name`。Pi 的旧目录会连同数据移动到同级用户配置范围内的 `.atm-disabled-auto-name`。Codex 的信任记录由 Codex 管理。
 
 **停用**撤下自己注册的入口，保留接管记录。**恢复**撤下现有入口并还原旧插件，或将独立插件回退到上一发行版本。检测到相关设置冲突时，恢复会停下来保留现有文件。处理冲突后可重试。备份和未完成操作保存在桌面数据目录的 `plugin-manager/state.json`。文件中可能存在宿主原配置，应保存在本机。
@@ -47,12 +49,12 @@
 | --- | --- | --- |
 | `plugins.list` | 无 | `{"items":[Item]}` |
 | `plugins.install` | `{source:"local",path}` 或 `{source:"github",repo,ref}` | `Item` |
-| `plugins.update` | 与安装相同，另加 `id` | `Item` |
+| `plugins.update` | 与安装相同，另加 `id`；内置更新使用 `{id,source:"bundled"}` | `Item` |
 | `plugins.enable` | `{id,takeover?:boolean}` | `Item` |
 | `plugins.disable` | `{id}` | `Item` |
 | `plugins.restore` | `{id}` | `Item` |
 
-`Item` 包含 `id`、`name`、`version`、`enabled`、`kind`、`status`，可选字段为 `detail`、`takeoverRequired`、`canRestore`、`entryPath`。 `kind` 为 `builtin` 或 `community`；`status` 为 `disabled`、`enabled`、`action_required`、`unavailable` 或 `recovery_required`。Codex 的 `enabled=true` 代表注册已写入，实际信任状态由宿主决定。
+`Item` 包含 `id`、`name`、`version`、`enabled`、`kind`、`status`，可选字段为 `detail`、`takeoverRequired`、`canRestore`、`entryPath`、`availableVersion`。 `kind` 为 `builtin` 或 `community`；`status` 为 `disabled`、`enabled`、`action_required`、`unavailable` 或 `recovery_required`。Codex 的 `enabled=true` 代表注册已写入，实际信任状态由宿主决定。
 
 ## Orca 标题核对
 
@@ -60,4 +62,4 @@
 
 首次识别标题来源时，以 SQLite `mode=ro` 读取 `ORCA_USER_DATA_PATH` 或 `%APPDATA%/Orca` 中已绑定会话的名称元数据。对版本 2 的记录，两个名称字段都缺省且显示确为宿主默认占位名时可判为自动。记录标为 `user` 且名称与实时显示一致时判为手动。未知版本、无记录、库不可读或者来源不明时，应由用户显式接管。
 
-写入前同时比较 CLI 列表和详情中的身份与当前标题，并检查调用方已授权的预期旧标题。写入使用 `orca chat rename`，再从 CLI 回读。若重试时已显示目标名，直接确认；原名变化或目标不明确时跳过。当前 CLI 分开提供读取和改名，二者之间仍存在竞态窗口。
+每次写入（包括重试和采用）都比较 Orca 的身份与旧标题，并在最后一步重新核验绑定、读取原生标题。Codex 用 App Server `thread/read`，Claude 使用适配器的标题元数据读回，Pi 读取已绑定会话文件的最近 `session_info`。原生名已改变时，旧任务过期；读不到时保留重试机会。匹配后才执行 `orca chat rename` 并从 CLI 回读。当前宿主读取和 Orca 改名是独立操作，二者之间仍存在竞态窗口。
