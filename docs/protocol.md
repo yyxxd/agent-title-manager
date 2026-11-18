@@ -104,6 +104,7 @@ Orca 绑定字段可选。`orcaSessionId` 是 Orca 原始 ID。Pi 适配器可�
   "provider": "codex",
   "codexModel": "gpt-6-luna",
   "fast": true,
+  "apiProtocol": "chat",
   "apiBaseUrl": "",
   "apiModel": "",
   "hasApiKey": false,
@@ -112,9 +113,17 @@ Orca 绑定字段可选。`orcaSessionId` 是 Orca 原始 ID。Pi 适配器可�
 }
 ```
 
-`provider` 为 `codex` 或 `api`。`maxTitleLength` 为 8 到 48 个 Unicode 码点，包含 emoji、空格和全角分隔符。`fast` 打开时 Codex 请求 `priority`，实际是否生效取服务返回的证据。Codex 使用原生 CLI 的 ChatGPT 登录状态及临时 exec，通常由 npm Windows 原生可执行文件提供。支持 CLI 默认的文件认证存储；管理器通过 CLI 检查账号类型，从不打开认证文件。使用低推理档，忽略用户配置，关闭 Hook、apps、插件、shell 和多 Agent 等能力，模型调用不持久化原生会话。API 基础地址追加 `/chat/completions`，也可传完整端点；API 请求仅发送单次 JSON Chat Completions。
+`provider` 为 `codex` 或 `api`。`maxTitleLength` 为 8 到 48 个 Unicode 码点，包含 emoji、空格和全角分隔符。`fast` 打开时 Codex 请求 `priority`，实际是否生效取服务返回的证据。Codex 使用原生 CLI 的 ChatGPT 登录状态及临时 exec，通常由 npm Windows 原生可执行文件提供。支持 CLI 默认的文件认证存储；管理器通过 CLI 检查账号类型，从不打开认证文件。使用低推理档，忽略用户配置，关闭 Hook、apps、插件、shell 和多 Agent 等能力，模型调用不持久化原生会话。
 
-`providers.test` 发送合成连接测试请求，无真实会话历史，可能产生模型用量。可测试已保存值或覆盖本次参数。示例 `{"provider":"api","apiBaseUrl":"https://api.example.com/v1","apiModel":"demo"}`。可另传 `apiKey`，Codex 可另传 `codexModel`、`fast`。成功返回 `{"provider":"api","model":"demo","ok":true}`，失败返回外层 RPC 错误。不保存覆盖字段，不走备用服务。
+`apiProtocol` 为 `chat`、`responses`、`anthropic` 或 `gemini`，同时用于 API 命名、连接测试及备用服务。每次生成发送一个非流式 JSON 请求。保存时保留用户填写的地址路径。新地址只有主机时，Chat、Responses 和 Anthropic 使用 `/v1`，Gemini 使用 `/v1beta`。Chat、Responses 和 Gemini 保留已有的代理前缀。Anthropic 的无版本代理前缀追加 `/v1`，也可粘贴完整端点精确指定路径。0.1.1 已保存的地址默认使用 `chat` 并继续沿用旧路径规则，直到改动地址或协议。
+
+`providers.endpoints {"apiProtocol":"gemini","apiBaseUrl":"https://api.example.com","apiModel":"demo"}` 在本地解析并返回 `{"generationUrl":"https://api.example.com/v1beta/models/demo:generateContent","modelsUrl":"https://api.example.com/v1beta/models"}`。未填写 Gemini 模型时，生成路径用 `{model}` 占位。若已粘贴完整生成地址，预览可以从中显示模型。
+
+`providers.models {"apiProtocol":"anthropic","apiBaseUrl":"https://api.example.com"}` 向本次指定地址发 GET，返回 `{"items":[{"id":"demo","name":"Demo"}]}`，其中 `name` 可省略。支持供应商返回的分页游标。列表请求有独立超时，未保存的地址也可使用。若供应商不提供模型列表，可直接填写模型 ID。此调用不计入命名用量。
+
+`providers.test` 发送合成连接测试请求，无真实会话历史，可能产生模型用量。可测试已保存值或覆盖本次参数。示例 `{"provider":"api","apiProtocol":"responses","apiBaseUrl":"https://api.example.com/v1","apiModel":"demo"}`。可另传 `apiKey`，Codex 可另传 `codexModel`、`fast`。成功返回 `{"provider":"api","model":"demo","ok":true}`，失败返回外层 RPC 错误。不保存覆盖字段，不走备用服务。
+
+两种联网调用均可传入本次使用的 `apiKey`。省略时，仅在地址与已保存地址一致的情况下使用 DPAPI 密钥。传空字符串时以无密钥方式调用，保存的密钥仍可用于后续请求。Chat 和 Responses 使用 Bearer 鉴权，Anthropic 使用 `x-api-key` 和 `anthropic-version`，Gemini 使用 `x-goog-api-key`。
 
 备用服务默认关闭。开启后，仅在 CLI 明确不可用、没有 ChatGPT 登录或回传明确拒绝且无执行证据时调用已配置 API。超时、断开或含糊错误不会触发备用调用，也不会自动重试同修订事件。核心收到 CLI 可观测的含糊重连事件时会终止临时进程。同步错误只影响同步队列。
 
@@ -123,6 +132,8 @@ Orca 绑定字段可选。`orcaSessionId` 是 Orca 原始 ID。Pi 适配器可�
 `stats.daily {"date":"2026-11-18"}` 以运行 Windows 主机的本地日历日为准，省略 `date` 时取今天。`since` 是本数据库开始记账的时间。模型调用统计由开始请求的时间归属，原生改名以确认回执时间归属。连接测试计入 `agent:"test"`，且计入 `testAttempts`。无回执同步和历史会话不增加改名计数。`byModel` 按 `provider` 和 `model` 汇总调用与用量。
 
 每类 Token 单独汇总已报告的数值，全部缺报时为 `null`。明确报告零时保留 `0`。对应的 `inputKnown`、`outputKnown`、`cachedKnown` 是各自已报告的次数，缺报次数等于 `attempts` 减相应已知次数。`unknownUsage` 统计至少缺一个维度的调用。
+
+Anthropic 输入计入已报告的缓存创建和读取 Token，缓存列记录读取 Token。Gemini 输入字段已包含缓存，输出计入独立报告的思考 Token。缓存字段缺报时仍记为 `null`。
 
 ```json
 {
@@ -181,7 +192,7 @@ Orca 绑定字段可选。`orcaSessionId` 是 Orca 原始 ID。Pi 适配器可�
 | `status` | `queued` 待命名、`running` 命名中、`candidate` 候选待领取、`claimed` 已交给宿主待读回、`applied` 原生名已读回、`kept` 保留原名、`stale` 已过期、`failed` 生成失败、`interrupted` 命名中断且未重发、`disabled` 插件停用、`native` 已有原生名的免模型同步记录 |
 | `syncStatus` | 空字符串未调度、`unbound` 缺少绑定或原标题、`unchanged` Orca 标题已一致、`protected` Orca 标题受保护、`pending` 待同步、`writing` 同步中、`synced` 已同步并读回、`failed` 失败且可重试、`skipped` 安全跳过、`stale` 原生标题变化或绑定已过期 |
 | `attempts[].status` | `running` 正在请求、`completed` 已收到决策、`failed` 服务失败、`interrupted` 中断未重发、`invalid_response` 响应无效、`rejected_tool` 尝试使用工具而被拒绝 |
-| `attempts[].source` | `codex_subscription` 或 `openai_compatible` |
+| `attempts[].source` | `codex_subscription`、`openai_compatible`、`anthropic_compatible` 或 `gemini_compatible` |
 | `requestedTier` | `priority` 或 `default` |
 | `actualTier` | 由供应方证据确认的 `default`、`priority`、`flex`、`scale`，字段缺失或无法证实为 `unknown` |
 

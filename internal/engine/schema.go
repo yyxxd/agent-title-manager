@@ -55,6 +55,13 @@ CREATE INDEX sessions_project ON sessions(project_key,title) WHERE project_key<>
 PRAGMA user_version=2;
 `
 
+const schemaV3 = `
+ALTER TABLE settings ADD COLUMN api_protocol TEXT NOT NULL DEFAULT 'chat';
+ALTER TABLE settings ADD COLUMN api_legacy INTEGER NOT NULL DEFAULT 0;
+UPDATE settings SET api_legacy=1 WHERE api_url<>'';
+PRAGMA user_version=3;
+`
+
 func initialize(db *sql.DB) error {
 	for _, pragmas := range []string{"PRAGMA busy_timeout=2500", "PRAGMA foreign_keys=ON", "PRAGMA journal_mode=WAL", "PRAGMA secure_delete=ON"} {
 		if _, err := db.Exec(pragmas); err != nil {
@@ -80,7 +87,12 @@ func initialize(db *sql.DB) error {
 		if _, err = tx.Exec(schemaV2); err != nil {
 			return err
 		}
+		fallthrough
 	case 2:
+		if _, err = tx.Exec(schemaV3); err != nil {
+			return err
+		}
+	case 3:
 	default:
 		return fmt.Errorf("无法读取数据库版本 %d", version)
 	}

@@ -206,7 +206,14 @@ func (e *Engine) startAttempt(ctx context.Context, req attemptRequest) (int64, e
 
 func providerInfo(provider string, s Settings) (model, source, tier string) {
 	if provider == "api" {
-		return s.APIModel, "openai_compatible", "default"
+		source := "openai_compatible"
+		switch s.APIProtocol {
+		case protocolAnthropic:
+			source = "anthropic_compatible"
+		case protocolGemini:
+			source = "gemini_compatible"
+		}
+		return s.APIModel, source, "default"
 	}
 	tier = "default"
 	if s.Fast {
