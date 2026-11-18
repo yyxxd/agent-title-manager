@@ -30,6 +30,10 @@ function ModelForm({ initial }: { initial: Settings }) {
       <ProviderFields settings={settings} edit={edit} busy={actions.busy}
         native={provider !== 'api' && <SubscriptionFields key={provider} provider={provider}
           choice={nativeChoice(settings, provider)} catalog={catalog} selected={selected}
+          onRefresh={() => {
+            actions.reset();
+            catalog.refresh();
+          }}
           onChange={(choice) => {
             actions.reset();
             editNative(provider, choice);

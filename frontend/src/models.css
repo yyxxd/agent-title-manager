@@ -73,8 +73,8 @@
 .subscription-controls { display: flex; gap: 8px; min-width: 0; }
 .subscription-controls .model-picker-trigger { flex: 1; min-width: 0; justify-content: space-between; }
 .subscription-controls .model-picker-trigger span { overflow: hidden; text-overflow: ellipsis; }
-.subscription-status { padding: 0 16px 10px; }
-.subscription-status .notice { margin: 0 0 6px; }
+.subscription-controls .model-picker-trigger svg { flex: none; }
+.subscription-controls .notice { overflow-wrap: anywhere; }
 
 .model-options {
   max-height: 15rem;
