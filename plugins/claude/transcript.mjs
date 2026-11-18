@@ -1,7 +1,7 @@
 import { closeSync, fstatSync, openSync, readFileSync, readSync, realpathSync } from "node:fs";
 import { homedir } from "node:os";
 import { basename, dirname, isAbsolute, join, relative, resolve } from "node:path";
-import { fingerprint, nativeOrigin, recentTurns, safeID, textOf } from "./client.mjs";
+import { fingerprint, isTextConfirmation, nativeOrigin, recentTurns, safeID, textOf } from "./client.mjs";
 
 const maxTailBytes = 768 * 1024;
 
@@ -27,17 +27,18 @@ export function identify(input, configDir = process.env.CLAUDE_CONFIG_DIR || joi
   }
 }
 
-function readTail(path) {
+function readWindow(path, head = false) {
   const descriptor = openSync(path, "r");
   try {
     const info = fstatSync(descriptor);
     if (!info.isFile()) throw new Error("Claude 记录路径不是普通文件");
-    const length = Math.min(maxTailBytes, info.size);
-    const start = info.size - length;
+    const length = Math.min(head ? 96 * 1024 : maxTailBytes, info.size);
+    const start = head ? 0 : info.size - length;
     const buffer = Buffer.allocUnsafe(length);
     const bytes = readSync(descriptor, buffer, 0, length, start);
     const lines = buffer.toString("utf8", 0, bytes).split("\n");
     if (start) lines.shift();
+    if (head && bytes < info.size) lines.pop();
     return { lines, truncated: start > 0 };
   } finally { closeSync(descriptor); }
 }
@@ -70,37 +71,79 @@ function collect(line, sessionId) {
   try { record = JSON.parse(line); } catch { return undefined; }
   if (!record || (record.sessionId && record.sessionId !== sessionId) || record.isSidechain) return undefined;
   if (record.type === "custom-title" && typeof record.customTitle === "string") return { title: record.customTitle };
+  if (record.type === "attachment") return { extra: true };
   if (!safeID(record.uuid) || record.isMeta || record.isSynthetic || record.isCompactSummary) return undefined;
   const role = record.type;
   if (role !== "user" && role !== "assistant") return undefined;
-  const text = role === "user" ? cleanUser(record.message?.content) : textOf(record.message?.content);
-  if (!text || /^(?:<local-command-|<command-name>|<command-message>|\[Request interrupted)/.test(text)) return undefined;
-  return { id: record.uuid, role, text };
+  const content = record.message?.content;
+  const text = role === "user" ? cleanUser(content) : textOf(content);
+  if (/^(?:<local-command-|<command-name>|<command-message>|\[Request interrupted)/.test(text)) return undefined;
+  const parts = Array.isArray(content) ? content : [];
+  if (role === "user") {
+    if (parts.length && parts.every(part => part?.type === "tool_result")) return { extra: true };
+    if (!text && !parts.some(part => part?.type !== "text")) return undefined;
+    const extras = record.attachments?.length || record.message?.attachments?.length || record.imagePasteIds?.length;
+    return { id: record.uuid, role, text, confirmation: !extras && isTextConfirmation(content) };
+  }
+  return text ? { id: record.uuid, role, text, final: !parts.some(part => part?.type === "tool_use") &&
+    record.message?.stop_reason !== "tool_use" } : parts.length ? { extra: true } : undefined;
 }
 
-export function snapshot(identified, input = {}) {
-  const { lines, truncated } = readTail(identified.path);
+export function originalGoal({ path, sessionId }) {
+  for (const line of readWindow(path, true).lines) {
+    const entry = collect(line, sessionId);
+    if (entry?.role === "user") return entry.text || undefined;
+  }
+}
+
+function latestConfirmation(messages, user, truncated) {
+  const index = messages.lastIndexOf(user);
+  const previousAnswer = messages.findLastIndex((entry, position) => position < index && entry.final);
+  if (previousAnswer < 0 && truncated) return undefined;
+  const latest = messages.slice(previousAnswer + 1);
+  return latest.every(entry => !entry.extra && (entry.role !== "user" || entry.confirmation)) || undefined;
+}
+
+function scanTail(identified) {
+  const { lines, truncated } = readWindow(identified.path);
   let recordTitle;
   const messages = [];
   for (const line of lines) {
     const data = collect(line, identified.sessionId);
-    if (data?.id) messages.push(data);
+    if (data?.id || data?.extra) messages.push(data);
     else if (data && "title" in data) recordTitle = data.title;
   }
-  const title = recordTitle ?? customTitleFromSidecar(identified);
+  return { recordTitle, messages, truncated };
+}
+
+function reconcileTitle(identified, recordTitle, truncated, input = {}) {
+  const sidecar = customTitleFromSidecar(identified);
+  if (recordTitle !== undefined && sidecar !== undefined && recordTitle !== sidecar) return undefined;
+  const title = recordTitle ?? sidecar;
   const hookTitle = typeof input.session_title === "string" ? input.session_title : undefined;
   if (hookTitle !== undefined && title !== undefined && hookTitle !== title) return undefined;
-  const currentTitle = title ?? hookTitle ?? (truncated ? undefined : "");
+  return title ?? hookTitle ?? (truncated ? undefined : "");
+}
+
+export function readObservedTitle(identified) {
+  const { recordTitle, truncated } = scanTail(identified);
+  return reconcileTitle(identified, recordTitle, truncated);
+}
+
+export function snapshot(identified, input = {}) {
+  const { recordTitle, messages, truncated } = scanTail(identified);
+  const currentTitle = reconcileTitle(identified, recordTitle, truncated, input);
   if (currentTitle === undefined) return undefined;
 
   const user = messages.findLast(message => message.role === "user");
-  const last = messages.at(-1);
+  const last = messages.findLast(message => message.id);
   const complete = user && last.role === "assistant";
-  const turns = complete ? recentTurns(messages.map(({ role, text }) => ({ role, text }))) : [];
+  const turns = complete ? recentTurns(messages.filter(message => message.id).map(({ role, text }) => ({ role, text }))) : [];
   return {
     agent: "claude", sessionId: identified.sessionId, currentTitle, titleOrigin: nativeOrigin(currentTitle),
     revision: complete ? fingerprint(user.id, last.id, last.text) : undefined,
     project: typeof input.cwd === "string" && isAbsolute(input.cwd) ? input.cwd : undefined,
     turns,
+    confirmationOnly: complete ? latestConfirmation(messages, user, truncated) : undefined,
   };
 }

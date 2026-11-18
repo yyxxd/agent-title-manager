@@ -1,82 +1,86 @@
-import { pathToFileURL } from "node:url";
-import { setTimeout as delay } from "node:timers/promises";
-import { ack, bridge, nativeOrigin, readInput, readRuntime, recentTurns, safeID, textOf, waitCandidate } from "./client.mjs";
+import { spawn } from "node:child_process";
+import { fileURLToPath, pathToFileURL } from "node:url";
+import { ack, bridge, nativeOrigin, readInput, readRuntime, safeID, submitEvent, waitCandidate } from "./client.mjs";
 import { bindOrca, submitNative } from "./orca.mjs";
 import { findCodex, withAppServer } from "./app-server.mjs";
+import { latestTurn, readThread, stopContext } from "./history.mjs";
 
-function eventTurns(turns) {
-  const messages = [];
-  for (const turn of turns.slice(-5)) {
-    if (turn.status !== "completed") continue;
-    for (const item of turn.items ?? []) {
-      if (item.type === "userMessage") messages.push({ role: "user", text: textOf(item.content) });
-      else if (item.type === "agentMessage" && (item.phase == null || item.phase === "final_answer")) {
-        messages.push({ role: "assistant", text: textOf(item.text) });
+async function current(call, snapshot) {
+  const thread = await readThread(call, snapshot.sessionId);
+  if (!thread || (thread.name ?? "") !== snapshot.currentTitle) return false;
+  const turn = await latestTurn(call, thread);
+  return turn?.id === snapshot.revision && turn.status === "completed";
+}
+
+async function prepare(mode, input, rpc, call, resolveBinding) {
+  const sessionId = input.session_id;
+  const thread = await readThread(call, sessionId);
+  if (!thread) return;
+  const snapshot = {
+    agent: "codex", sessionId, revision: input.turn_id ?? "session-start",
+    currentTitle: thread.name ?? "", titleOrigin: nativeOrigin(thread.name), project: thread.cwd,
+  };
+  if (mode === "start") {
+    if (snapshot.currentTitle) {
+      const binding = await resolveBinding(snapshot.agent, sessionId);
+      if (binding.orcaSessionId && (await readThread(call, sessionId))?.name === snapshot.currentTitle) {
+        await submitNative(rpc, snapshot, binding);
       }
     }
-  }
-  return recentTurns(messages);
-}
-
-async function waitSettled(read, turnID) {
-  const deadline = Date.now() + 3300;
-  do {
-    const thread = await read();
-    const last = thread?.turns?.at(-1);
-    if (last?.id !== turnID) return undefined;
-    if (last.status === "completed") return thread;
-    if (last.status !== "inProgress" || Date.now() >= deadline) return undefined;
-    await delay(125);
-  } while (true);
-}
-
-export async function handleCodex(mode, input, rpc, call, resolveBinding = bindOrca) {
-  const sessionId = input.session_id;
-  const revision = input.turn_id;
-  if (!safeID(sessionId) || !["start", "stop"].includes(mode)) return;
-  if (mode === "stop" && (!safeID(revision) || input.stop_hook_active === true)) return;
-  const read = async () => {
-    const thread = (await call("thread/read", { threadId: sessionId, includeTurns: mode === "stop" }))?.thread;
-    return thread?.id === sessionId ? thread : undefined;
-  };
-  const thread = mode === "start" ? await read() : await waitSettled(read, revision);
-  if (!thread) return;
-  if (mode === "start" && !thread.name) return;
-  const snapshot = {
-    agent: "codex", sessionId, revision: revision ?? "session-start",
-    currentTitle: thread.name ?? "", titleOrigin: nativeOrigin(thread.name), project: thread.cwd,
-    turns: mode === "stop" ? eventTurns(thread.turns) : [],
-  };
-  const binding = await resolveBinding(snapshot.agent, sessionId);
-  if (mode === "start") {
-    if (binding.orcaSessionId && (await read())?.name === snapshot.currentTitle) await submitNative(rpc, snapshot, binding);
+    const latest = await latestTurn(call, thread);
+    if (safeID(latest?.id) && latest.status === "completed") return { ...snapshot, revision: latest.id };
     return;
   }
-  if (!snapshot.turns.length) return;
-  if (!(await rpc("event.submit", { ...snapshot, ...binding }))?.accepted) return;
+  const context = await stopContext(call, thread, snapshot.revision);
+  if (!context?.turns.length) return;
+  const binding = await resolveBinding(snapshot.agent, sessionId);
+  const result = await submitEvent(rpc, { ...snapshot, ...context, ...binding }, {
+    fresh: () => current(call, snapshot),
+  });
+  if (result?.accepted) return snapshot;
+}
 
-  async function fresh() {
-    const current = await read();
-    const last = current?.turns?.at(-1);
-    return last?.id === revision && last.status === "completed" && (current.name ?? "") === snapshot.currentTitle;
-  }
-  const candidate = await waitCandidate(rpc, snapshot, fresh);
-  if (!candidate || !(await fresh())) return;
-  await call("thread/name/set", { threadId: sessionId, name: candidate.title });
-  const observed = await read();
-  if (observed?.name === candidate.title) await ack(rpc, snapshot, candidate, observed.name);
+export async function handleCodex(mode, input, rpc, withNative, resolveBinding = bindOrca, polling) {
+  if (!safeID(input.session_id) || !["start", "stop"].includes(mode)) return;
+  if (mode === "stop" && (!safeID(input.turn_id) || input.stop_hook_active === true)) return;
+  const snapshot = await withNative(call => prepare(mode, input, rpc, call, resolveBinding));
+  if (!snapshot) return;
+
+  const { candidate } = await waitCandidate(rpc, snapshot, { ...polling, resume: mode === "start" });
+  if (!candidate) return;
+  await withNative(async call => {
+    if (!(await current(call, snapshot))) return;
+    await call("thread/name/set", { threadId: snapshot.sessionId, name: candidate.title });
+    const observed = await readThread(call, snapshot.sessionId);
+    if (observed?.name === candidate.title) await ack(rpc, snapshot, candidate, observed.name);
+  });
+}
+
+function launch(mode, payload) {
+  const child = spawn(process.execPath, [fileURLToPath(import.meta.url), "observe-" + mode], {
+    detached: true, windowsHide: true, stdio: ["pipe", "ignore", "ignore"],
+  });
+  const report = () => process.stderr.write("标题管理器未能启动 Codex 后台标题处理。\n");
+  child.once("error", report);
+  child.stdin.on("error", report);
+  child.stdin.end(JSON.stringify(payload));
+  child.unref();
 }
 
 async function main() {
   try {
-    const mode = process.argv[2];
+    const command = process.argv[2] ?? "";
+    const worker = command.startsWith("observe-");
+    const mode = worker ? command.slice("observe-".length) : command;
     const payload = await readInput();
     const event = mode === "start" ? "SessionStart" : mode === "stop" ? "Stop" : undefined;
     if (!event || payload.hook_event_name !== event || !safeID(payload.session_id) || process.env.ATM_CODEX_ADAPTER ||
         (mode === "stop" && (!safeID(payload.turn_id) || payload.stop_hook_active === true))) return;
+    if (!worker) { launch(mode, payload); return; }
     const config = readRuntime(import.meta.url);
-    const rpc = bridge(config);
-    await withAppServer(findCodex(config.codexPath), call => handleCodex(mode, payload, rpc, call));
+    const binary = findCodex(config.codexPath);
+    const withNative = action => withAppServer(binary, action);
+    await handleCodex(mode, payload, bridge(config), withNative);
   } catch {
     process.stderr.write("标题管理器未完成 Codex 标题处理。\n");
   } finally {

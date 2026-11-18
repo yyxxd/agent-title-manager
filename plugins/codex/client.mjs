@@ -6,6 +6,8 @@ import { promisify } from "node:util";
 import { setTimeout as delay } from "node:timers/promises";
 
 const exec = promisify(execFile);
+const terminalStatuses = new Set(["kept", "failed", "interrupted", "stale", "applied", "disabled"]);
+const confirmationTexts = new Set(["好", "好的", "可以", "收到", "谢谢", "继续", "ok", "okay", "thanks", "thank you", "continue"]);
 export const safeID = value => typeof value === "string" && /^[A-Za-z0-9_-]{1,120}$/.test(value);
 export const fingerprint = (...values) => createHash("sha256").update(JSON.stringify(values)).digest("hex");
 export const nativeOrigin = title => title ? "unknown" : "auto";
@@ -39,9 +41,27 @@ export function bridge({ bridgePath }, timeout = 1000) {
     result.child.stdin.end(request);
     const { stdout } = await result;
     const reply = JSON.parse(stdout);
-    if (reply?.ok !== true) throw new Error("标题管理器拒绝了请求");
+    if (reply?.ok !== true) {
+      const error = new Error("标题管理器拒绝了请求");
+      if (reply?.error === "ingress_busy" || (typeof reply?.error === "string" && reply.error.startsWith("ingress_busy:"))) {
+        error.code = "ingress_busy";
+      }
+      throw error;
+    }
     return reply.result;
   };
+}
+
+export async function submitEvent(rpc, snapshot, { signal, fresh = () => true, pause = delay } = {}) {
+  const intervals = [250, 750, 2000];
+  for (let attempt = 0; ; attempt++) {
+    if (signal?.aborted || !(await fresh())) return;
+    try { return await rpc("event.submit", snapshot, signal); }
+    catch (error) {
+      if (error.code !== "ingress_busy" || attempt >= intervals.length) throw error;
+      await pause(intervals[attempt], undefined, { signal });
+    }
+  }
 }
 
 export function textOf(content) {
@@ -49,6 +69,17 @@ export function textOf(content) {
     ? value.filter(part => part?.type === "text" && typeof part.text === "string").map(part => part.text).join("\n")
     : typeof value === "string" ? value : "";
   return Array.from(flatten(content).trim()).slice(0, 1500).join("");
+}
+
+export function isTextConfirmation(content) {
+  if (Array.isArray(content)) {
+    if (!content.length || content.some(part => part?.type !== "text" || typeof part.text !== "string" ||
+        ["text_elements", "textElements"].some(key =>
+          key in part && (!Array.isArray(part[key]) || part[key].length > 0)))) return false;
+    content = content.map(part => part.text).join("\n");
+  }
+  if (typeof content !== "string" || content.length > 64) return false;
+  return confirmationTexts.has(content.trim().replace(/[.!。！]+$/, "").trimEnd().toLowerCase());
 }
 
 export function recentTurns(turns) {
@@ -64,17 +95,25 @@ export function validCandidate(candidate, snapshot) {
     candidate.revision === snapshot.revision;
 }
 
-export async function waitCandidate(rpc, snapshot, fresh, signal) {
+export async function waitCandidate(rpc, snapshot, options = {}) {
+  const { fresh = () => true, signal, resume = false, now = Date.now, pause = delay } = options;
   const { agent, sessionId, revision, currentTitle } = snapshot;
-  const deadline = Date.now() + 65_000;
-  do {
-    if (signal?.aborted || !(await fresh())) return null;
+  const started = now();
+  const deadline = started + 8 * 60_000;
+  let interval = 1000;
+  while (!signal?.aborted && fresh()) {
     const result = await rpc("title.claim", { agent, sessionId, revision, currentTitle }, signal);
-    if (validCandidate(result?.candidate, snapshot)) return result.candidate;
-    if (result?.candidate) return null;
-    if (Date.now() >= deadline) return null;
-    await delay(1250, undefined, { signal });
-  } while (true);
+    const status = result?.status;
+    if (validCandidate(result?.candidate, snapshot)) return { candidate: result.candidate, status };
+    if (result?.candidate) return { status: "stale" };
+    if (terminalStatuses.has(status)) return { status };
+    const elapsed = now();
+    if (resume && (status === "none" || !status)) return { status };
+    if (elapsed >= deadline) return { status: "pending" };
+    await pause(Math.min(interval, deadline - elapsed), undefined, { signal });
+    interval = Math.min(interval * 2, 20_000);
+  }
+  return { status: "stale" };
 }
 
 export async function ack(rpc, snapshot, candidate, observedTitle) {

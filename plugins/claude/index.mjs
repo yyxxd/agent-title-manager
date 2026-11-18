@@ -1,9 +1,9 @@
 import { spawn } from "node:child_process";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import { setTimeout as delay } from "node:timers/promises";
-import { ack, bridge, readInput, readRuntime, textOf, validCandidate } from "./client.mjs";
+import { ack, bridge, readInput, readRuntime, submitEvent, textOf, validCandidate } from "./client.mjs";
 import { bindOrca, submitNative } from "./orca.mjs";
-import { identify, snapshot } from "./transcript.mjs";
+import { identify, originalGoal, readObservedTitle, snapshot } from "./transcript.mjs";
 
 const START_SOURCES = new Set(["startup", "resume", "fork"]);
 
@@ -23,8 +23,12 @@ async function submitStop(input, identified, rpc, binding) {
   const deadline = Date.now() + 1000;
   do {
     const state = snapshot(identified, input);
-    if (state?.revision && (!finishing || state.turns.at(-1)?.text === finishing)) {
-      await rpc("event.submit", { ...state, ...await binding(state.agent, state.sessionId) });
+    if (state?.revision && state.turns.length && (!finishing || state.turns.at(-1)?.text === finishing)) {
+      const orca = await binding(state.agent, state.sessionId);
+      await submitEvent(rpc, { ...state, ...orca, originalGoal: originalGoal(identified) }, { fresh: () => {
+        const current = snapshot(identified, input);
+        return current?.revision === state.revision && current.currentTitle === state.currentTitle;
+      } });
       return;
     }
     if (Date.now() >= deadline) return;
@@ -36,11 +40,11 @@ async function confirm(input, identified, rpc) {
   if (typeof input.id !== "string" || typeof input.title !== "string") return;
   const deadline = Date.now() + 12_000;
   do {
-    const observed = snapshot(identified);
-    if (observed?.currentTitle === input.title) {
-      try { await ack(rpc, observed, input, observed.currentTitle); return; }
+    const title = readObservedTitle(identified);
+    if (title === input.title) {
+      try { await ack(rpc, { agent: "claude", sessionId: identified.sessionId }, input, title); return; }
       catch (error) { if (Date.now() >= deadline) throw error; }
-    } else if (observed?.currentTitle && observed.currentTitle !== input.baseTitle) {
+    } else if (title !== undefined && title !== input.baseTitle) {
       return;
     }
     if (Date.now() >= deadline) return;

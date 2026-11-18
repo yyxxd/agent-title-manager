@@ -1,7 +1,7 @@
 import { execFile } from "node:child_process";
 import { isAbsolute } from "node:path";
 import { promisify } from "node:util";
-import { fingerprint, safeID } from "./client.mjs";
+import { fingerprint, safeID, submitEvent } from "./client.mjs";
 
 const exec = promisify(execFile);
 const prefix = "orca_session_id:";
@@ -46,9 +46,9 @@ export async function bindOrca(agent, sessionId, options = {}) {
 export async function submitNative(rpc, snapshot, binding, signal) {
   if (!snapshot.currentTitle) return;
   if (!binding.orcaSessionId || signal?.aborted) return;
-  const { turns, ...native } = snapshot;
-  return rpc("event.submit", {
+  const { turns, originalGoal, confirmationOnly, ...native } = snapshot;
+  return submitEvent(rpc, {
     ...native, ...binding, nativeTitleOnly: true, turns: [],
     revision: fingerprint("native-title", native.revision, native.currentTitle, binding.orcaSessionId, binding.orcaTitle),
-  }, signal);
+  }, { signal });
 }

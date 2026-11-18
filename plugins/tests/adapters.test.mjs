@@ -1,16 +1,18 @@
 import assert from "node:assert/strict";
 import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
 import { setTimeout as delay } from "node:timers/promises";
 import test from "node:test";
 import { handleCodex } from "../codex/index.mjs";
 import { handleClaude } from "../claude/index.mjs";
+import { identify, readObservedTitle } from "../claude/transcript.mjs";
 import { register } from "../pi/index.js";
 import { nameSession } from "../example/index.mjs";
 import { ack } from "../shared/client.mjs";
 
 const binding = async () => ({});
+const native = call => action => action(call);
 const turnId = "fixture-turn";
 const sessionId = "fixture-session";
 const latest = { id: turnId, status: "completed", items: [
@@ -33,7 +35,7 @@ test("Codex 按 Stop 的原生 turn 读写，完成原生读回后才确认", as
     assert.equal(params.threadId, sessionId);
     return { thread: { id: sessionId, name: title, turns: [latest] } };
   };
-  await handleCodex("stop", { session_id: sessionId, turn_id: turnId }, rpc, appServer, binding);
+  await handleCodex("stop", { session_id: sessionId, turn_id: turnId }, rpc, native(appServer), binding);
   assert.deepEqual(methods.map(([method]) => method), ["event.submit", "title.claim", "title.ack"]);
   assert.deepEqual(methods[0][1].turns.map(turn => turn.text), ["修复标题同步", "已修复标题同步"]);
   assert.equal(methods[2][1].observedTitle, "新标题");
@@ -51,8 +53,8 @@ test("Codex 拒绝旧 Stop 以及候选到达期间更新的原标题", async ()
     title = "手动更名";
     return { candidate: { id: "claim", title: "新标题", baseTitle: "", revision: turnId } };
   };
-  await handleCodex("stop", { session_id: sessionId, turn_id: "old" }, async () => assert.fail("旧 Stop 不得提交"), reads, binding);
-  await handleCodex("stop", { session_id: sessionId, turn_id: turnId }, rpc, reads, binding);
+  await handleCodex("stop", { session_id: sessionId, turn_id: "old" }, async () => assert.fail("旧 Stop 不得提交"), native(reads), binding);
+  await handleCodex("stop", { session_id: sessionId, turn_id: turnId }, rpc, native(reads), binding);
   assert.equal(title, "手动更名");
 });
 
@@ -61,12 +63,11 @@ test("Codex 打开已命名会话时只发送可验证的原生标题", async ()
   const rpc = async (method, params) => { calls.push({ method, params }); };
   const getThread = async (method, params) => {
     assert.equal(method, "thread/read");
-    assert.equal(params.includeTurns, false);
     return { thread: { id: sessionId, name: "原生标题" } };
   };
   const orca = async () => ({ orcaSessionId: "raw", orcaTitle: "", orcaTitleOrigin: "unknown", orcaNativeHandle: sessionId });
-  await handleCodex("start", { session_id: sessionId }, rpc, getThread, orca);
-  await handleCodex("start", { session_id: sessionId }, rpc, getThread, orca);
+  await handleCodex("start", { session_id: sessionId }, rpc, native(getThread), orca);
+  await handleCodex("start", { session_id: sessionId }, rpc, native(getThread), orca);
   assert.deepEqual(calls[0], calls[1]);
   assert.equal(calls[0].method, "event.submit");
   assert.equal(calls[0].params.nativeTitleOnly, true);
@@ -123,7 +124,56 @@ test("Claude 新一轮或不同的原生标题阻止写回和确认", async t =>
   await handleClaude("confirm", { ...input, id: "claim", title: "候选", baseTitle: "" }, rpc, undefined, binding, root);
 });
 
-function piFixture() {
+test("Claude UserPromptSubmit 遇到仍在入队的候选只领取一次", async t => {
+  const { root, input } = await claudeFixture(t);
+  let claims = 0;
+  const result = await handleClaude("prompt", { ...input, hook_event_name: "UserPromptSubmit" }, async method => {
+    assert.equal(method, "title.claim");
+    claims++;
+    return { status: "ingress_pending", candidate: null };
+  }, () => assert.fail("没有候选时不启动读回观察"), binding, root);
+  assert.deepEqual(result, {});
+  assert.equal(claims, 1);
+});
+
+test("Claude 长记录从文件开头取目标；尾部确认有原生附件时保留正常处理", async t => {
+  const fill = { type: "progress", data: "x".repeat(800 * 1024) };
+  const boundary = { type: "assistant", uuid: "previous-answer", message: { content: "之前的完整答复" } };
+  for (const attached of [false, true]) {
+    const extra = attached ? [{ type: "attachment", attachment: { type: "image" } }] : [];
+    const { root, input } = await claudeFixture(t, [fill, boundary, ...extra,
+      { type: "user", uuid: "latest-user", message: { content: "继续。" } },
+      { type: "assistant", uuid: "latest-answer", message: { content: "已继续处理" } },
+    ]);
+    let submitted;
+    await handleClaude("stop", { ...input, hook_event_name: "Stop", session_title: "" },
+      async (method, params) => { assert.equal(method, "event.submit"); submitted = params; }, undefined, binding, root);
+    assert.equal(submitted.originalGoal, "实现校验");
+    assert.equal(submitted.confirmationOnly, attached ? undefined : true);
+    assert.ok(!submitted.turns.some(turn => turn.text === "实现校验"));
+  }
+});
+
+test("Claude 读不到开头的真实目标时保留空值，两个原生标题来源冲突时不确认", async t => {
+  const { root, path, input } = await claudeFixture(t);
+  const records = [
+    { type: "progress", data: "x".repeat(800 * 1024) },
+    { type: "user", uuid: "recent-user", message: { content: "尾部的新请求" } },
+    { type: "assistant", uuid: "recent-assistant", message: { content: "尾部的答复" } },
+    { type: "custom-title", customTitle: "记录标题" },
+  ];
+  await writeFile(path, records.map(record => JSON.stringify({ sessionId, ...record })).join("\n") + "\n");
+  await handleClaude("stop", { ...input, hook_event_name: "Stop" }, async (_, params) => {
+    assert.equal(params.originalGoal, undefined);
+    assert.equal(params.turns[0].text, "尾部的新请求");
+  }, undefined, binding, root);
+  const sidecar = join(dirname(path), sessionId, "custom-title.json");
+  await mkdir(dirname(sidecar), { recursive: true });
+  await writeFile(sidecar, JSON.stringify({ customTitle: "另一标题" }));
+  assert.equal(readObservedTitle(identify(input, root)), undefined);
+});
+
+function piFixture(initialBranch = [{ type: "message", message: { role: "user", content: "核对 Pi 会话" } }]) {
   let title;
   let leaf = "leaf";
   const listeners = new Map();
@@ -139,7 +189,7 @@ function piFixture() {
       getLeafId: () => leaf,
       getSessionFile: () => undefined,
       getSessionName: () => title,
-      getBranch: () => [{ type: "message", message: { role: "user", content: "核对 Pi 会话" } }],
+      getBranch: () => initialBranch,
     },
     isIdle: () => true,
     ui: { notify: message => observations.push(message) },
@@ -173,6 +223,60 @@ test("Pi 切换分支后丢弃已返回的候选", async () => {
   await delay(5);
   assert.equal(pi.getSessionName(), undefined);
   assert.deepEqual(observations, []);
+});
+
+test("Pi 对 kept 保持静默，failed 只通知一次并保留原标题", async () => {
+  for (const status of ["kept", "failed"]) {
+    const { pi, ctx, listeners, observations } = piFixture();
+    const methods = [];
+    register(pi, async method => {
+      methods.push(method);
+      return method === "event.submit" ? { accepted: true } : { candidate: null, status };
+    }, binding);
+    listeners.get("agent_settled")({ aborted: false }, ctx);
+    await delay(5);
+    assert.deepEqual(methods, ["event.submit", "title.claim"]);
+    assert.equal(pi.getSessionName(), undefined);
+    assert.deepEqual(observations, status === "kept" ? [] : ["自动命名失败，当前标题保留。"]);
+  }
+});
+
+test("Pi 恢复同一会话时领取迟到候选，无需重新提交", async () => {
+  const { pi, ctx, listeners } = piFixture();
+  let done;
+  const result = new Promise(resolve => { done = resolve; });
+  const methods = [];
+  register(pi, async (method, params) => {
+    methods.push(method);
+    if (method === "title.claim") return { candidate: { id: "claim", title: "恢复后领取", baseTitle: "", revision: params.revision } };
+    done(params);
+  }, binding);
+  listeners.get("session_start")({ reason: "resume" }, ctx);
+  assert.equal((await result).observedTitle, "恢复后领取");
+  assert.deepEqual(methods, ["title.claim", "title.ack"]);
+});
+
+test("Pi 从完整分支提取初始目标，最新纯文本确认和图片分别处理", async () => {
+  const user = (id, content) => ({ id, type: "message", message: { role: "user", content } });
+  for (const image of [false, true]) {
+    const branch = Array.from({ length: 20 }, (_, index) => user("older-" + index, index === 0 ? "Pi 初始目标" : "中途事项 " + index));
+    const { pi, ctx, listeners } = piFixture(branch);
+    ctx.sessionManager.getLeafId = () => branch.at(-1).id;
+    let submitted;
+    register(pi, async (method, params) => {
+      if (method === "event.submit") { submitted = params; return { accepted: true }; }
+      return { candidate: null, status: "kept" };
+    }, binding);
+    listeners.get("before_agent_start")({}, ctx);
+    const blocks = [{ type: "text", text: "继续！" }];
+    if (image) blocks.push({ type: "image", data: "fixture" });
+    branch.push(user("latest", blocks));
+    listeners.get("agent_settled")({ aborted: false }, ctx);
+    await delay(5);
+    assert.equal(submitted.originalGoal, "Pi 初始目标");
+    assert.equal(submitted.confirmationOnly, image ? undefined : true);
+    assert.ok(!submitted.turns.some(turn => turn.text === "Pi 初始目标"));
+  }
 });
 
 test("独立插件要求实际条件写入和标题读回", async () => {
