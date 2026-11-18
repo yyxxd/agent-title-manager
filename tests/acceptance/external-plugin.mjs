@@ -22,7 +22,7 @@ export async function nameSession(host, env, expectedTitle, disabled) {
   const fields = { sessionId: before.id, revision: 'synthetic-turn-1', currentTitle: before.name ?? '' };
   const submit = bridge(env, 'event.submit', {
     ...fields, titleOrigin: 'auto', project: 'acceptance',
-    turns: [{ role: 'user', text: '请修复日历导出中的时区偏差，并验证导出的时间。' }],
+    turns: [{ role: 'user', text: `请修复日历导出中的时区偏差。验收版本 ${manifest.version}。` }],
   });
   if (disabled) {
     assert.equal(submit.ok, false);

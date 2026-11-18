@@ -12,7 +12,7 @@ import { setTimeout as delay } from 'node:timers/promises';
 
 const pluginId = 'release-acceptance-external';
 const pluginName = 'Release Acceptance External';
-const title = '🧩 日历｜修复';
+const titles = { '1.0.0': '🧩 日历｜修复', '2.0.0': '🧩 日历｜时区修复' };
 const sha256 = file => createHash('sha256').update(readFileSync(file)).digest('hex');
 
 function fixture(root, version) {
@@ -26,8 +26,9 @@ function fixture(root, version) {
 }
 
 function modelFixture() {
-  let calls = 0;
+  const calls = [];
   const server = createServer(async (req, res) => {
+    const index = calls.push(null) - 1;
     let body = '';
     for await (const chunk of req) body += chunk;
     try {
@@ -36,18 +37,21 @@ function modelFixture() {
       assert.equal(req.headers.authorization, undefined);
       const request = JSON.parse(body);
       assert.equal(request.model, 'acceptance-local');
-      assert.match(request.messages.at(-1).content, /日历导出/);
-      calls++;
+      const turn = request.messages.at(-1).content;
+      assert.match(turn, /日历导出/);
+      const version = turn.match(/验收版本 (1\.0\.0|2\.0\.0)/)?.[1];
+      assert.ok(version, 'Plugin version marker is missing');
+      calls[index] = version;
       res.writeHead(200, { 'Content-Type': 'application/json' });
       res.end(JSON.stringify({
-        choices: [{ message: { content: JSON.stringify({ action: 'rename', title, reason: 'acceptance' }) } }],
+        choices: [{ message: { content: JSON.stringify({ action: 'rename', title: titles[version], reason: 'acceptance' }) } }],
         usage: { prompt_tokens: 19, completion_tokens: 5, prompt_tokens_details: { cached_tokens: 4 } },
       }));
     } catch {
       res.writeHead(400).end();
     }
   });
-  return { server, count: () => calls };
+  return { server, calls };
 }
 
 export async function openNative(codex, cwd, env) {
@@ -145,25 +149,32 @@ async function exercise({ app, bridge, codex, env, root, fixtureModel, ui, v1, v
   for (const key of ['HOME', 'USERPROFILE', 'APPDATA', 'LOCALAPPDATA', 'TEMP', 'TMP']) nativeEnv[key] = root;
   const native = await openNative(codex, root, nativeEnv);
   let originalId;
+  let upgradedId;
   try {
     const start = async () => (await native.call('thread/start', { cwd: root, ephemeral: false })).thread.id;
     originalId = await start();
     const original = nativeSession(native, originalId);
-    await (await installedPlugin(env.ATM_DATA_DIR, bridge, '1.0.0')).nameSession(original, env, title, false);
-    assert.equal(fixtureModel.count(), 1);
+    await (await installedPlugin(env.ATM_DATA_DIR, bridge, '1.0.0')).nameSession(original, env, titles['1.0.0'], false);
+    assert.deepEqual(fixtureModel.calls, ['1.0.0']);
     await ui.question(`刷新统计，确认模型请求 1、标题应用 1，Token 输入 19、输出 5、缓存 4。记录页应有一条 ${pluginId} 的已应用记录。停用 v1，更新到 ${v2}，确认只有一条 v2.0.0，启用 v2。完成后回车。`);
     const upgrade = await installedPlugin(env.ATM_DATA_DIR, bridge, '2.0.0');
-    assert.equal((await original.read()).name, title);
-    await ui.question('停用 v2，确认界面显示已停用。完成后回车。');
-    await upgrade.nameSession(nativeSession(native, await start()), env, title, true);
+    upgradedId = await start();
+    assert.notEqual(upgradedId, originalId);
+    const upgraded = nativeSession(native, upgradedId);
+    await upgrade.nameSession(upgraded, env, titles['2.0.0'], false);
+    assert.deepEqual(fixtureModel.calls, ['1.0.0', '2.0.0']);
+    assert.equal((await original.read()).name, titles['1.0.0']);
+    await ui.question('刷新统计，确认模型请求和标题应用均为 2，且记录中有两个不同标题。停用 v2，确认界面显示已停用。完成后回车。');
+    await upgrade.nameSession(nativeSession(native, await start()), env, undefined, true);
     await delay(1500);
-    assert.equal(fixtureModel.count(), 1);
-    assert.equal((await original.read()).name, title);
-    await ui.question('再次刷新统计及记录，确认模型请求和标题应用均仍为 1，Token 仍为 19/5/4，原记录及标题仍在。确认后回车。');
+    assert.deepEqual(fixtureModel.calls, ['1.0.0', '2.0.0']);
+    await ui.question('再次刷新统计及记录，确认模型请求和标题应用均仍为 2，Token 仍为 38/10/8，两个记录及标题仍在。确认后回车。');
   } finally { await native.close(); }
   const reopened = await openNative(codex, root, nativeEnv);
-  try { assert.equal((await nativeSession(reopened, originalId).read()).name, title); }
-  finally { await reopened.close(); }
+  try {
+    assert.equal((await nativeSession(reopened, originalId).read()).name, titles['1.0.0']);
+    assert.equal((await nativeSession(reopened, upgradedId).read()).name, titles['2.0.0']);
+  } finally { await reopened.close(); }
   assert.equal(app.exitCode, null, 'Desktop unexpectedly exited');
   console.log('PASS: clean profile, native title and ACK, same-ID upgrade, disabled ingress, retained title and counts.');
 }
