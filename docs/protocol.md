@@ -113,7 +113,7 @@ Orca 绑定字段可选。`orcaSessionId` 是 Orca 原始 ID。Pi 适配器可�
 }
 ```
 
-`provider` 为 `codex` 或 `api`。`maxTitleLength` 为 8 到 48 个 Unicode 码点，包含 emoji、空格和全角分隔符。`fast` 打开时 Codex 请求 `priority`，实际是否生效取服务返回的证据。Codex 使用原生 CLI 的 ChatGPT 登录状态及临时 exec，通常由 npm Windows 原生可执行文件提供。支持 CLI 默认的文件认证存储；管理器通过 CLI 检查账号类型，从不打开认证文件。使用低推理档，忽略用户配置，关闭 Hook、apps、插件、shell 和多 Agent 等能力，模型调用不持久化原生会话。
+`provider` 为 `codex` 或 `api`。`maxTitleLength` 只接受 `15`（简短，默认）或 `30`（详细），以 Unicode 码点计算，包含 emoji、空格和全角分隔符。旧设置按最近的预设迁移，22 及以下取 15，23 及以上取 30。历史记录保留当时的上限。`fast` 打开时 Codex 请求 `priority`，实际是否生效取服务返回的证据。Codex 使用原生 CLI 的 ChatGPT 登录状态及临时 exec，通常由 npm Windows 原生可执行文件提供。支持 CLI 默认的文件认证存储；管理器通过 CLI 检查账号类型，从不打开认证文件。使用低推理档，忽略用户配置，关闭 Hook、apps、插件、shell 和多 Agent 等能力，模型调用不持久化原生会话。
 
 `apiProtocol` 为 `chat`、`responses`、`anthropic` 或 `gemini`，同时用于 API 命名、连接测试及备用服务。每次生成发送一个非流式 JSON 请求。保存时保留用户填写的地址路径。新地址只有主机时，Chat、Responses 和 Anthropic 使用 `/v1`，Gemini 使用 `/v1beta`。Chat、Responses 和 Gemini 保留已有的代理前缀。Anthropic 的无版本代理前缀追加 `/v1`，也可粘贴完整端点精确指定路径。0.1.1 已保存的地址默认使用 `chat` 并继续沿用旧路径规则，直到改动地址或协议。
 

@@ -69,6 +69,12 @@ ALTER TABLE events ADD COLUMN failure_limit INTEGER;
 PRAGMA user_version=4;
 `
 
+const schemaV5 = `
+UPDATE settings SET max_length=CASE WHEN max_length<=22 THEN 15 ELSE 30 END
+	WHERE id=1 AND max_length NOT IN (15,30);
+PRAGMA user_version=5;
+`
+
 func initialize(db *sql.DB) error {
 	for _, pragmas := range []string{"PRAGMA busy_timeout=2500", "PRAGMA foreign_keys=ON", "PRAGMA journal_mode=WAL", "PRAGMA secure_delete=ON"} {
 		if _, err := db.Exec(pragmas); err != nil {
@@ -104,7 +110,12 @@ func initialize(db *sql.DB) error {
 		if _, err = tx.Exec(schemaV4); err != nil {
 			return err
 		}
+		fallthrough
 	case 4:
+		if _, err = tx.Exec(schemaV5); err != nil {
+			return err
+		}
+	case 5:
 	default:
 		return fmt.Errorf("无法读取数据库版本 %d", version)
 	}

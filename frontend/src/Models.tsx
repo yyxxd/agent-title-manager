@@ -34,9 +34,7 @@ function ModelForm({ initial }: { initial: Settings }) {
         <ApiFields settings={settings} edit={edit} {...credentials} busy={actions.busy} />
       </details>
       <Section title="标题规则">
-        <div className="settings-rows">
-          <label>标题最大长度<input type="number" min="8" max="48" required value={Number.isNaN(settings.maxTitleLength) ? '' : settings.maxTitleLength} onChange={(event) => edit('maxTitleLength', event.target.valueAsNumber)} /></label>
-        </div>
+        <TitleLengthOptions value={settings.maxTitleLength} onChange={(length) => edit('maxTitleLength', length)} />
       </Section>
       <div className="form-actions">
         <button type="button" onClick={() => {
@@ -48,6 +46,21 @@ function ModelForm({ initial }: { initial: Settings }) {
     </fieldset>
     <Status error={actions.error} message={actions.busy ? '正在处理…' : actions.message} />
   </form>;
+}
+
+const titleLengthOptions = [
+  { value: 15, label: '简短', example: '🧩 会话标题｜自动命名' },
+  { value: 30, label: '详细', example: '🧩 会话标题｜自动命名并同步到 Orca' },
+];
+
+function TitleLengthOptions({ value, onChange }: { value: number; onChange: (length: number) => void }) {
+  return <fieldset className="title-length-options" aria-label="标题长度">
+    {titleLengthOptions.map((option) => <label className="title-length-option" key={option.value}>
+      <input type="radio" name="title-length" value={option.value} checked={value === option.value}
+        onChange={() => onChange(option.value)} />
+      <span><strong>{option.label}</strong><span className="title-length-example">{option.example}</span></span>
+    </label>)}
+  </fieldset>;
 }
 
 type Edit = <K extends keyof Settings>(field: K, value: Settings[K]) => void;

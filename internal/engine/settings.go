@@ -3,8 +3,14 @@ package engine
 import (
 	"context"
 	"database/sql"
+	"encoding/json"
 	"errors"
 	"strings"
+)
+
+const (
+	shortTitleLength    = 15
+	detailedTitleLength = 30
 )
 
 type Settings struct {
@@ -21,15 +27,15 @@ type Settings struct {
 }
 
 type settingsPatch struct {
-	Provider        *string `json:"provider"`
-	CodexModel      *string `json:"codexModel"`
-	Fast            *bool   `json:"fast"`
-	APIProtocol     *string `json:"apiProtocol"`
-	APIBaseURL      *string `json:"apiBaseUrl"`
-	APIModel        *string `json:"apiModel"`
-	APIKey          *string `json:"apiKey"`
-	FallbackEnabled *bool   `json:"fallbackEnabled"`
-	MaxTitleLength  *int    `json:"maxTitleLength"`
+	Provider        *string         `json:"provider"`
+	CodexModel      *string         `json:"codexModel"`
+	Fast            *bool           `json:"fast"`
+	APIProtocol     *string         `json:"apiProtocol"`
+	APIBaseURL      *string         `json:"apiBaseUrl"`
+	APIModel        *string         `json:"apiModel"`
+	APIKey          *string         `json:"apiKey"`
+	FallbackEnabled *bool           `json:"fallbackEnabled"`
+	MaxTitleLength  json.RawMessage `json:"maxTitleLength"`
 }
 
 func loadSettings(ctx context.Context, q queryer) (Settings, []byte, error) {
@@ -66,7 +72,13 @@ func (e *Engine) saveSettings(ctx context.Context, p settingsPatch) (Settings, e
 		patch(&s.APIBaseURL, p.APIBaseURL)
 		patch(&s.APIModel, p.APIModel)
 		patch(&s.FallbackEnabled, p.FallbackEnabled)
-		patch(&s.MaxTitleLength, p.MaxTitleLength)
+		if len(p.MaxTitleLength) > 0 {
+			var length int
+			if err := json.Unmarshal(p.MaxTitleLength, &length); err != nil {
+				return Settings{}, errors.New("标题长度只能选择简短或详细预设")
+			}
+			s.MaxTitleLength = length
+		}
 		s.apiLegacy = saved.useLegacy(s.APIProtocol, s.APIBaseURL)
 		if err = validateSettings(&s); err != nil {
 			return Settings{}, err
@@ -101,8 +113,8 @@ func validateSettings(s *Settings) error {
 	if s.CodexModel == "" || !validString(s.CodexModel, 256) || !validString(s.APIModel, 256) {
 		return errors.New("模型名称格式无效")
 	}
-	if s.MaxTitleLength < 8 || s.MaxTitleLength > 48 {
-		return errors.New("标题长度必须在 8 到 48 个 Unicode 字符之间")
+	if s.MaxTitleLength != shortTitleLength && s.MaxTitleLength != detailedTitleLength {
+		return errors.New("标题长度只能选择简短或详细预设")
 	}
 	return validateAPISettings(s.APIProtocol, s.APIBaseURL, s.APIModel, s.apiLegacy)
 }

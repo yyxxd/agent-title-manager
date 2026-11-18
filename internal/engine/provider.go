@@ -12,6 +12,12 @@ const decisionSchema = `{"type":"object","properties":{"action":{"type":"string"
 //go:embed naming.md
 var namingPolicy string
 
+//go:embed naming-short.md
+var shortNamingPolicy string
+
+//go:embed naming-detailed.md
+var detailedNamingPolicy string
+
 type providerTest struct {
 	Provider    string  `json:"provider"`
 	APIProtocol *string `json:"apiProtocol"`
@@ -80,16 +86,7 @@ func draftAPIKey(saved Settings, base string, secret []byte, key *string) ([]byt
 }
 
 func (e *Engine) runProvider(ctx context.Context, req attemptRequest, start func() error) modelResult {
-	policy := namingPolicy + "\n可信配置：初始非空的未知标题与明确手动标题由宿主保护。max_title_length 见输入。"
-	var data map[string]any
-	if err := json.Unmarshal(req.payload, &data); err != nil {
-		return modelResult{status: "invalid_response"}
-	}
-	if data["connectivity_test"] == true {
-		policy = `这是一个连接测试。只返回 {"action":"keep","title":"","reason":""}。`
-	}
-	data["max_title_length"] = req.settings.MaxTitleLength
-	prompt, err := json.Marshal(data)
+	policy, prompt, err := providerPrompt(req.payload, req.settings.MaxTitleLength)
 	if err != nil {
 		return modelResult{status: "invalid_response"}
 	}
@@ -97,4 +94,27 @@ func (e *Engine) runProvider(ctx context.Context, req attemptRequest, start func
 		return runAPI(ctx, req.settings, req.secret, policy, prompt, start)
 	}
 	return e.runCodex(ctx, req.settings, policy, prompt, start)
+}
+
+func providerPrompt(payload []byte, maxLength int) (string, []byte, error) {
+	var preset string
+	switch maxLength {
+	case shortTitleLength:
+		preset = shortNamingPolicy
+	case detailedTitleLength:
+		preset = detailedNamingPolicy
+	default:
+		return "", nil, errors.New("标题长度只能选择简短或详细预设")
+	}
+	var data map[string]any
+	if err := json.Unmarshal(payload, &data); err != nil || data == nil {
+		return "", nil, errors.New("命名输入必须为 JSON 对象")
+	}
+	policy := namingPolicy + "\n" + preset
+	if data["connectivity_test"] == true {
+		policy = `这是一个连接测试。只返回 {"action":"keep","title":"","reason":""}。`
+	}
+	data["max_title_length"] = maxLength
+	prompt, err := json.Marshal(data)
+	return policy, prompt, err
 }

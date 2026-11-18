@@ -1,7 +1,6 @@
 package engine
 
 import (
-	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
@@ -229,8 +228,5 @@ func TestTitleRules(t *testing.T) {
 		if reason := titleFailure(title, 15); reason.Code == "" {
 			t.Errorf("误接收 %q", title)
 		}
-	}
-	if !bytes.Contains([]byte(namingPolicy), []byte("max_title_length")) {
-		t.Fatal("命名规则未嵌入")
 	}
 }

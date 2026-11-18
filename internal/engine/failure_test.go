@@ -49,7 +49,7 @@ func TestNamingFailureRecords(t *testing.T) {
 				t.Fatal(err)
 			}
 			reopened := engineAt(t, dir, nil)
-			call[Settings](t, reopened, "settings.save", map[string]int{"maxTitleLength": 48})
+			call[Settings](t, reopened, "settings.save", map[string]int{"maxTitleLength": 30})
 			r := latest(t, reopened)
 			checkFailureRecord(t, r, p.CurrentTitle, private, tc.code, tc.length)
 		})
@@ -149,7 +149,7 @@ INSERT INTO attempts(event_id,agent,provider,model,source,requested_tier,status,
 	}
 	e := engineAt(t, dir, nil)
 	var version int
-	if err := e.db.QueryRow("PRAGMA user_version").Scan(&version); err != nil || version != 4 {
+	if err := e.db.QueryRow("PRAGMA user_version").Scan(&version); err != nil || version != 5 {
 		t.Fatal(version, err)
 	}
 	checkLegacyFailureRecords(t, call[recordList](t, e, "records.list", listRequest{}).Items)
