@@ -28,7 +28,7 @@ func TestCodexJSONUsageAndFailure(t *testing.T) {
 		t.Fatal(r)
 	}
 	confirmed := []byte(`{"type":"turn.failed","error":{"status":429,"code":"rate_limit_exceeded"}}`)
-	if r = parseCodex(confirmed, false, errors.New("exit 1"), nil); !r.confirmed {
+	if r = parseCodex(confirmed, false, errors.New("exit 1"), nil); !r.confirmed || r.failure != failureRateLimited {
 		t.Fatal(r)
 	}
 	if r = parseCodex(confirmed, false, nil, context.DeadlineExceeded); r.confirmed || r.status != "interrupted" {
@@ -221,12 +221,12 @@ func codexFixture(w http.ResponseWriter, r *http.Request) {
 
 func TestTitleRules(t *testing.T) {
 	for _, title := range []string{"🧩 React｜修复", "⚙️ Codex｜配置", "📝 构建｜笔记"} {
-		if !validTitle(title, 15) {
+		if reason := titleFailure(title, 15); reason.Code != "" {
 			t.Errorf("拒绝 %q", title)
 		}
 	}
 	for _, title := range []string{"🧩 路径:修复", "⚙️ 构建｜📝 修复", "📝 构建｜修复｜提交", "🧩 项目模块特别特别长｜假装在这里继续编写名字"} {
-		if validTitle(title, 15) {
+		if reason := titleFailure(title, 15); reason.Code == "" {
 			t.Errorf("误接收 %q", title)
 		}
 	}

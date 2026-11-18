@@ -189,10 +189,12 @@ func (e *Engine) insertSubmission(ctx context.Context, tx *sql.Tx, p submission,
 
 var categories = []string{"🎬", "🧩", "🔎", "📝", "📅", "🎨", "⚙️", "💬"}
 
-func validTitle(title string, length int) bool {
-	if strings.TrimSpace(title) != title || utf8.RuneCountInString(title) > length ||
-		!validString(title, 256) || strings.ContainsAny(title, "|:：@\\`") {
-		return false
+func titleFailure(title string, limit int) failureReason {
+	if length := utf8.RuneCountInString(title); length > limit {
+		return failureReason{Code: failureTooLong, Length: &length, Limit: &limit}
+	}
+	if strings.TrimSpace(title) != title || !validString(title, 256) {
+		return failureReason{Code: failureTitleFormat}
 	}
 	for _, emoji := range categories {
 		body, ok := strings.CutPrefix(title, emoji+" ")
@@ -202,14 +204,17 @@ func validTitle(title string, length int) bool {
 		subject, goal, ok := strings.Cut(body, "｜")
 		if !ok || subject == "" || goal == "" || strings.TrimSpace(subject) != subject ||
 			strings.TrimSpace(goal) != goal || strings.Contains(goal, "｜") {
-			return false
+			return failureReason{Code: failureSeparator}
+		}
+		if strings.ContainsAny(title, "|:：@\\`") {
+			return failureReason{Code: failureTitleFormat}
 		}
 		for _, r := range body {
 			if unicode.Is(unicode.So, r) || r == '\uFE0F' || r == '\u200D' {
-				return false
+				return failureReason{Code: failureTitleFormat}
 			}
 		}
-		return true
+		return failureReason{}
 	}
-	return false
+	return failureReason{Code: failureCategory}
 }

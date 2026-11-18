@@ -3,6 +3,7 @@ package engine
 import (
 	"bytes"
 	"encoding/json"
+	"net/http"
 	"strings"
 )
 
@@ -27,6 +28,7 @@ type codexTrace struct {
 	usage                         usage
 	failed, done, tool, confirmed bool
 	itemError                     bool
+	failure                       failureCode
 }
 
 func parseCodex(raw []byte, truncated bool, runErr, ctxErr error) modelResult {
@@ -45,15 +47,19 @@ func parseCodex(raw []byte, truncated bool, runErr, ctxErr error) modelResult {
 	case trace.tool:
 		r.status = "rejected_tool"
 		r.message = "Codex 尝试调用工具，已丢弃命名结果"
+		r.failure = failureTool
 	case truncated:
 		r.status = "invalid_response"
 		r.message = errOutputLimit.Error()
+		r.failure = failureResponse
 	case runErr != nil || trace.failed || trace.itemError:
 		r.message = "Codex 命名失败，请检查订阅、模型与 CLI"
 		r.confirmed = trace.confirmed && !trace.done && trace.text == "" && r.usage == (usage{})
+		r.failure = trace.failure
 	case !trace.done:
 		r.status = "invalid_response"
 		r.message = "Codex 未返回已完成的命名结果"
+		r.failure = failureResponse
 	default:
 		return response([]byte(trace.text), r.usage, r.actualTier)
 	}
@@ -71,6 +77,9 @@ func (t *codexTrace) apply(e codexEvent) {
 			return
 		}
 		t.failed = true
+		if reason := e.requestFailure(); reason != "" {
+			t.failure = reason
+		}
 		if isHTTPRefusal(e.Message) || isHTTPRefusal(e.Error.Message) {
 			t.confirmed = true
 		}
@@ -99,8 +108,39 @@ func (t *codexTrace) apply(e codexEvent) {
 	}
 }
 
+func (e codexEvent) requestFailure() failureCode {
+	if reason := requestFailure(e.Error.Status); reason != failureRequest {
+		return reason
+	}
+	switch e.Error.Code {
+	case "invalid_api_key":
+		return failureUnauthorized
+	case "rate_limit_exceeded":
+		return failureRateLimited
+	case "insufficient_quota":
+		return failureQuota
+	}
+	for _, message := range []string{e.Error.Message, e.Message} {
+		if status := codexRefusalStatus(message); status != 0 {
+			return requestFailure(status)
+		}
+	}
+	return ""
+}
+
 func isHTTPRefusal(message string) bool {
-	return strings.HasPrefix(message, "unexpected status 401 Unauthorized:") ||
-		strings.HasPrefix(message, "unexpected status 403 Forbidden:") ||
-		strings.HasPrefix(message, "unexpected status 429 Too Many Requests:")
+	return codexRefusalStatus(message) != 0
+}
+
+func codexRefusalStatus(message string) int {
+	switch {
+	case strings.HasPrefix(message, "unexpected status 401 Unauthorized:"):
+		return http.StatusUnauthorized
+	case strings.HasPrefix(message, "unexpected status 403 Forbidden:"):
+		return http.StatusForbidden
+	case strings.HasPrefix(message, "unexpected status 429 Too Many Requests:"):
+		return http.StatusTooManyRequests
+	default:
+		return 0
+	}
 }

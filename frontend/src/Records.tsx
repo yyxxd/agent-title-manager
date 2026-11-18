@@ -16,6 +16,34 @@ const syncStates: Record<string, string> = {
   failed: 'Orca 同步失败', stale: 'Orca 同步已过期', skipped: 'Orca 安全跳过',
 };
 
+const failureMessages: Record<string, string> = {
+  title_category: '标题开头缺少有效的分类标识及空格。',
+  title_separator: '标题须用一个全角「｜」分隔对象和目标，两侧均须有内容且不留空格。',
+  title_format: '标题包含不允许的字符或空白。',
+  invalid_response: '命名服务返回的响应结构无效。',
+  codex_login: 'Codex CLI 未登录 ChatGPT 订阅。',
+  unauthorized: '命名服务拒绝了身份验证。',
+  forbidden: '当前账号或凭据无权访问命名服务。',
+  rate_limited: '命名请求被服务限流。',
+  quota_exhausted: '命名服务的可用额度不足。',
+  timeout: '命名请求超时。',
+  canceled: '命名请求已取消。',
+  request_failed: '命名服务请求失败。',
+  tool_rejected: '命名模型尝试调用工具，结果已丢弃。',
+  naming_failed: '自动命名失败，无法确定具体原因。',
+  legacy_title_validation: '模型已返回，但标题未通过校验。具体规则未记录。',
+  unrecorded: '具体失败原因未记录。',
+};
+
+function failureText(item: RecordItem) {
+  const failure = item.failure;
+  if (!failure || (item.status !== 'failed' && item.status !== 'interrupted')) return;
+  if (failure.code === 'title_too_long' && failure.length !== undefined && failure.limit !== undefined) {
+    return `标题超长（${failure.length} 个 Unicode 字符，当时上限 ${failure.limit} 个）。`;
+  }
+  return Object.hasOwn(failureMessages, failure.code) ? failureMessages[failure.code] : failureMessages.naming_failed;
+}
+
 export function Records() {
   const [refresh, setRefresh] = useState(0);
   const [confirm, setConfirm] = useState('');
@@ -51,10 +79,12 @@ function RecordRow({ item, busy, confirming, error, confirm, cancel, sync }: {
   item: RecordItem; busy: boolean; confirming: boolean; confirm: () => void;
   error?: string; cancel: () => void; sync: (verb: 'adopt' | 'retry') => void;
 }) {
+  const reason = failureText(item);
   return <article className="record-row">
     <div className="record-head">
       <div className="record-copy">
         <h3>{item.title || '会话标题尚未生成'}</h3>
+        {reason && <p className="muted">{reason}</p>}
         <p className="muted">{agentName(item.agent)} · {formatTime(item.updatedAt)}</p>
       </div>
       <div className="record-statuses">

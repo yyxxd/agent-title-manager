@@ -99,6 +99,7 @@ export type RecordItem = {
   updatedAt: string;
   syncStatus?: string;
   syncError?: string;
+  failure?: { code: string; length?: number; limit?: number };
   attempts: Attempt[] | null;
 };
 

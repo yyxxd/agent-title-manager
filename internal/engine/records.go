@@ -27,6 +27,7 @@ type record struct {
 	SyncStatus string          `json:"syncStatus"`
 	UpdatedAt  string          `json:"updatedAt"`
 	Attempts   []attemptRecord `json:"attempts"`
+	Failure    *failureReason  `json:"failure,omitempty"`
 }
 
 type attemptRecord struct {
@@ -64,6 +65,9 @@ func (e *Engine) records(ctx context.Context, p listRequest) (recordList, error)
 		if err := listAttempts(ctx, tx, local, items, limit); err != nil {
 			return recordList{}, err
 		}
+		for i := range items {
+			items[i].addLegacyFailure()
+		}
 		tests := []attemptRecord{}
 		err = readAttempts(ctx, tx, local, attemptFields+` WHERE event_id IS NULL ORDER BY id DESC LIMIT ?`,
 			limit, func(_ string, item attemptRecord) { tests = append(tests, item) })
@@ -72,7 +76,8 @@ func (e *Engine) records(ctx context.Context, p listRequest) (recordList, error)
 }
 
 func listRecords(ctx context.Context, tx *sql.Tx, local *time.Location, limit int) ([]record, error) {
-	rows, err := tx.QueryContext(ctx, `SELECT id,agent,session_id,revision,title,base,status,sync_status,updated`+newestEvents, limit)
+	rows, err := tx.QueryContext(ctx, `SELECT id,agent,session_id,revision,title,base,status,sync_status,updated,
+		failure_code,failure_length,failure_limit`+newestEvents, limit)
 	if err != nil {
 		return nil, err
 	}
@@ -81,15 +86,32 @@ func listRecords(ctx context.Context, tx *sql.Tx, local *time.Location, limit in
 	for rows.Next() {
 		var item record
 		var updated int64
-		err = rows.Scan(&item.ID, &item.Agent, &item.SessionID, &item.Revision, &item.Title, &item.BaseTitle, &item.Status, &item.SyncStatus, &updated)
+		var reason failureReason
+		err = rows.Scan(&item.ID, &item.Agent, &item.SessionID, &item.Revision, &item.Title, &item.BaseTitle, &item.Status,
+			&item.SyncStatus, &updated, &reason.Code, &reason.Length, &reason.Limit)
 		if err != nil {
 			return nil, err
 		}
 		item.UpdatedAt = formatTime(updated, local)
 		item.Attempts = []attemptRecord{}
+		if reason.Code != "" {
+			item.Failure = &reason
+		}
 		items = append(items, item)
 	}
 	return items, rows.Err()
+}
+
+func (item *record) addLegacyFailure() {
+	if item.Status != "failed" || item.Failure != nil {
+		return
+	}
+	code := failureUnrecorded
+	if len(item.Attempts) > 0 && item.Attempts[len(item.Attempts)-1].Status == "completed" {
+		// 旧版只有模型完成后未通过标题校验，才会把该命名事件标记为失败。
+		code = failureLegacyTitle
+	}
+	item.Failure = &failureReason{Code: code}
 }
 
 func listAttempts(ctx context.Context, tx *sql.Tx, local *time.Location, items []record, limit int) error {

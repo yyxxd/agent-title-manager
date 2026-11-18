@@ -4,7 +4,9 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"io"
+	"net"
 	"net/http"
 	"strconv"
 )
@@ -47,15 +49,26 @@ func runAPI(ctx context.Context, s Settings, secret []byte, policy string, input
 	res, err := apiClient.Do(request)
 	if err != nil {
 		if ctx.Err() != nil {
-			return modelResult{status: "interrupted", message: "API 请求超时或已取消"}
+			return modelResult{status: "interrupted", message: "API 请求超时或已取消", failure: contextFailure(ctx.Err())}
 		}
-		return modelResult{status: "failed", message: "自定义 API 请求失败，请检查地址与网络"}
+		return modelResult{status: "failed", message: "自定义 API 请求失败，请检查地址与网络", failure: apiTransportFailure(err)}
 	}
 	defer res.Body.Close()
 	if res.StatusCode < 200 || res.StatusCode >= 300 {
-		return modelResult{status: "failed", message: "自定义 API 返回 HTTP " + strconv.Itoa(res.StatusCode)}
+		return modelResult{status: "failed", message: "自定义 API 返回 HTTP " + strconv.Itoa(res.StatusCode), failure: requestFailure(res.StatusCode)}
 	}
 	return parseAPI(s.APIProtocol, res.Body)
+}
+
+func apiTransportFailure(err error) failureCode {
+	if reason := contextFailure(err); reason != "" {
+		return reason
+	}
+	var networkError net.Error
+	if errors.As(err, &networkError) && networkError.Timeout() {
+		return failureTimeout
+	}
+	return failureRequest
 }
 
 func makeAPIRequest(ctx context.Context, endpoint, protocol, model, policy, input string, key []byte) (*http.Request, error) {
@@ -94,14 +107,14 @@ func parseAPI(protocol string, body io.Reader) modelResult {
 	const limit = 256 << 10
 	raw, err := io.ReadAll(io.LimitReader(body, limit+1))
 	if err != nil {
-		return modelResult{status: "interrupted", message: "无法完整读取 API 响应"}
+		return modelResult{status: "interrupted", message: "无法完整读取 API 响应", failure: apiTransportFailure(err)}
 	}
 	if len(raw) > limit {
-		return modelResult{status: "invalid_response", message: errOutputLimit.Error()}
+		return modelResult{status: "invalid_response", message: errOutputLimit.Error(), failure: failureResponse}
 	}
 	reply := emptyAPIReply(protocol)
 	if json.Unmarshal(raw, reply) != nil {
-		return modelResult{status: "invalid_response", message: "自定义 API 返回的 JSON 无效"}
+		return modelResult{status: "invalid_response", message: "自定义 API 返回的 JSON 无效", failure: failureResponse}
 	}
 	return reply.result()
 }
@@ -109,7 +122,8 @@ func parseAPI(protocol string, body io.Reader) modelResult {
 func apiDecision(text string, tokens usage, tier string) modelResult {
 	tokens = tokens.clean()
 	if text == "" {
-		return modelResult{status: "invalid_response", usage: tokens, actualTier: knownTier(tier), message: "自定义 API 未返回命名内容"}
+		return modelResult{status: "invalid_response", usage: tokens, actualTier: knownTier(tier),
+			message: "自定义 API 未返回命名内容", failure: failureResponse}
 	}
 	return response([]byte(text), tokens, tier)
 }

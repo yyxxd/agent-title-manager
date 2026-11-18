@@ -41,7 +41,12 @@ func (e *Engine) runCodex(ctx context.Context, s Settings, policy string, input 
 		return modelResult{status: "interrupted"}
 	}
 	err = cmd.Run()
-	return parseCodex(out.Bytes(), out.truncated, err, child.Err())
+	result := parseCodex(out.Bytes(), out.truncated, err, child.Err())
+	if result.status == "interrupted" {
+		// 子进程也可能因连接结果不明而在内部停止。仅父上下文能确认取消或超时。
+		result.failure = contextFailure(ctx.Err())
+	}
+	return result
 }
 
 func codexExecutable() (string, error) {
@@ -111,9 +116,9 @@ func codexAuth(ctx context.Context, binary, dir string) modelResult {
 	case err == nil && strings.Contains(text, "logged in using chatgpt"):
 		return modelResult{}
 	case strings.Contains(text, "not logged in") || strings.Contains(text, "logged in using an api key"):
-		return modelResult{status: "failed", message: "请先在 Codex CLI 登录 ChatGPT 订阅", confirmed: true}
+		return modelResult{status: "failed", message: "请先在 Codex CLI 登录 ChatGPT 订阅", confirmed: true, failure: failureCodexLogin}
 	case ctx.Err() != nil:
-		return modelResult{status: "interrupted", message: "Codex 登录检查超时或已取消"}
+		return modelResult{status: "interrupted", message: "Codex 登录检查超时或已取消", failure: contextFailure(ctx.Err())}
 	default:
 		return modelResult{status: "failed", message: "无法确认 Codex CLI 已登录 ChatGPT 订阅"}
 	}

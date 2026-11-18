@@ -62,6 +62,13 @@ UPDATE settings SET api_legacy=1 WHERE api_url<>'';
 PRAGMA user_version=3;
 `
 
+const schemaV4 = `
+ALTER TABLE events ADD COLUMN failure_code TEXT NOT NULL DEFAULT '';
+ALTER TABLE events ADD COLUMN failure_length INTEGER;
+ALTER TABLE events ADD COLUMN failure_limit INTEGER;
+PRAGMA user_version=4;
+`
+
 func initialize(db *sql.DB) error {
 	for _, pragmas := range []string{"PRAGMA busy_timeout=2500", "PRAGMA foreign_keys=ON", "PRAGMA journal_mode=WAL", "PRAGMA secure_delete=ON"} {
 		if _, err := db.Exec(pragmas); err != nil {
@@ -92,7 +99,12 @@ func initialize(db *sql.DB) error {
 		if _, err = tx.Exec(schemaV3); err != nil {
 			return err
 		}
+		fallthrough
 	case 3:
+		if _, err = tx.Exec(schemaV4); err != nil {
+			return err
+		}
+	case 4:
 	default:
 		return fmt.Errorf("无法读取数据库版本 %d", version)
 	}
