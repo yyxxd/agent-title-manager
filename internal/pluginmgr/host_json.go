@@ -60,7 +60,7 @@ func setObject(source object, key string, v object) error {
 	return setValue(source, key, v)
 }
 
-func editCommands(events object, event string, match func(string) bool, add func() (json.RawMessage, error)) (bool, error) {
+func editCommands(events object, event string, codex bool, match func(string) bool, add func() (json.RawMessage, error)) (bool, error) {
 	groups, err := get[[]json.RawMessage](events, event)
 	if err != nil {
 		return false, err
@@ -68,7 +68,7 @@ func editCommands(events object, event string, match func(string) bool, add func
 	var kept []json.RawMessage
 	found := false
 	for _, group := range groups {
-		next, matched, err := editGroup(group, match, add != nil)
+		next, matched, err := editGroup(group, codex, match, add != nil)
 		if err != nil {
 			return false, err
 		}
@@ -94,7 +94,7 @@ func editCommands(events object, event string, match func(string) bool, add func
 	return true, setList(events, event, kept)
 }
 
-func editGroup(raw json.RawMessage, match func(string) bool, keep bool) (json.RawMessage, bool, error) {
+func editGroup(raw json.RawMessage, codex bool, match func(string) bool, keep bool) (json.RawMessage, bool, error) {
 	var group object
 	if json.Unmarshal(raw, &group) != nil || group == nil {
 		return nil, false, errors.New("宿主 Hook 项无法解析")
@@ -106,17 +106,14 @@ func editGroup(raw json.RawMessage, match func(string) bool, keep bool) (json.Ra
 	found := false
 	var kept []json.RawMessage
 	for _, item := range items {
-		var h struct{ Type, Command, CommandWindows string }
-		if json.Unmarshal(item, &h) != nil {
-			return nil, false, errors.New("宿主 Hook 命令无法解析")
+		next, matched, err := editCommand(item, codex, match, keep)
+		if err != nil {
+			return nil, false, err
 		}
-		if h.Type == "command" && (match(h.Command) || match(h.CommandWindows)) {
-			found = true
-			if !keep {
-				continue
-			}
+		found = found || matched
+		if next != nil {
+			kept = append(kept, next)
 		}
-		kept = append(kept, item)
 	}
 	switch {
 	case !found || keep:
@@ -130,4 +127,49 @@ func editGroup(raw json.RawMessage, match func(string) bool, keep bool) (json.Ra
 		out, err := json.Marshal(group)
 		return out, true, err
 	}
+}
+
+type hookCommand struct {
+	Type, Command  string
+	CommandWindows *string `json:"commandWindows"`
+	WindowsAlias   *string `json:"command_windows"`
+}
+
+const inactiveWindowsCommand = "exit /b 0"
+
+func editCommand(raw json.RawMessage, codex bool, match func(string) bool, keep bool) (json.RawMessage, bool, error) {
+	var h hookCommand
+	if json.Unmarshal(raw, &h) != nil {
+		return nil, false, errors.New("宿主 Hook 命令无法解析")
+	}
+	windows, field := h.CommandWindows, "commandWindows"
+	if codex && h.WindowsAlias != nil {
+		if windows != nil {
+			return nil, false, errors.New("Codex Hook 同时配置了两个 Windows 命令字段")
+		}
+		windows, field = h.WindowsAlias, "command_windows"
+	}
+	effective := h.Command
+	if codex && windows != nil {
+		effective = *windows
+	}
+	if h.Type != "command" || !match(effective) {
+		return raw, false, nil
+	}
+	if keep {
+		return raw, true, nil
+	}
+	if !codex || windows == nil || h.Command == "" || match(h.Command) {
+		return nil, true, nil
+	}
+	// Preserve the non-Windows command without letting it become a Windows fallback.
+	var fields object
+	if err := json.Unmarshal(raw, &fields); err != nil {
+		return nil, false, err
+	}
+	if err := setValue(fields, field, inactiveWindowsCommand); err != nil {
+		return nil, false, err
+	}
+	out, err := json.Marshal(fields)
+	return out, true, err
 }

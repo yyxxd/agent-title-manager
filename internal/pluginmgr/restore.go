@@ -24,7 +24,8 @@ func mergeLegacy(undo change, current snapshot) (change, error) {
 		}
 		return change{}, restoreConflict
 	}
-	merged, ok := restoreObject(undo.After.Data, undo.Before.Data, current.Data)
+	merger := legacyRestore{home: filepath.Dir(undo.File)}
+	merged, ok := merger.value(undo.After.Data, undo.Before.Data, current.Data, "")
 	if !ok {
 		return change{}, restoreConflict
 	}
@@ -37,12 +38,17 @@ func mergeLegacy(undo change, current snapshot) (change, error) {
 	return undo, nil
 }
 
-func restoreObject(before, after, actual json.RawMessage) (json.RawMessage, bool) {
+type legacyRestore struct{ home string }
+
+func (m legacyRestore) value(before, after, actual json.RawMessage, key string) (json.RawMessage, bool) {
 	if sameJSON(before, after) || sameJSON(before, actual) {
 		return actual, true
 	}
 	if sameJSON(after, actual) {
 		return before, true
+	}
+	if isArray(before) || isArray(after) {
+		return m.list(before, after, actual, key)
 	}
 	var a, b, c object
 	if !asObject(before, &a) || !asObject(after, &b) || !asObject(actual, &c) {
@@ -54,7 +60,7 @@ func restoreObject(before, after, actual json.RawMessage) (json.RawMessage, bool
 		}
 	}
 	for key, raw := range a {
-		value, ok := restoreObject(raw, b[key], c[key])
+		value, ok := m.value(raw, b[key], c[key], key)
 		if !ok {
 			return nil, false
 		}

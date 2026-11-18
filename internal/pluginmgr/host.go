@@ -174,7 +174,7 @@ func editHostHooks(root object, id, entry string, adding bool) (bool, error) {
 		if !adding {
 			add = nil
 		}
-		edited, err := editCommands(hooks, e.name, func(s string) bool { return s == command }, add)
+		edited, err := editCommands(hooks, e.name, id == "codex", func(s string) bool { return s == command }, add)
 		if err != nil {
 			return false, err
 		}

@@ -67,7 +67,7 @@ func removeLegacyHook(root object, h host) (bool, error) {
 	if h.id == "claude" {
 		event = "UserPromptSubmit"
 	}
-	edited, err := editCommands(hooks, event, func(cmd string) bool { return legacyCommand(h, cmd) }, nil)
+	edited, err := editCommands(hooks, event, h.id == "codex", func(cmd string) bool { return legacyCommand(h, cmd) }, nil)
 	if err == nil && edited {
 		err = setObject(root, "hooks", hooks)
 	}
