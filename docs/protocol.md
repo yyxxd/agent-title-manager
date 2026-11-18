@@ -113,13 +113,15 @@ Orca 绑定字段可选。`orcaSessionId` 是 Orca 原始 ID。Pi 适配器可�
 }
 ```
 
-`provider` 为 `codex` 或 `api`。`maxTitleLength` 只接受 `15`（简短，默认）或 `30`（详细），以 Unicode 码点计算，包含 emoji、空格和全角分隔符。旧设置按最近的预设迁移，22 及以下取 15，23 及以上取 30。历史记录保留当时的上限。`fast` 打开时 Codex 请求 `priority`，实际是否生效取服务返回的证据。Codex 使用原生 CLI 的 ChatGPT 登录状态及临时 exec，通常由 npm Windows 原生可执行文件提供。支持 CLI 默认的文件认证存储；管理器通过 CLI 检查账号类型，从不打开认证文件。使用低推理档，忽略用户配置，关闭 Hook、apps、插件、shell 和多 Agent 等能力，模型调用不持久化原生会话。
+`provider` 为 `codex`、`claude` 或 `api`。`maxTitleLength` 只接受 `15`（简短，默认）或 `30`（详细），以 Unicode 码点计算，包含 emoji、空格和全角分隔符。旧设置按最近的预设迁移，22 及以下取 15，23 及以上取 30。历史记录保留当时的上限。`fast` 打开时 Codex 请求 `priority`，实际是否生效取服务返回的证据。Codex 使用原生 CLI 的 ChatGPT 登录状态及临时 exec，通常由 npm Windows 原生可执行文件提供。支持 CLI 默认的文件认证存储；管理器通过 CLI 检查账号类型，从不打开认证文件。使用低推理档，忽略用户配置，关闭 Hook、apps、插件、shell 和多 Agent 等能力，模型调用不持久化原生会话。
 
 `apiProtocol` 为 `chat`、`responses`、`anthropic` 或 `gemini`，同时用于 API 命名、连接测试及备用服务。每次生成发送一个非流式 JSON 请求。保存时保留用户填写的地址路径。新地址只有主机时，Chat、Responses 和 Anthropic 使用 `/v1`，Gemini 使用 `/v1beta`。Chat、Responses 和 Gemini 保留已有的代理前缀。Anthropic 的无版本代理前缀追加 `/v1`，也可粘贴完整端点精确指定路径。0.1.1 已保存的地址默认使用 `chat` 并继续沿用旧路径规则，直到改动地址或协议。
 
 `providers.endpoints {"apiProtocol":"gemini","apiBaseUrl":"https://api.example.com","apiModel":"demo"}` 在本地解析并返回 `{"generationUrl":"https://api.example.com/v1beta/models/demo:generateContent","modelsUrl":"https://api.example.com/v1beta/models"}`。未填写 Gemini 模型时，生成路径用 `{model}` 占位。若已粘贴完整生成地址，预览可以从中显示模型。完整生成地址的后缀与所选协议冲突时，程序提示切换协议或修改 API 地址。
 
 `providers.models {"apiProtocol":"anthropic","apiBaseUrl":"https://api.example.com"}` 向本次指定地址发 GET，返回 `{"items":[{"id":"demo","name":"Demo"}]}`，其中 `name` 可省略。支持供应商返回的分页游标。列表请求有独立超时，未保存的地址也可使用。若供应商不提供模型列表，可直接填写模型 ID。此调用不计入命名用量。
+
+`providers.subscriptionModels {"provider":"codex"}` 读取原生 CLI 可见模型。响应 `items` 每项包含精确 `id`、`efforts`，还可提供 `name`、`resolvedModel`、`defaultEffort`。Claude 在隔离模式下未检测到原生订阅登录时会返回 `notice`。目录读取只使用 CLI 元数据，模型使用资格与额度由连接测试确认。
 
 `providers.test` 发送合成连接测试请求，无真实会话历史，可能产生模型用量。可测试已保存值或覆盖本次参数。示例 `{"provider":"api","apiProtocol":"responses","apiBaseUrl":"https://api.example.com/v1","apiModel":"demo"}`。可另传 `apiKey`，Codex 可另传 `codexModel`、`fast`。成功返回 `{"provider":"api","model":"demo","ok":true}`，失败返回外层 RPC 错误。不保存覆盖字段，不走备用服务。
 

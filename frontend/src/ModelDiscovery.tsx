@@ -72,11 +72,13 @@ export function ModelDiscovery({ target, apiKey, blocked, listingUnavailable, se
   </div>;
 }
 
-function ModelChoices({ items, filtered, query, setQuery, searchInput, selected, choose }: {
-  items?: ApiModel[]; filtered?: ApiModel[]; query: string; setQuery: (query: string) => void;
+export function ModelChoices({ items, filtered, query, setQuery, searchInput, selected, choose, emptyMessage }: {
+  items?: ApiModel[]; filtered?: (ApiModel & { resolvedModel?: string })[]; query: string; setQuery: (query: string) => void;
   searchInput: RefObject<HTMLInputElement | null>; selected: string; choose: (id: string) => void;
+  emptyMessage?: string;
 }) {
   if (!items) return null;
+  if (!items.length && emptyMessage) return <Status message={emptyMessage} />;
   if (!items.length) return <Status message="模型列表为空，可手动输入模型 ID。" />;
   return <>
     <div className="model-picker-search">
@@ -87,10 +89,13 @@ function ModelChoices({ items, filtered, query, setQuery, searchInput, selected,
     </div>
     {filtered?.length === 0 && <Status message="没有匹配的模型。" />}
     {!!filtered?.length && <ul className="model-options" aria-label="可用模型">
-      {filtered.map(({ id, name }) => <li key={id}><button type="button" aria-pressed={id === selected} onClick={() => choose(id)}>
-        <span>{name || id}{name && name !== id && <small className="muted">{id}</small>}</span>
-        {id === selected && <Check size={15} aria-hidden="true" />}
-      </button></li>)}
+      {filtered.map(({ id, name, resolvedModel }) => {
+        const detail = [name !== id && name && id, resolvedModel !== id && resolvedModel].filter(Boolean).join(' · ');
+        return <li key={id}><button type="button" aria-pressed={id === selected} onClick={() => choose(id)}>
+          <span>{name || id}{detail && <small className="muted">{detail}</small>}</span>
+          {id === selected && <Check size={15} aria-hidden="true" />}
+        </button></li>;
+      })}
     </ul>}
   </>;
 }

@@ -1,6 +1,7 @@
 package engine
 
 import (
+	"errors"
 	"os"
 	"os/exec"
 	"runtime"
@@ -8,7 +9,28 @@ import (
 	"unsafe"
 
 	"golang.org/x/sys/windows"
+	"golang.org/x/sys/windows/registry"
 )
+
+func checkClaudePolicyRegistry() error {
+	for _, root := range []registry.Key{registry.LOCAL_MACHINE, registry.CURRENT_USER} {
+		for _, view := range []uint32{registry.WOW64_64KEY, registry.WOW64_32KEY} {
+			key, err := registry.OpenKey(root, `SOFTWARE\Policies\ClaudeCode`, registry.QUERY_VALUE|view)
+			if errors.Is(err, registry.ErrNotExist) {
+				continue
+			}
+			if err != nil {
+				return errClaudePolicy
+			}
+			_, _, err = key.GetValue("Settings", nil)
+			key.Close()
+			if !errors.Is(err, registry.ErrNotExist) {
+				return errClaudePolicy
+			}
+		}
+	}
+	return nil
+}
 
 func lockDirectory(path string) (*os.File, error) {
 	f, err := os.OpenFile(path, os.O_CREATE|os.O_RDWR, 0600)

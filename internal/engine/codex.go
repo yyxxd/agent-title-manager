@@ -15,6 +15,9 @@ import (
 )
 
 func (e *Engine) runCodex(ctx context.Context, s Settings, policy string, input []byte, start func() error) modelResult {
+	if s.CodexModel == "" {
+		return modelResult{status: "failed", message: "请先选择 Codex 命名模型", failure: failureModelSelection}
+	}
 	binary, err := codexExecutable()
 	if err != nil {
 		return modelResult{status: "failed", message: "找不到原生 Codex CLI", confirmed: true}
@@ -134,7 +137,7 @@ func codexArgs(dir string, s Settings, policy string) ([]string, error) {
 	}
 	args := []string{"exec", "--ephemeral", "--ignore-user-config", "--ignore-rules", "--skip-git-repo-check",
 		"--sandbox", "read-only", "-C", dir, "--color", "never", "-m", s.CodexModel,
-		"-c", fileAuth, "-c", `model_provider="openai"`, "-c", `model_reasoning_effort="low"`,
+		"-c", fileAuth, "-c", nativeCodexProvider,
 		"-c", "project_doc_max_bytes=0", "-c", "skills.max_context_tokens=1",
 		"-c", "agents.enabled=false", "-c", `web_search="disabled"`,
 		"-c", "apps._default.enabled=false", "-c", "model_instructions_file=" + strconv.Quote(policyPath)}
@@ -143,6 +146,9 @@ func codexArgs(dir string, s Settings, policy string) ([]string, error) {
 	}
 	if s.Fast {
 		args = append(args, "-c", `service_tier="priority"`)
+	}
+	if s.CodexEffort != "" {
+		args = append(args, "-c", "model_reasoning_effort="+strconv.Quote(s.CodexEffort))
 	}
 	return append(args, "--output-schema", schemaPath, "--json", "-"), nil
 }

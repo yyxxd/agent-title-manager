@@ -70,6 +70,12 @@
 .model-discovery-controls input { max-width: 230px; }
 .model-discovery .notice { margin: 8px 0 0; }
 
+.subscription-controls { display: flex; gap: 8px; min-width: 0; }
+.subscription-controls .model-picker-trigger { flex: 1; min-width: 0; justify-content: space-between; }
+.subscription-controls .model-picker-trigger span { overflow: hidden; text-overflow: ellipsis; }
+.subscription-status { padding: 0 16px 10px; }
+.subscription-status .notice { margin: 0 0 6px; }
+
 .model-options {
   max-height: 15rem;
   overflow-y: auto;

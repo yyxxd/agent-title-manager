@@ -1,0 +1,201 @@
+package engine
+
+import (
+	"bufio"
+	"context"
+	"encoding/json"
+	"errors"
+	"fmt"
+	"os"
+	"os/exec"
+	"slices"
+	"strings"
+	"time"
+)
+
+type subscriptionModel struct {
+	ID            string   `json:"id"`
+	Name          string   `json:"name,omitempty"`
+	ResolvedModel string   `json:"resolvedModel,omitempty"`
+	Efforts       []string `json:"efforts"`
+	DefaultEffort string   `json:"defaultEffort,omitempty"`
+}
+
+type subscriptionCatalog struct {
+	Items  []subscriptionModel `json:"items"`
+	Notice string              `json:"notice,omitempty"`
+}
+
+type subscriptionRequest struct {
+	Provider string `json:"provider"`
+}
+
+type subscriptionSnapshot struct {
+	sequence uint64
+	loaded   time.Time
+	catalog  subscriptionCatalog
+	err      error
+}
+
+func (e *Engine) refreshSubscription(ctx context.Context, provider string) (subscriptionCatalog, error) {
+	if provider != "codex" && provider != "claude" {
+		return subscriptionCatalog{}, errors.New("请选择原生 CLI 来源")
+	}
+	e.catalogMu.Lock()
+	e.catalogSequence++
+	snapshot := subscriptionSnapshot{sequence: e.catalogSequence}
+	e.catalogMu.Unlock()
+	snapshot.catalog, snapshot.err = e.catalog(ctx, provider)
+	snapshot.loaded = time.Now()
+	e.catalogMu.Lock()
+	defer e.catalogMu.Unlock()
+	if current := e.catalogSnapshots[provider]; current.sequence > snapshot.sequence {
+		return current.catalog, current.err
+	}
+	if e.catalogSnapshots == nil {
+		e.catalogSnapshots = make(map[string]subscriptionSnapshot, 2)
+	}
+	e.catalogSnapshots[provider] = snapshot
+	return snapshot.catalog, snapshot.err
+}
+
+func (e *Engine) subscriptionForValidation(ctx context.Context, provider string) (subscriptionCatalog, error) {
+	e.catalogMu.Lock()
+	snapshot := e.catalogSnapshots[provider]
+	e.catalogMu.Unlock()
+	// 短时间内用界面刚读取的目录验证同一份草稿。手动刷新会覆盖这份目录。
+	if snapshot.err == nil && time.Since(snapshot.loaded) < 2*time.Minute {
+		return snapshot.catalog, nil
+	}
+	return e.refreshSubscription(ctx, provider)
+}
+
+var (
+	errCatalogProtocol = errors.New("此 CLI 版本无法读取模型目录，请更新 CLI")
+	errCatalogTimeout  = errors.New("读取模型目录超时，请刷新重试")
+)
+
+func (e *Engine) subscriptionModels(ctx context.Context, provider string) (subscriptionCatalog, error) {
+	ctx, cancel := context.WithTimeout(ctx, 25*time.Second)
+	defer cancel()
+	dir, err := os.MkdirTemp(e.dir, "subscription-catalog-")
+	if err != nil {
+		return subscriptionCatalog{}, errors.New("无法创建临时目录")
+	}
+	defer os.RemoveAll(dir)
+
+	var items []subscriptionModel
+	var notice string
+	switch provider {
+	case "codex":
+		items, err = codexModels(ctx, dir)
+	case "claude":
+		items, notice, err = claudeModels(ctx, dir)
+	}
+	if errors.Is(ctx.Err(), context.DeadlineExceeded) {
+		return subscriptionCatalog{}, errCatalogTimeout
+	}
+	return subscriptionCatalog{Items: cleanCatalog(items), Notice: notice}, err
+}
+
+func cleanCatalog(items []subscriptionModel) []subscriptionModel {
+	result := make([]subscriptionModel, 0, len(items))
+	seen := make(map[string]bool, len(items))
+	for _, model := range items {
+		if !validNativeValue(model.ID) || model.ID == "" || seen[model.ID] {
+			continue
+		}
+		seen[model.ID] = true
+		efforts := make([]string, 0, len(model.Efforts))
+		for _, effort := range model.Efforts {
+			if effort != "" && validNativeValue(effort) && !slices.Contains(efforts, effort) {
+				efforts = append(efforts, effort)
+			}
+		}
+		model.Efforts = efforts
+		if !slices.Contains(efforts, model.DefaultEffort) {
+			model.DefaultEffort = ""
+		}
+		result = append(result, model)
+	}
+	return result
+}
+
+func validNativeValue(value string) bool {
+	return validString(value, 256) && strings.TrimSpace(value) == value && !strings.HasPrefix(value, "-")
+}
+
+func validateSubscription(items []subscriptionModel, model, effort string) error {
+	if model == "" {
+		return errors.New("请先选择命名模型")
+	}
+	for _, item := range items {
+		if item.ID == model {
+			if effort != "" && !slices.Contains(item.Efforts, effort) {
+				return errors.New("该模型不支持选中的思考强度，请重新选择")
+			}
+			return nil
+		}
+	}
+	return errors.New("所选模型已不在当前 CLI 目录中，请重新选择")
+}
+
+type cliStream struct {
+	input *json.Encoder
+	lines *bufio.Scanner
+}
+
+func readCLIStream[T any](cmd *exec.Cmd, read func(cliStream) (T, error)) (T, error) {
+	var zero T
+	in, err := cmd.StdinPipe()
+	if err != nil {
+		return zero, errCatalogProtocol
+	}
+	defer in.Close()
+	out, err := cmd.StdoutPipe()
+	if err != nil {
+		return zero, errCatalogProtocol
+	}
+	defer out.Close()
+	if err := cmd.Start(); err != nil {
+		return zero, errors.New("无法启动本机 CLI")
+	}
+	defer func() {
+		in.Close()
+		cmd.Process.Kill()
+		cmd.Wait()
+	}()
+	lines := bufio.NewScanner(out)
+	lines.Buffer(make([]byte, 4096), 1<<20)
+	return read(cliStream{json.NewEncoder(in), lines})
+}
+
+func (s cliStream) send(msg any) error {
+	if err := s.input.Encode(msg); err != nil {
+		return errCatalogProtocol
+	}
+	return nil
+}
+
+func readCLIReply[T any](s cliStream, match func(T) bool) (T, error) {
+	for s.lines.Scan() {
+		var frame T
+		if json.Unmarshal(s.lines.Bytes(), &frame) == nil && match(frame) {
+			return frame, nil
+		}
+	}
+	var zero T
+	return zero, errCatalogProtocol
+}
+
+func (e *Engine) checkSubscription(ctx context.Context, s Settings) error {
+	model, effort := s.nativeChoice(s.Provider)
+	if model == "" {
+		return errors.New("请先选择命名模型")
+	}
+	catalog, err := e.subscriptionForValidation(ctx, s.Provider)
+	if err != nil {
+		return fmt.Errorf("无法验证命名模型：%w", err)
+	}
+	return validateSubscription(catalog.Items, model, effort)
+}

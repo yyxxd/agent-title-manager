@@ -36,6 +36,9 @@ func TestProviderProtocolRoundTrips(t *testing.T) {
 	for _, fixture := range protocolFixtures {
 		t.Run(fixture.protocol, func(t *testing.T) {
 			e := engineAt(t, t.TempDir(), nil)
+			e.catalog = func(context.Context, string) (subscriptionCatalog, error) {
+				return subscriptionCatalog{Items: []subscriptionModel{{ID: "fixture"}}}, nil
+			}
 			e.generate = func(ctx context.Context, r attemptRequest, start func() error) modelResult {
 				if r.provider == "codex" {
 					if err := start(); err != nil {
@@ -75,7 +78,7 @@ func TestProviderProtocolRoundTrips(t *testing.T) {
 			}
 			call[modelCatalog](t, e, "providers.models", p)
 			verifyProtocolNaming(t, e, fixture.source, false)
-			call[Settings](t, e, "settings.save", map[string]any{"provider": "codex", "fallbackEnabled": true})
+			call[Settings](t, e, "settings.save", map[string]any{"provider": "codex", "codexModel": "fixture", "fallbackEnabled": true})
 			verifyProtocolNaming(t, e, fixture.source, true)
 		})
 	}

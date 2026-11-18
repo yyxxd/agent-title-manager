@@ -94,6 +94,10 @@ export async function handleClaude(mode, input, rpc, runBackground = background,
 }
 
 async function main() {
+  if (process.env.ATM_CLAUDE_TITLE_WORKER === "1") {
+    process.stdout.write("{}\n");
+    return;
+  }
   let output = {};
   try {
     const input = await readInput();

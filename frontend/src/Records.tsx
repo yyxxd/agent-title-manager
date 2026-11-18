@@ -22,6 +22,8 @@ const failureMessages: Record<string, string> = {
   title_format: '标题包含不允许的字符或空白。',
   invalid_response: '命名服务返回的响应结构无效。',
   codex_login: 'Codex CLI 未登录 ChatGPT 订阅。',
+  claude_login: '隔离模式下未检测到 Claude Code 的原生订阅登录。',
+  model_selection: '请在模型与规则中选择命名模型。',
   unauthorized: '命名服务拒绝了身份验证。',
   forbidden: '当前账号或凭据无权访问命名服务。',
   rate_limited: '命名请求被服务限流。',
@@ -111,7 +113,8 @@ function AttemptRow({ attempt }: { attempt: Attempt }) {
   const actual = attempt.actualTier && attempt.actualTier !== 'unknown' ? attempt.actualTier : '未回报';
   const usage = (value?: number | null) => token(value, '未回报');
   return <li>
-    <strong>{providerName(attempt.provider)} · {attempt.model || '未知模型'}</strong>
+    <strong>{providerName(attempt.provider)} · {(attempt.actualModel || attempt.model) || '未知模型'}</strong>
+    {attempt.provider === 'claude' && <span>请求模型 {attempt.model || '未知'} · 实际模型 {attempt.actualModel || '未回报'}</span>}
     {attempt.startedAt && <span>{formatTime(attempt.startedAt)}</span>}
     <span>{states[attempt.status] ?? attempt.status} · 请求档位 {attempt.requestedTier || '未回报'} · 实际档位 {actual}</span>
     <span>Token 输入 {usage(attempt.inputTokens)} · 输出 {usage(attempt.outputTokens)} · 缓存 {usage(attempt.cachedTokens)}</span>

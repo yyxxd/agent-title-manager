@@ -33,6 +33,7 @@ type record struct {
 type attemptRecord struct {
 	Provider      string `json:"provider"`
 	Model         string `json:"model"`
+	ActualModel   string `json:"actualModel,omitempty"`
 	Source        string `json:"source"`
 	RequestedTier string `json:"requestedTier"`
 	ActualTier    string `json:"actualTier"`
@@ -46,7 +47,7 @@ type attemptRecord struct {
 
 const newestEvents = ` FROM events ORDER BY updated DESC,rowid DESC LIMIT ?`
 const attemptFields = `SELECT event_id,provider,model,source,requested_tier,actual_tier,status,started,
-	input_tokens,output_tokens,cached_tokens FROM attempts`
+	input_tokens,output_tokens,cached_tokens,actual_model FROM attempts`
 
 func (e *Engine) records(ctx context.Context, p listRequest) (recordList, error) {
 	limit := p.Limit
@@ -137,7 +138,7 @@ func readAttempts(ctx context.Context, tx *sql.Tx, local *time.Location, query s
 		var id sql.NullString
 		var started int64
 		err = rows.Scan(&id, &item.Provider, &item.Model, &item.Source, &item.RequestedTier, &item.ActualTier,
-			&item.Status, &started, &item.InputTokens, &item.OutputTokens, &item.CachedTokens)
+			&item.Status, &started, &item.InputTokens, &item.OutputTokens, &item.CachedTokens, &item.ActualModel)
 		if err != nil {
 			return err
 		}

@@ -19,13 +19,13 @@ var shortNamingPolicy string
 var detailedNamingPolicy string
 
 type providerTest struct {
-	Provider    string  `json:"provider"`
-	APIProtocol *string `json:"apiProtocol"`
-	APIBaseURL  *string `json:"apiBaseUrl"`
-	APIModel    *string `json:"apiModel"`
-	APIKey      *string `json:"apiKey"`
-	CodexModel  *string `json:"codexModel"`
-	Fast        *bool   `json:"fast"`
+	nativePatch
+	Provider       string  `json:"provider"`
+	APIProtocol    *string `json:"apiProtocol"`
+	APIBaseURL     *string `json:"apiBaseUrl"`
+	APIModel       *string `json:"apiModel"`
+	APIKey         *string `json:"apiKey"`
+	MaxTitleLength *int    `json:"maxTitleLength"`
 }
 type testResult struct {
 	Provider string `json:"provider"`
@@ -42,8 +42,8 @@ func (e *Engine) testProvider(ctx context.Context, p providerTest) (testResult, 
 	if p.Provider != "" {
 		s.Provider = p.Provider
 	}
-	patch(&s.CodexModel, p.CodexModel)
-	patch(&s.Fast, p.Fast)
+	p.nativePatch.apply(&s)
+	patch(&s.MaxTitleLength, p.MaxTitleLength)
 	patch(&s.APIProtocol, p.APIProtocol)
 	patch(&s.APIBaseURL, p.APIBaseURL)
 	patch(&s.APIModel, p.APIModel)
@@ -56,6 +56,8 @@ func (e *Engine) testProvider(ctx context.Context, p providerTest) (testResult, 
 		if err != nil {
 			return testResult{}, err
 		}
+	} else if err := e.checkSubscription(ctx, s); err != nil {
+		return testResult{}, err
 	}
 	ctx, cancel := context.WithCancel(ctx)
 	defer cancel()
@@ -72,6 +74,9 @@ func (e *Engine) testProvider(ctx context.Context, p providerTest) (testResult, 
 		return testResult{}, errors.New(r.message)
 	}
 	model, _, _ := providerInfo(s.Provider, s)
+	if r.actualModel != "" {
+		model = r.actualModel
+	}
 	return testResult{s.Provider, model, true}, nil
 }
 
@@ -90,10 +95,14 @@ func (e *Engine) runProvider(ctx context.Context, req attemptRequest, start func
 	if err != nil {
 		return modelResult{status: "invalid_response"}
 	}
-	if req.provider == "api" {
+	switch req.provider {
+	case "api":
 		return runAPI(ctx, req.settings, req.secret, policy, prompt, start)
+	case "claude":
+		return e.runClaude(ctx, req.settings, policy, prompt, start)
+	default:
+		return e.runCodex(ctx, req.settings, policy, prompt, start)
 	}
-	return e.runCodex(ctx, req.settings, policy, prompt, start)
 }
 
 func providerPrompt(payload []byte, maxLength int) (string, []byte, error) {

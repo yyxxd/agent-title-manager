@@ -30,3 +30,5 @@ func credential(input []byte, _ bool) ([]byte, error) {
 }
 
 func hideProcess(*exec.Cmd) {}
+
+func checkClaudePolicyRegistry() error { return nil }

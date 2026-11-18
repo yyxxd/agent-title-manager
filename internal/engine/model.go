@@ -15,13 +15,14 @@ type usage struct {
 }
 
 type modelResult struct {
-	decision   decision
-	usage      usage
-	actualTier string
-	status     string
-	message    string
-	confirmed  bool
-	failure    failureCode
+	decision    decision
+	usage       usage
+	actualTier  string
+	actualModel string
+	status      string
+	message     string
+	confirmed   bool
+	failure     failureCode
 }
 
 type decision struct {
@@ -172,8 +173,8 @@ func (e *Engine) invoke(parent context.Context, req attemptRequest) (modelResult
 	}
 	finishCtx, finishCancel := context.WithTimeout(context.Background(), 3*time.Second)
 	defer finishCancel()
-	_, err := e.db.ExecContext(finishCtx, `UPDATE attempts SET status=?,actual_tier=?,input_tokens=?,output_tokens=?,cached_tokens=? WHERE id=?`,
-		r.status, r.actualTier, r.usage.Input, r.usage.Output, r.usage.Cached, id)
+	_, err := e.db.ExecContext(finishCtx, `UPDATE attempts SET status=?,actual_tier=?,actual_model=?,input_tokens=?,output_tokens=?,cached_tokens=? WHERE id=?`,
+		r.status, r.actualTier, r.actualModel, r.usage.Input, r.usage.Output, r.usage.Cached, id)
 	return r, err
 }
 
@@ -210,6 +211,9 @@ func (e *Engine) startAttempt(ctx context.Context, req attemptRequest) (int64, e
 }
 
 func providerInfo(provider string, s Settings) (model, source, tier string) {
+	if provider == "claude" {
+		return s.ClaudeModel, "claude_subscription", "default"
+	}
 	if provider == "api" {
 		source := "openai_compatible"
 		switch s.APIProtocol {
