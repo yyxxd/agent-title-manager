@@ -4,11 +4,16 @@ import (
 	"fmt"
 	"io/fs"
 	"os"
+	"os/exec"
 	"syscall"
 	"unsafe"
 )
 
 var kernel = syscall.NewLazyDLL("kernel32.dll")
+
+func hideProcess(cmd *exec.Cmd) {
+	cmd.SysProcAttr = &syscall.SysProcAttr{HideWindow: true, CreationFlags: 0x08000000}
+}
 
 func isReparse(info fs.FileInfo) bool {
 	attr, ok := info.Sys().(*syscall.Win32FileAttributeData)

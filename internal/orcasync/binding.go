@@ -77,38 +77,53 @@ func hasProviderMapping(ctx context.Context, run runCLI, handle, id string) bool
 }
 
 func validPiSession(ctx context.Context, id, handle string) bool {
-	if ctx.Err() != nil || !filepath.IsAbs(handle) ||
-		!strings.HasSuffix(filepath.Base(handle), "_"+id+".jsonl") {
+	file, err := openPiSession(ctx, id, handle)
+	if err != nil {
 		return false
+	}
+	file.Close()
+	return true
+}
+
+func openPiSession(ctx context.Context, id, handle string) (*os.File, error) {
+	if ctx.Err() != nil || !nativeID.MatchString(id) || !filepath.IsAbs(handle) ||
+		!strings.HasSuffix(filepath.Base(handle), "_"+id+".jsonl") {
+		return nil, ErrNativePending
 	}
 	piHome := os.Getenv("PI_CODING_AGENT_DIR")
 	if piHome == "" {
 		home, err := os.UserHomeDir()
 		if err != nil {
-			return false
+			return nil, err
 		}
 		piHome = filepath.Join(home, ".pi", "agent")
 	}
 	sessionRoot := filepath.Join(piHome, "sessions")
 	rel, err := filepath.Rel(sessionRoot, handle)
 	if err != nil || !filepath.IsAbs(sessionRoot) || !filepath.IsLocal(rel) {
-		return false
+		return nil, ErrNativePending
 	}
 	root, err := os.OpenRoot(sessionRoot)
 	if err != nil {
-		return false
+		return nil, err
 	}
 	defer root.Close()
 	info, err := root.Stat(rel)
 	if err != nil || !info.Mode().IsRegular() {
-		return false
+		return nil, ErrNativePending
 	}
 	file, err := root.Open(rel)
 	if err != nil {
-		return false
+		return nil, err
 	}
-	defer file.Close()
-	line, err := bufio.NewReader(io.LimitReader(file, 64<<10)).ReadBytes('\n')
-	var header struct{ Type, ID string }
-	return err == nil && json.Unmarshal(line, &header) == nil && header.Type == "session" && header.ID == id
+	header, err := readPiHeader(file)
+	if err != nil || header.Type != "session" || header.ID != id {
+		file.Close()
+		return nil, ErrNativePending
+	}
+	return file, nil
+}
+
+func readFirstLine(file *os.File) ([]byte, error) {
+	return bufio.NewReader(io.LimitReader(file, 64<<10)).ReadBytes('\n')
 }

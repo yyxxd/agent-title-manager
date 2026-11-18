@@ -100,7 +100,7 @@ func TestListAndSyncDefaultDisabled(t *testing.T) {
 			t.Fatalf("unexpected builtin %+v", got[i])
 		}
 	}
-	if err := m.Sync(ctx, "id", "old", "new"); !errors.Is(err, orcasync.ErrSkipped) {
+	if err := m.SyncVerified(ctx, "id", "old", "new", "pi", "session", "handle"); !errors.Is(err, orcasync.ErrSkipped) {
 		t.Fatalf("default sync status %v", err)
 	}
 	if _, err := os.Stat(m.root); !errors.Is(err, os.ErrNotExist) {

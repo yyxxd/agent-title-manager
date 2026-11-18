@@ -11,6 +11,7 @@ import (
 
 type cliFixture struct {
 	t          *testing.T
+	agent      string
 	title      string
 	showTitle  *string
 	duplicates bool
@@ -26,7 +27,11 @@ func (f *cliFixture) run(_ context.Context, args ...string) ([]byte, error) {
 	if !reflect.DeepEqual(args[len(args)-3:], []string{"--environment", "local", "--json"}) {
 		f.t.Fatalf("wrong CLI scope: %v", args)
 	}
-	at := place{ID: "codex_chat", Agent: "codex", Kind: "chat", HostID: "local", Title: &f.title}
+	agent := f.agent
+	if agent == "" {
+		agent = "codex"
+	}
+	at := place{ID: "codex_chat", Agent: agent, Kind: "chat", HostID: "local", Title: &f.title}
 	if f.remote {
 		at.HostID = "remote"
 	}
@@ -85,7 +90,7 @@ func TestSyncUsesAuthorizedBaseline(t *testing.T) {
 	} {
 		t.Run(c.name, func(t *testing.T) {
 			f := &cliFixture{t: t, title: c.current, showTitle: c.override, duplicates: c.duplicate, remote: c.remote, write: c.write}
-			err := syncTitle(context.Background(), f.run, c.id, c.baseline, "规范标题")
+			err := syncTitle(context.Background(), f.run, c.id, c.baseline, "规范标题", allowWrite)
 			if !errors.Is(err, c.wantErr) || f.writes != c.writes {
 				t.Fatalf("sync returned %v and %d writes; want %v and %d", err, f.writes, c.wantErr, c.writes)
 			}
@@ -98,10 +103,12 @@ func TestSyncUsesAuthorizedBaseline(t *testing.T) {
 
 func TestSyncRecoversLostWriteResponseByReadingTitle(t *testing.T) {
 	f := &cliFixture{t: t, title: "old", write: true, failAck: true}
-	if err := syncTitle(context.Background(), f.run, "codex_chat", "old", "规范标题"); err != nil || f.writes != 1 {
+	if err := syncTitle(context.Background(), f.run, "codex_chat", "old", "规范标题", allowWrite); err != nil || f.writes != 1 {
 		t.Fatalf("status %v, writes %d", err, f.writes)
 	}
 }
+
+func allowWrite(context.Context, place) error { return nil }
 
 func TestInstalledOrcaReadOnly(t *testing.T) {
 	id, native := os.Getenv("ATM_TEST_ORCA_ID"), os.Getenv("ATM_TEST_ORCA_NATIVE_ID")

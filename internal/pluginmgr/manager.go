@@ -95,7 +95,7 @@ type enabledFlags struct {
 	items map[string]bool
 }
 
-func (m *Manager) Sync(ctx context.Context, id, expectedTitle, newTitle string) error {
+func (m *Manager) SyncVerified(ctx context.Context, id, expectedTitle, newTitle, agent, sessionID, nativeHandle string) error {
 	enabled, err := m.enabled(ctx, "orca")
 	if err != nil {
 		return err
@@ -103,7 +103,7 @@ func (m *Manager) Sync(ctx context.Context, id, expectedTitle, newTitle string) 
 	if !enabled {
 		return fmt.Errorf("%w：桌面已关闭 Orca 同步", orcasync.ErrSkipped)
 	}
-	return orcasync.Sync(ctx, id, expectedTitle, newTitle)
+	return orcasync.SyncVerified(ctx, id, expectedTitle, newTitle, agent, sessionID, nativeHandle, m.readNativeTitle)
 }
 
 // UninstallReady checks recorded registrations and backups without editing

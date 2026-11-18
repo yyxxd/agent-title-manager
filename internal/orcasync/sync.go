@@ -17,16 +17,20 @@ import (
 )
 
 var (
-	ErrSkipped     = errors.New("Orca 同步已跳过")
-	ErrUnavailable = errors.New("无法读取 Orca 会话")
-	ErrUnconfirmed = errors.New("无法确认 Orca 标题写入")
-	sessionID      = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9_-]{0,127}$`)
-	lock           sync.Mutex
+	ErrSkipped       = errors.New("Orca 同步已跳过")
+	ErrUnavailable   = errors.New("无法读取 Orca 会话")
+	ErrUnconfirmed   = errors.New("无法确认 Orca 标题写入")
+	ErrNativePending = errors.New("暂时无法核验原生会话标题")
+	ErrNativeStale   = errors.New("原生标题已改变")
+	sessionID        = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9_-]{0,127}$`)
+	lock             sync.Mutex
 )
 
 const idPrefix = "orca_session_id:"
 
 type runCLI func(context.Context, ...string) ([]byte, error)
+type NativeTitleReader func(ctx context.Context, agent, sessionID, nativeHandle string) (string, error)
+type preflight func(context.Context, place) error
 
 type place struct {
 	ID     string  `json:"orcaSessionId"`
@@ -36,15 +40,38 @@ type place struct {
 	Title  *string `json:"title"`
 }
 
-// Sync only addresses a local Orca chat identified by its Orca session ID.
-// expectedTitle must be supplied by a trusted caller as the authorized baseline.
-func Sync(ctx context.Context, orcaSessionId, expectedTitle, newTitle string) error {
+// SyncVerified requires a fresh read of the bound native session immediately
+// before asking Orca to rename it. Orca may also update the native title.
+func SyncVerified(ctx context.Context, id, expected, title, agent, session, handle string, reader NativeTitleReader) error {
 	lock.Lock()
 	defer lock.Unlock()
-	return syncTitle(ctx, localCLI, orcaSessionId, expectedTitle, newTitle)
+	return syncVerified(ctx, localCLI, id, expected, title, agent, session, handle, reader)
 }
 
-func syncTitle(ctx context.Context, run runCLI, id, expected, title string) error {
+func syncVerified(ctx context.Context, run runCLI, id, expected, title, agent, session, handle string, reader NativeTitleReader) error {
+	if reader == nil {
+		return ErrNativePending
+	}
+	return syncTitle(ctx, run, id, expected, title, func(ctx context.Context, prior place) error {
+		at, bound := boundChat(ctx, run, agent, session, handle, prior.ID)
+		if !bound || at.Title == nil {
+			return fmt.Errorf("%w：无法重新核验原生会话与 Orca 聊天的绑定", ErrNativePending)
+		}
+		if *at.Title != *prior.Title || at.Agent != prior.Agent {
+			return fmt.Errorf("%w：原生核验期间 Orca 聊天已改变", ErrSkipped)
+		}
+		observed, err := reader(ctx, agent, session, handle)
+		if err != nil {
+			return fmt.Errorf("%w：原生宿主标题尚不可读", ErrNativePending)
+		}
+		if observed != title {
+			return ErrNativeStale
+		}
+		return nil
+	})
+}
+
+func syncTitle(ctx context.Context, run runCLI, id, expected, title string, verify preflight) error {
 	rawID := strings.TrimPrefix(id, idPrefix)
 	if !sessionID.MatchString(rawID) {
 		return fmt.Errorf("%w：缺少有效 Orca 会话 ID", ErrSkipped)
@@ -52,17 +79,20 @@ func syncTitle(ctx context.Context, run runCLI, id, expected, title string) erro
 	if !validTitle(title) {
 		return fmt.Errorf("%w：新标题无效", ErrSkipped)
 	}
-	ctx, cancel := context.WithTimeout(ctx, 8*time.Second)
+	ctx, cancel := context.WithTimeout(ctx, 11*time.Second)
 	defer cancel()
 	before, err := observe(ctx, run, rawID)
 	if err != nil {
 		return err
 	}
+	if *before.Title != title && *before.Title != expected {
+		return fmt.Errorf("%w：当前标题已改变或未经授权", ErrSkipped)
+	}
+	if err := verify(ctx, before); err != nil {
+		return err
+	}
 	if *before.Title == title {
 		return nil
-	}
-	if *before.Title != expected {
-		return fmt.Errorf("%w：当前标题已改变或未经授权", ErrSkipped)
 	}
 	writeErr := call(ctx, run, nil, "chat", "rename", "--session", before.ID, "--name", title)
 	after, readErr := observe(ctx, run, rawID)
