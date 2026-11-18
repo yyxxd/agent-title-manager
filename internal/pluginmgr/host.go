@@ -68,15 +68,10 @@ func (m *Manager) hostEntry(id string, rel release) (string, error) {
 		if err != nil {
 			return "", err
 		}
-		quotedNode, err := quoteCommandPath(node)
+		result, err = hookEntry(id, node, entry)
 		if err != nil {
 			return "", err
 		}
-		quotedEntry, err := quoteCommandPath(entry)
-		if err != nil {
-			return "", err
-		}
-		result = quotedNode + " " + quotedEntry
 	}
 	return result, m.writeRuntime(dir)
 }
@@ -95,6 +90,18 @@ func (m *Manager) writeRuntime(dir string) error {
 		return err
 	}
 	return writeAtomic(filepath.Join(dir, runtimeName), wire, 0600)
+}
+
+func hookEntry(id, node, entry string) (string, error) {
+	quotedNode, err := quoteCommandPath(node)
+	if err != nil {
+		return "", err
+	}
+	quotedEntry, err := quoteCommandPath(entry)
+	if err != nil {
+		return "", err
+	}
+	return platformHookEntry(id, node, entry, quotedNode+" "+quotedEntry)
 }
 
 func quoteCommandPath(path string) (string, error) {
