@@ -25,6 +25,10 @@ button:not(.primary) { background: var(--raised); border-color: transparent; }
 button:hover:not(:disabled) { background: var(--hover); }
 button.primary { background: var(--accent); border-color: transparent; color: var(--on-accent); }
 button.primary:hover:not(:disabled) { background: var(--accent); opacity: .92; }
+button.primary:focus-visible { outline-color: var(--on-accent); }
+@media (forced-colors: active) {
+  button.primary:focus-visible { outline-color: var(--focus-color); }
+}
 input:not([type="checkbox"], [type="radio"]), select { border-color: var(--control); background: var(--surface); }
 button, input:not([type="checkbox"], [type="radio"]), select { border-radius: 6px; }
 h1 { font-size: 27px; font-weight: 620; letter-spacing: -.025em; }

@@ -41,9 +41,10 @@
 }
 
 .model-switch input:focus-visible + .model-switch-track {
-  outline: 2px solid var(--accent);
-  outline-offset: 3px;
+  outline: 2px solid var(--focus-color);
+  outline-offset: -2px;
 }
+.model-switch input:checked:focus-visible + .model-switch-track { outline-color: var(--on-accent); }
 
 .model-switch:has(input:disabled) { cursor: default; }
 .model-switch input:disabled + .model-switch-track { opacity: .58; }
@@ -52,6 +53,7 @@
   .model-switch-track { border-color: ButtonText; }
   .model-switch-track::before { background: ButtonText; }
   .model-switch input:checked + .model-switch-track { border-color: Highlight; }
+  .model-switch input:checked:focus-visible + .model-switch-track { outline-color: Highlight; }
   .model-switch input:checked + .model-switch-track::before { background: Highlight; }
 }
 
@@ -88,7 +90,6 @@
   border-color: transparent;
 }
 
-.model-options button:focus-visible { outline-offset: -2px; }
 .model-options button[aria-pressed="true"] { background: var(--raised); font-weight: 600; }
 
 @media (max-width: 480px) {
