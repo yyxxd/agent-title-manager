@@ -14,4 +14,5 @@ func replaceFile(from, to string) error { return os.Rename(from, to) }
 
 func lockRegistry(*os.File) error { return nil }
 
-func hideProcess(*exec.Cmd) {}
+func hideProcess(*exec.Cmd)                                    {}
+func platformHookEntry(_, _, _, direct string) (string, error) { return direct, nil }
