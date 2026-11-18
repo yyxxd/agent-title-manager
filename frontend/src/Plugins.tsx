@@ -6,7 +6,12 @@ const states: Record<string, string> = {
   enabled: '已启用', disabled: '已停用', action_required: '待操作', unavailable: '不可用', recovery_required: '待恢复',
 };
 
-type PluginState = Plugin & { takeoverRequired?: boolean; canRestore?: boolean; entryPath?: string };
+type PluginState = Plugin & {
+  takeoverRequired?: boolean;
+  canRestore?: boolean;
+  entryPath?: string;
+  availableVersion?: string;
+};
 type Confirmation = { id: string; verb: 'enable' | 'restore' };
 
 export function Plugins() {
@@ -55,6 +60,8 @@ export function Plugins() {
         {plugin.enabled ? <button disabled={action.busy} onClick={() => void mutate('disable', { id: plugin.id })}>停用</button>
           : <button disabled={action.busy || plugin.status === 'unavailable' || plugin.status === 'recovery_required'} onClick={() => plugin.takeoverRequired ? setConfirm({ id: plugin.id, verb: 'enable' }) : void mutate('enable', { id: plugin.id })}>{plugin.takeoverRequired ? '接管旧插件' : '启用'}</button>}
         {plugin.kind === 'community' && <button disabled={action.busy || plugin.enabled} onClick={() => setTransfer({ id: plugin.id })}>更新</button>}
+        {plugin.kind === 'builtin' && plugin.availableVersion &&
+          <button disabled={action.busy} onClick={() => void mutate('update', { id: plugin.id, source: 'bundled' })}>更新至 v{plugin.availableVersion}</button>}
         {plugin.canRestore && <button disabled={action.busy} onClick={() => setConfirm({ id: plugin.id, verb: 'restore' })}>恢复</button>}
       </div>
       {waiting && <div className="confirm">
