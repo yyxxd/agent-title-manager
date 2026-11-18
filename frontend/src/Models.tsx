@@ -1,14 +1,15 @@
 import { useState, type FormEvent } from 'react';
+import { AppearanceRow, type AppearanceControl } from './Appearance';
 import { rpc, type Preferences, type Settings } from './rpc';
 import { Empty, Section, Status, useAction, useLoad } from './ui';
 
-export function Models() {
+export function Models({ appearance }: { appearance: AppearanceControl }) {
   const { value, error } = useLoad(() => rpc<Settings>('settings.get'), 'settings');
   return <>
     <header className="page-head"><h1>模型与规则</h1></header>
+    <DesktopPreferences appearance={appearance} />
     <Status error={error} />
     {value ? <ModelForm initial={value} /> : !error && <Empty>正在读取模型设置…</Empty>}
-    <DesktopPreferences />
   </>;
 }
 
@@ -54,7 +55,7 @@ function ModelForm({ initial }: { initial: Settings }) {
       <ProviderFields settings={settings} edit={edit} />
       <ApiFields settings={settings} edit={edit} apiKey={key} setKey={setKey} removeKey={removeKey} setRemoveKey={setRemoveKey} />
       <Section title="标题规则">
-        <div className="settings-grid">
+        <div className="settings-rows">
           <label>标题最大长度<input type="number" min="8" max="48" required value={Number.isNaN(settings.maxTitleLength) ? '' : settings.maxTitleLength} onChange={(event) => edit('maxTitleLength', event.target.valueAsNumber)} /></label>
         </div>
       </Section>
@@ -71,7 +72,7 @@ type Edit = <K extends keyof Settings>(field: K, value: Settings[K]) => void;
 
 function ProviderFields({ settings, edit }: { settings: Settings; edit: Edit }) {
   return <Section title="命名来源">
-    <div className="settings-grid">
+    <div className="settings-rows">
       <label>首选来源<select value={settings.provider} onChange={(event) => edit('provider', event.target.value as Settings['provider'])}>
         <option value="codex">Codex 订阅</option><option value="api">兼容 OpenAI 的 API</option>
       </select></label>
@@ -86,22 +87,24 @@ function ApiFields({ settings, edit, apiKey, setKey, removeKey, setRemoveKey }: 
   settings: Settings; edit: Edit; apiKey: string; setKey: (key: string) => void;
   removeKey: boolean; setRemoveKey: (enabled: boolean) => void;
 }) {
-  return <Section title="自定义 API">
-    <div className="settings-grid">
+  return <details className="settings-disclosure" open={settings.provider === 'api' || settings.fallbackEnabled || undefined}>
+    <summary>自定义 API</summary>
+    <div className="settings-rows panel-body">
       <label>API 地址<input type="url" placeholder="https://…" value={settings.apiBaseUrl} onChange={(event) => edit('apiBaseUrl', event.target.value)} /></label>
       <label>API 模型<input value={settings.apiModel} onChange={(event) => edit('apiModel', event.target.value)} /></label>
       <label>API 密钥<input autoComplete="new-password" type="password" value={apiKey} disabled={removeKey} placeholder={settings.hasApiKey ? '已保存密钥' : '输入密钥'} onChange={(event) => setKey(event.target.value)} /></label>
       {settings.hasApiKey && <label className="check"><input type="checkbox" checked={removeKey} onChange={(event) => setRemoveKey(event.target.checked)} /> 保存时移除已存密钥</label>}
     </div>
-  </Section>;
+  </details>;
 }
 
-function DesktopPreferences() {
+function DesktopPreferences({ appearance }: { appearance: AppearanceControl }) {
   const [refresh, setRefresh] = useState(0);
   const { value, error } = useLoad(() => rpc<Preferences>('desktop.get'), refresh);
   const action = useAction();
-  return <Section title="桌面运行">
-    <div className="settings-grid">
+  return <Section title="桌面">
+    <div className="settings-rows">
+      <AppearanceRow {...appearance} />
       {value?.startupAvailable && <label className="check"><input type="checkbox" checked={value.startup} disabled={action.busy}
         onChange={(event) => {
           const enabled = event.target.checked;
@@ -111,7 +114,7 @@ function DesktopPreferences() {
             return '登录启动已更新。';
           });
         }} /> 登录 Windows 后在托盘运行</label>}
-      <div className="actions"><button type="button" onClick={() => void action.run(() => rpc<void>('desktop.quit'))}>退出桌面应用</button></div>
+      <div className="setting-row"><span>后台运行</span><button type="button" onClick={() => void action.run(() => rpc<void>('desktop.quit'))}>退出桌面应用</button></div>
     </div>
     <Status error={error ?? action.error} message={action.message} />
   </Section>;

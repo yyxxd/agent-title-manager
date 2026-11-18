@@ -11,6 +11,7 @@ import (
 
 	"github.com/wailsapp/wails/v3/pkg/application"
 	"github.com/wailsapp/wails/v3/pkg/events"
+	"github.com/wailsapp/wails/v3/pkg/w32"
 )
 
 //go:embed icon.png
@@ -32,11 +33,17 @@ func versionedAppName() string {
 }
 
 func Run(dir string, assets fs.FS, service *Service) error {
+	index, err := fs.ReadFile(assets, "index.html")
+	if err != nil {
+		return err
+	}
+	preference := loadAppearance(dir, w32.IsCurrentlyDarkMode())
+	service.appearance = preference
 	var primary atomic.Pointer[application.WebviewWindow]
 	app := application.New(application.Options{
 		Name:     appName,
 		Icon:     icon,
-		Assets:   application.AssetOptions{Handler: application.BundledAssetFileServer(assets)},
+		Assets:   application.AssetOptions{Handler: application.BundledAssetFileServer(assets), Middleware: preference.initialPage(index)},
 		Services: []application.Service{application.NewService(service)},
 		Windows: application.WindowsOptions{
 			DisableQuitOnLastWindowClosed: true,
@@ -51,10 +58,13 @@ func Run(dir string, assets fs.FS, service *Service) error {
 			},
 		},
 	})
+	initial := preference.snapshot()
+	background, foreground := initial.colours()
 	window := app.Window.NewWithOptions(application.WebviewWindowOptions{
 		Title: versionedAppName(), Width: 1080, Height: 780, MinWidth: 450, MinHeight: 450,
 		URL: "/", Hidden: slices.Contains(os.Args[1:], "--background"),
-		BackgroundColour: application.NewRGB(23, 23, 25),
+		BackgroundColour: background,
+		Windows:          appearanceWindowOptions(initial, background, foreground),
 	})
 	primary.Store(window)
 	window.RegisterHook(events.Common.WindowClosing, func(event *application.WindowEvent) {
@@ -62,6 +72,7 @@ func Run(dir string, assets fs.FS, service *Service) error {
 		window.Hide()
 	})
 	service.quit = app.Quit
+	connectAppearance(app, window, service)
 	setupTray(app, window)
 	return app.Run()
 }

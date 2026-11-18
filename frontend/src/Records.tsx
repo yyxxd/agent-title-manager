@@ -1,7 +1,7 @@
 import { RefreshCw } from 'lucide-react';
 import { useState } from 'react';
 import { agentName, formatTime, providerName, rpc, token, type Attempt, type RecordItem } from './rpc';
-import { Empty, Section, Status, useAction, useLoad } from './ui';
+import { ConfirmDialog, Empty, Section, Status, useAction, useLoad } from './ui';
 
 const states: Record<string, string> = {
   queued: '待处理', running: '命名中', candidate: '候选待领取', claimed: '待读回',
@@ -34,10 +34,10 @@ export function Records() {
     <header className="page-head"><h1>处理记录</h1>
       <button className="icon-button" aria-label="刷新记录" title="刷新记录" onClick={() => setRefresh(refresh + 1)}><RefreshCw size={16} /></button>
     </header>
-    <Status error={error ?? action.error} message={action.message} />
+    <Status error={error ?? (!confirm ? action.error : undefined)} message={action.message} />
     <Section title="最近处理的会话">
       {value?.items?.length ? value.items.map((item) => <RecordRow key={item.id} item={item} busy={action.busy}
-        confirming={confirm === item.id} confirm={() => setConfirm(item.id)} cancel={() => setConfirm('')}
+        confirming={confirm === item.id} error={action.error} confirm={() => { action.reset(); setConfirm(item.id); }} cancel={() => setConfirm('')}
         sync={(verb) => void sync(item.id, verb)} />) : <Empty>{value ? '还没有处理记录' : error ? '无法读取记录' : '正在读取记录…'}</Empty>}
     </Section>
     {!!value?.testAttempts?.length && <Section title="连接测试">
@@ -46,9 +46,9 @@ export function Records() {
   </>;
 }
 
-function RecordRow({ item, busy, confirming, confirm, cancel, sync }: {
+function RecordRow({ item, busy, confirming, error, confirm, cancel, sync }: {
   item: RecordItem; busy: boolean; confirming: boolean; confirm: () => void;
-  cancel: () => void; sync: (verb: 'adopt' | 'retry') => void;
+  error?: string; cancel: () => void; sync: (verb: 'adopt' | 'retry') => void;
 }) {
   return <article className="record-row">
     <div className="record-head">
@@ -62,12 +62,12 @@ function RecordRow({ item, busy, confirming, confirm, cancel, sync }: {
     {item.syncStatus === 'protected' && !item.syncError && <p className="muted">当前 Orca 标题可能由用户设置，已保留。</p>}
     <div className="actions">
       {item.syncStatus === 'failed' && <button disabled={busy} onClick={() => sync('retry')}>重试同步</button>}
-      {item.syncStatus === 'protected' && !confirming && <button disabled={busy} onClick={confirm}>采用 Agent 标题</button>}
+      {item.syncStatus === 'protected' && <button disabled={busy} onClick={confirm}>采用 Agent 标题</button>}
     </div>
-    {confirming && <div className="confirm">
+    {confirming && <ConfirmDialog title="采用 Agent 标题" busy={busy} error={error}
+      confirmLabel="确认采用" onCancel={cancel} onConfirm={() => sync('adopt')}>
       <p>将 {agentName(item.agent)} 会话 <code>{item.sessionId}</code> 对应的 Orca 标题改为“{item.title}”。</p>
-      <div className="actions"><button disabled={busy} onClick={cancel}>取消</button><button className="primary" disabled={busy} onClick={() => sync('adopt')}>确认采用</button></div>
-    </div>}
+    </ConfirmDialog>}
     {!!item.attempts?.length && <details><summary>模型与用量 · {item.attempts.length} 次</summary>
       <ul className="attempt-list">{item.attempts.map((attempt, index) => <AttemptRow key={index} attempt={attempt} />)}</ul>
     </details>}

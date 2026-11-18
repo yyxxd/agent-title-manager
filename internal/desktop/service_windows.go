@@ -22,13 +22,15 @@ type Backend struct {
 }
 
 type Service struct {
-	scope    string
-	open     func() (Backend, error)
-	backend  Backend
-	listener net.Listener
-	done     chan struct{}
-	ingress  *eventIngress
-	quit     func()
+	scope             string
+	open              func() (Backend, error)
+	backend           Backend
+	listener          net.Listener
+	done              chan struct{}
+	ingress           *eventIngress
+	quit              func()
+	appearance        *appearance
+	appearanceChanged func()
 }
 
 func NewService(scope string, open func() (Backend, error)) *Service {
@@ -83,6 +85,14 @@ func (s *Service) Call(ctx context.Context, method string, body string) (any, er
 		return s.preferences()
 	case method == "desktop.startup":
 		return s.setPreferences(json.RawMessage(body))
+	case method == "desktop.appearance.get":
+		return s.appearance.snapshot(), nil
+	case method == "desktop.appearance.set":
+		state, err := s.appearance.set(json.RawMessage(body))
+		if err == nil {
+			s.appearanceChanged()
+		}
+		return state, err
 	case method == "desktop.quit":
 		s.quit()
 		return nil, nil

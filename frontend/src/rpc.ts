@@ -1,6 +1,9 @@
 declare global {
   interface Window {
-    wails?: { Call: { ByName: (name: string, ...args: unknown[]) => Promise<unknown> } };
+    wails?: {
+      Call: { ByName: (name: string, ...args: unknown[]) => Promise<unknown> };
+      Events?: { On: (name: string, callback: (event: { data: unknown }) => void) => () => void };
+    };
   }
 }
 

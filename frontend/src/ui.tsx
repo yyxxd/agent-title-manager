@@ -1,4 +1,4 @@
-import { useEffect, useState, type ReactNode } from 'react';
+import { useEffect, useRef, useState, type ReactNode } from 'react';
 import { errorText } from './rpc';
 
 export function Section({ title, children, action }: {
@@ -6,8 +6,33 @@ export function Section({ title, children, action }: {
 }) {
   return <section className="panel">
     <header className="panel-head"><h2>{title}</h2>{action}</header>
-    {children}
+    <div className="panel-body">{children}</div>
   </section>;
+}
+
+export function ConfirmDialog({ title, children, confirmLabel, busy, error, onCancel, onConfirm }: {
+  title: string; children: ReactNode; confirmLabel: string; busy: boolean; error?: string;
+  onCancel: () => void; onConfirm: () => void;
+}) {
+  const dialog = useRef<HTMLDialogElement>(null);
+  useEffect(() => {
+    const element = dialog.current;
+    const trigger = document.activeElement;
+    element?.showModal();
+    return () => {
+      element?.close();
+      if (trigger instanceof HTMLElement && trigger.isConnected) trigger.focus();
+    };
+  }, []);
+  return <dialog ref={dialog} aria-label={title} onCancel={(event) => { event.preventDefault(); if (!busy) onCancel(); }}>
+    <h2>{title}</h2>
+    <div className="dialog-copy">{children}</div>
+    <Status error={error} />
+    <div className="actions">
+      <button autoFocus disabled={busy} onClick={onCancel}>取消</button>
+      <button className="primary" disabled={busy} onClick={onConfirm}>{confirmLabel}</button>
+    </div>
+  </dialog>;
 }
 
 export function Status({ error, message }: { error?: string; message?: string }) {
@@ -37,6 +62,7 @@ export function useAction() {
   const [status, setStatus] = useState<{ busy: boolean; error?: string; message?: string }>({ busy: false });
   return {
     ...status,
+    reset: () => setStatus({ busy: false }),
     async run(action: () => Promise<string | void>) {
       setStatus({ busy: true });
       try {

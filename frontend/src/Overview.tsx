@@ -1,11 +1,11 @@
-import { ArrowRight, RefreshCw } from 'lucide-react';
+import { RefreshCw } from 'lucide-react';
 import { useState } from 'react';
 import { agentName, formatTime, localDate, num, providerName, rpc, token, type Counts, type Daily, type ModelUsage, type UsageSummary } from './rpc';
 import { Empty, Section, Status, useLoad } from './ui';
 
 const metrics = [['renames', '标题已应用'], ['attempts', '模型请求'], ['kept', '保留原标题'], ['unknownUsage', '用量未回报']] as const;
 
-export function Overview({ openPlugins, revision }: { openPlugins: () => void; revision: number }) {
+export function Overview({ revision }: { revision: number }) {
   const [date, setDate] = useState(localDate);
   const [refresh, setRefresh] = useState(0);
   const [agent, setAgent] = useState('');
@@ -21,12 +21,13 @@ export function Overview({ openPlugins, revision }: { openPlugins: () => void; r
       </div>
     </header>
     <Status error={error} />
-    <section className="metrics panel" aria-label="当日标题统计">
+    <dl className="metrics" aria-label="当日标题统计">
       {metrics.map(([key, label]) => <div key={key}>
-        <span>{label}</span><strong>{value ? num(value[key]) : '—'}</strong>
-        {key === 'attempts' && !!value?.testAttempts && <span>含 {num(value.testAttempts)} 次测试</span>}
+        <dt>{label}</dt><dd>{value ? num(value[key]) : '—'}
+          {key === 'attempts' && !!value?.testAttempts && <small>含 {num(value.testAttempts)} 次测试</small>}
+        </dd>
       </div>)}
-    </section>
+    </dl>
     <div className="overview-grid">
       <Section title="Agent 活动">
         {rows.length ? <Activity rows={rows} /> : <Empty>{value ? '当天没有 Agent 活动' : error ? '无法载入活动' : '正在读取统计…'}</Empty>}
@@ -35,7 +36,7 @@ export function Overview({ openPlugins, revision }: { openPlugins: () => void; r
         <option value="">全部 Agent</option>
         {rows.map((row) => <option key={row.agent} value={row.agent}>{agentName(row.agent)}</option>)}
       </select>}>
-        {value ? <TokenRows value={selected ?? value} /> : <Empty>{error ? '无法载入用量' : '正在读取用量…'}</Empty>}
+        {value ? <TokenRows value={selected ?? value} scoped={!!selected} /> : <Empty>{error ? '无法载入用量' : '正在读取用量…'}</Empty>}
       </Section>
     </div>
     <Section title="模型调用">
@@ -43,7 +44,6 @@ export function Overview({ openPlugins, revision }: { openPlugins: () => void; r
     </Section>
     <footer className="overview-foot">
       {value?.since && <span>统计自 {formatTime(value.since)} 开始</span>}
-      <button className="text-button" onClick={openPlugins}>管理 Agent <ArrowRight size={15} /></button>
     </footer>
   </>;
 }
@@ -61,12 +61,12 @@ function Activity({ rows }: { rows: (Counts & { agent: string })[] }) {
   </table></div>;
 }
 
-function TokenRows({ value }: { value: Counts }) {
+function TokenRows({ value, scoped }: { value: Counts; scoped: boolean }) {
   return <dl className="token-rows">
     <div><dt>输入</dt><dd><TokenTotal row={value} kind="input" /></dd></div>
     <div><dt>输出</dt><dd><TokenTotal row={value} kind="output" /></dd></div>
     <div><dt>缓存</dt><dd><TokenTotal row={value} kind="cached" /></dd></div>
-    <div><dt>用量未回报</dt><dd>{num(value.unknownUsage)} 次</dd></div>
+    {scoped && <div><dt>用量未回报</dt><dd>{num(value.unknownUsage)} 次</dd></div>}
   </dl>;
 }
 
@@ -92,7 +92,7 @@ function ModelTable({ rows }: { rows: ModelUsage[] }) {
 function TokenTotal({ row, kind }: { row: UsageSummary; kind: 'input' | 'output' | 'cached' }) {
   const value = row[`${kind}Tokens`];
   const known = row[`${kind}Known`];
-  if (typeof value !== 'number' || known === 0) return <>—</>;
+  if (typeof value !== 'number' || known === 0) return <span aria-label="未回报" title="未回报">—</span>;
   return <>{token(value)}{typeof known === 'number' && known < row.attempts &&
     <span className="muted" title={`已回报 ${known} / ${row.attempts} 次`}>（部分）</span>}</>;
 }
