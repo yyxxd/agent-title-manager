@@ -1,0 +1,9 @@
+{
+  "schemaVersion": 1,
+  "id": "pi",
+  "name": "Pi 标题适配器",
+  "version": "0.1.0",
+  "kind": "agent",
+  "host": "pi",
+  "entry": "index.js"
+}

@@ -1,0 +1,9 @@
+{
+  "schemaVersion": 1,
+  "id": "claude",
+  "name": "Claude Code 标题适配器",
+  "version": "0.1.0",
+  "kind": "agent",
+  "host": "claude",
+  "entry": "index.mjs"
+}
