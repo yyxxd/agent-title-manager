@@ -24,29 +24,34 @@ func ApproveBinding(ctx context.Context, agent, sessionId, nativeHandle, orcaID 
 }
 
 func approveBinding(ctx context.Context, run runCLI, agent, sessionId, nativeHandle, orcaID string) bool {
+	_, bound := boundChat(ctx, run, agent, sessionId, nativeHandle, orcaID)
+	return bound
+}
+
+func boundChat(ctx context.Context, run runCLI, agent, sessionId, nativeHandle, orcaID string) (place, bool) {
 	id := strings.TrimPrefix(orcaID, idPrefix)
 	if !sessionID.MatchString(id) || !nativeID.MatchString(sessionId) {
-		return false
+		return place{}, false
 	}
 	ctx, cancel := context.WithTimeout(ctx, 1500*time.Millisecond)
 	defer cancel()
 	switch agent {
 	case "codex", "claude":
 		if nativeHandle != sessionId {
-			return false
+			return place{}, false
 		}
 	case "pi":
 		if !validPiSession(ctx, sessionId, nativeHandle) {
-			return false
+			return place{}, false
 		}
 	default:
-		return false
+		return place{}, false
 	}
 	if !hasProviderMapping(ctx, run, nativeHandle, id) {
-		return false
+		return place{}, false
 	}
-	place, err := showChat(ctx, run, id)
-	return err == nil && place.Agent == agent
+	at, err := showChat(ctx, run, id)
+	return at, err == nil && at.Agent == agent
 }
 
 func hasProviderMapping(ctx context.Context, run runCLI, handle, id string) bool {
