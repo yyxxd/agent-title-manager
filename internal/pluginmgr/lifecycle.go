@@ -75,7 +75,7 @@ func (m *Manager) enableBuiltin(ctx context.Context, state registry, req request
 	if len(legacy) > 0 && (!req.Takeover || len(next.Takeover) > 0) {
 		return nil, errors.New("检测到运行中的旧插件，需明确接管或先恢复上一次接管")
 	}
-	rel, staged, err := m.bundledRelease(ctx, req.ID, next.release)
+	rel, staged, err := m.installedRelease(ctx, req.ID, next.release)
 	if err != nil {
 		return nil, err
 	}
@@ -86,25 +86,38 @@ func (m *Manager) enableBuiltin(ctx context.Context, state registry, req request
 	return result, err
 }
 
-func (m *Manager) bundledRelease(ctx context.Context, id string, prior release) (release, bool, error) {
-	source := filepath.Join(m.bundled, id)
-	manifest, err := readManifest(source)
+func (m *Manager) bundledManifest(id string) (Manifest, error) {
+	manifest, err := readManifest(filepath.Join(m.bundled, id))
 	if err != nil {
-		return release{}, false, err
+		return Manifest{}, err
 	}
 	if manifest.ID != id || manifest.Host != id {
-		return release{}, false, errors.New("随附适配器身份与宿主不符")
+		return Manifest{}, errors.New("随附适配器身份与宿主不符")
 	}
-	if manifest == prior.Manifest {
-		if installed, err := readManifest(m.packageDir(prior)); err == nil && installed == manifest {
+	return manifest, nil
+}
+
+func (m *Manager) installedRelease(ctx context.Context, id string, prior release) (release, bool, error) {
+	if prior.Dir != "" {
+		if installed, err := readManifest(m.packageDir(prior)); err == nil && installed == prior.Manifest {
 			return prior, false, nil
 		}
+		return release{}, false, errors.New("现有适配器文件缺失，请通过插件面板安装随附更新")
 	}
-	stage, err := stagePackage(m.root)
+	manifest, err := m.bundledManifest(id)
 	if err != nil {
 		return release{}, false, err
 	}
-	if err = copyLocal(ctx, source, stage); err == nil {
+	rel, err := m.bundledRelease(ctx, id, manifest)
+	return rel, err == nil, err
+}
+
+func (m *Manager) bundledRelease(ctx context.Context, id string, manifest Manifest) (release, error) {
+	stage, err := stagePackage(m.root)
+	if err != nil {
+		return release{}, err
+	}
+	if err = copyLocal(ctx, filepath.Join(m.bundled, id), stage); err == nil {
 		var staged Manifest
 		staged, err = readManifest(stage)
 		if err == nil && staged != manifest {
@@ -112,9 +125,9 @@ func (m *Manager) bundledRelease(ctx context.Context, id string, prior release) 
 		}
 	}
 	if err != nil {
-		return release{}, false, errors.Join(err, os.RemoveAll(stage))
+		return release{}, errors.Join(err, os.RemoveAll(stage))
 	}
-	return release{manifest, filepath.Base(stage)}, true, nil
+	return release{manifest, filepath.Base(stage)}, nil
 }
 
 func (m *Manager) registerBuiltin(state registry, h host, base snapshot, legacy []change, next record, rel release) (any, error) {
@@ -174,6 +187,11 @@ func unregister(id string, old record) ([]change, error) {
 	if err != nil {
 		return nil, err
 	}
+	return unregisterFrom(id, old, actual)
+}
+
+func unregisterFrom(id string, old record, actual snapshot) ([]change, error) {
+	owned := old.Registration[0]
 	if actual.equal(owned.After) {
 		return []change{owned.reverse()}, nil
 	}

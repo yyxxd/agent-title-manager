@@ -23,6 +23,7 @@ type Item struct {
 	ID               string `json:"id"`
 	Name             string `json:"name"`
 	Version          string `json:"version"`
+	AvailableVersion string `json:"availableVersion,omitempty"`
 	Enabled          bool   `json:"enabled"`
 	Status           string `json:"status"`
 	Kind             string `json:"kind"`
@@ -157,6 +158,9 @@ func (m *Manager) Handle(ctx context.Context, method string, params json.RawMess
 	}
 	switch method {
 	case "plugins.install", "plugins.update":
+		if method == "plugins.update" && req.Source == "bundled" {
+			return m.locked(ctx, func(state registry) (any, error) { return m.updateBuiltin(ctx, state, req.ID) })
+		}
 		return m.install(ctx, method, req)
 	case "plugins.enable", "plugins.disable", "plugins.restore":
 		return m.locked(ctx, func(state registry) (any, error) { return m.modify(ctx, state, method, req) })
@@ -223,9 +227,12 @@ func (m *Manager) describeBuiltin(id string, item *Item, r record) {
 		item.Detail = "请在 Orca 设置中关闭「Name chats automatically」，避免两个应用同时改名。"
 		return
 	}
-	manifest, bundleErr := readManifest(filepath.Join(m.bundled, id))
+	manifest, bundleErr := m.bundledManifest(id)
 	if item.Version == "" && bundleErr == nil {
 		item.Version = manifest.Version
+	}
+	if r.Dir != "" && bundleErr == nil && newerVersion(manifest.Version, r.Manifest.Version) {
+		item.AvailableVersion = manifest.Version
 	}
 	if r.Enabled {
 		m.describeEnabled(id, item, r)
