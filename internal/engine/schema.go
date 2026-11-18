@@ -45,6 +45,16 @@ CREATE INDEX attempts_event ON attempts(event_id);
 PRAGMA user_version=1;
 `
 
+const schemaV2 = `
+ALTER TABLE sessions ADD COLUMN project_key TEXT NOT NULL DEFAULT '';
+ALTER TABLE events ADD COLUMN turns_hash TEXT NOT NULL DEFAULT '';
+ALTER TABLE events ADD COLUMN turn_count INTEGER NOT NULL DEFAULT 0;
+ALTER TABLE events ADD COLUMN confirmation_skips INTEGER NOT NULL DEFAULT 0;
+ALTER TABLE events ADD COLUMN native_handle TEXT NOT NULL DEFAULT '';
+CREATE INDEX sessions_project ON sessions(project_key,title) WHERE project_key<>'';
+PRAGMA user_version=2;
+`
+
 func initialize(db *sql.DB) error {
 	for _, pragmas := range []string{"PRAGMA busy_timeout=2500", "PRAGMA foreign_keys=ON", "PRAGMA journal_mode=WAL", "PRAGMA secure_delete=ON"} {
 		if _, err := db.Exec(pragmas); err != nil {
@@ -65,7 +75,12 @@ func initialize(db *sql.DB) error {
 		if _, err = tx.Exec(schema); err != nil {
 			return err
 		}
+		fallthrough
 	case 1:
+		if _, err = tx.Exec(schemaV2); err != nil {
+			return err
+		}
+	case 2:
 	default:
 		return fmt.Errorf("无法读取数据库版本 %d", version)
 	}

@@ -7,6 +7,25 @@ import (
 	"time"
 )
 
+// ErrSyncSkipped is returned by a syncer when its live safety checks disallow the write.
+var ErrSyncSkipped = errors.New("Orca 同步已安全跳过")
+
+// ErrSyncStale indicates the current native title differs from the synchronization target.
+var ErrSyncStale = errors.New("原生标题已变化")
+
+// SyncTarget identifies the native title that the host must re-read before any Orca write.
+type SyncTarget struct {
+	Agent, SessionID, NativeHandle, ExpectedTitle string
+}
+
+type syncTargetKey struct{}
+
+// SyncTargetFromContext returns the native observation required by the host syncer.
+func SyncTargetFromContext(ctx context.Context) (SyncTarget, bool) {
+	target, ok := ctx.Value(syncTargetKey{}).(SyncTarget)
+	return target, ok
+}
+
 type idRequest struct {
 	ID string `json:"id"`
 }
@@ -28,7 +47,7 @@ func syncPolicy(id string, expected *string, origin, managed, title string) stri
 	}
 }
 
-type syncJob struct{ id, agent, sessionID, orcaID, expected, title string }
+type syncJob struct{ id, agent, sessionID, orcaID, expected, title, nativeHandle string }
 
 func (e *Engine) nextSync() (*syncJob, error) {
 	ctx := e.ctx
@@ -41,9 +60,9 @@ func (e *Engine) nextSync() (*syncJob, error) {
 			return nil, err
 		}
 		var job syncJob
-		err = tx.QueryRowContext(ctx, `SELECT id,agent,session_id,orca_id,orca_base,title FROM events
+		err = tx.QueryRowContext(ctx, `SELECT id,agent,session_id,orca_id,orca_base,title,native_handle FROM events
 			WHERE sync_status='pending' ORDER BY updated LIMIT 1`).
-			Scan(&job.id, &job.agent, &job.sessionID, &job.orcaID, &job.expected, &job.title)
+			Scan(&job.id, &job.agent, &job.sessionID, &job.orcaID, &job.expected, &job.title, &job.nativeHandle)
 		if errors.Is(err, sql.ErrNoRows) {
 			return nil, nil
 		}
@@ -61,6 +80,7 @@ func (e *Engine) processSync() (bool, error) {
 		return false, err
 	}
 	ctx, cancel := context.WithTimeout(e.ctx, 12*time.Second)
+	ctx = context.WithValue(ctx, syncTargetKey{}, SyncTarget{job.agent, job.sessionID, job.nativeHandle, job.title})
 	syncErr := e.syncer(ctx, job.orcaID, job.expected, job.title)
 	cancel()
 	// An interrupted write can be read back and retried without invoking a model.
@@ -71,7 +91,11 @@ func (e *Engine) processSync() (bool, error) {
 	defer cancel()
 	_, err = transact(ctx, e.db, func(tx *sql.Tx) (bool, error) {
 		status := "synced"
-		if syncErr != nil {
+		if errors.Is(syncErr, ErrSyncStale) {
+			status = "stale"
+		} else if errors.Is(syncErr, ErrSyncSkipped) {
+			status = "skipped"
+		} else if syncErr != nil {
 			status = "failed"
 		}
 		if _, err := tx.ExecContext(ctx, "UPDATE events SET sync_status=?,updated=? WHERE id=?", status, e.now().UnixMilli(), job.id); err != nil {

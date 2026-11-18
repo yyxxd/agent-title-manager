@@ -102,6 +102,15 @@ func (e *Engine) finishModel(job *modelJob, r modelResult) error {
 			return false, err
 		}
 		title, status, finalized := modelOutcome(base, current, r, job.settings.MaxTitleLength, now)
+		if status == "candidate" {
+			conflict, err := titleConflict(ctx, tx, job.id, title)
+			if err != nil {
+				return false, err
+			}
+			if conflict {
+				title, status, finalized = base, "kept", &now
+			}
+		}
 		_, err = tx.ExecContext(ctx, `UPDATE events SET status=?,title=?,updated=?,finalized=? WHERE id=? AND status='running'`,
 			status, title, now, finalized, job.id)
 		return true, err
@@ -113,6 +122,8 @@ func modelOutcome(base string, current bool, r modelResult, maxLength int, now i
 	switch {
 	case !current || r.status == "stale":
 		return base, "stale", nil
+	case r.status == "disabled":
+		return base, "disabled", nil
 	case r.status == "interrupted":
 		return base, "interrupted", nil
 	case r.status != "completed":
@@ -131,12 +142,22 @@ func (e *Engine) invoke(parent context.Context, req attemptRequest) (modelResult
 	defer cancel()
 	var id int64
 	var startErr error
+	if !e.attemptEnabled(ctx, req) {
+		return modelResult{status: "disabled"}, nil
+	}
 	r := e.generate(ctx, req, func() error {
+		if !e.attemptEnabled(ctx, req) {
+			startErr = errDisabled
+			return startErr
+		}
 		id, startErr = e.startAttempt(ctx, req)
 		return startErr
 	})
 	if errors.Is(startErr, errStale) {
 		return modelResult{status: "stale"}, nil
+	}
+	if errors.Is(startErr, errDisabled) {
+		return modelResult{status: "disabled"}, nil
 	}
 	if startErr != nil {
 		return modelResult{}, startErr
@@ -152,6 +173,11 @@ func (e *Engine) invoke(parent context.Context, req attemptRequest) (modelResult
 }
 
 var errStale = errors.New("会话已发生变化")
+var errDisabled = errors.New("命名插件已停用")
+
+func (e *Engine) attemptEnabled(ctx context.Context, req attemptRequest) bool {
+	return req.eventID == nil || e.isEnabled == nil || e.isEnabled(ctx, req.agent)
+}
 
 func (e *Engine) startAttempt(ctx context.Context, req attemptRequest) (int64, error) {
 	return transact(ctx, e.db, func(tx *sql.Tx) (int64, error) {

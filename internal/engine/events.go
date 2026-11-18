@@ -4,7 +4,6 @@ import (
 	"context"
 	"crypto/rand"
 	"database/sql"
-	"encoding/json"
 	"errors"
 	"regexp"
 	"strings"
@@ -13,17 +12,20 @@ import (
 )
 
 type submission struct {
-	Agent        string  `json:"agent"`
-	SessionID    string  `json:"sessionId"`
-	Revision     string  `json:"revision"`
-	CurrentTitle string  `json:"currentTitle"`
-	TitleOrigin  string  `json:"titleOrigin"`
-	Project      string  `json:"project"`
-	OrcaID       string  `json:"orcaSessionId"`
-	OrcaTitle    *string `json:"orcaTitle"`
-	OrcaOrigin   string  `json:"orcaTitleOrigin"`
-	NativeOnly   bool    `json:"nativeTitleOnly"`
-	Turns        []turn  `json:"turns"`
+	Agent            string  `json:"agent"`
+	SessionID        string  `json:"sessionId"`
+	Revision         string  `json:"revision"`
+	CurrentTitle     string  `json:"currentTitle"`
+	TitleOrigin      string  `json:"titleOrigin"`
+	Project          string  `json:"project"`
+	OriginalGoal     string  `json:"originalGoal"`
+	ConfirmationOnly bool    `json:"confirmationOnly"`
+	OrcaID           string  `json:"orcaSessionId"`
+	OrcaNativeHandle string  `json:"orcaNativeHandle"`
+	OrcaTitle        *string `json:"orcaTitle"`
+	OrcaOrigin       string  `json:"orcaTitleOrigin"`
+	NativeOnly       bool    `json:"nativeTitleOnly"`
+	Turns            []turn  `json:"turns"`
 }
 
 type turn struct {
@@ -32,8 +34,9 @@ type turn struct {
 }
 
 type session struct {
-	revision, title, orcaID, orcaManaged string
-	manual                               bool
+	revision, title, orcaID, orcaManaged    string
+	projectKey, priorRevision, priorProject string
+	manual                                  bool
 }
 
 var validAgent = regexp.MustCompile(`^[a-z][a-z0-9._-]{0,63}$`)
@@ -52,12 +55,13 @@ func validOrigin(origin string) bool {
 
 func (p submission) validate() error {
 	if !validKey(p.Agent, p.SessionID) || p.Revision == "" || !validString(p.Revision, 512) ||
-		!validString(p.CurrentTitle, 2048) || !validString(p.Project, 512) || !validString(p.OrcaID, 256) {
+		!validString(p.CurrentTitle, 2048) || !validString(p.Project, 4096) || !validString(p.OrcaID, 256) ||
+		!validString(p.OrcaNativeHandle, 4096) {
 		return errors.New("会话键、版本或标题无效")
 	}
 	if !validOrigin(p.TitleOrigin) || !validOrigin(p.OrcaOrigin) ||
 		(p.OrcaTitle != nil && (p.OrcaID == "" || !validString(*p.OrcaTitle, 2048))) ||
-		(p.OrcaOrigin != "" && p.OrcaTitle == nil) {
+		(p.OrcaOrigin != "" && p.OrcaTitle == nil) || (p.OrcaNativeHandle != "" && p.OrcaID == "") {
 		return errors.New("标题来源或 Orca 绑定无效")
 	}
 	if p.NativeOnly && (strings.TrimSpace(p.CurrentTitle) == "" || len(p.Turns) > 0 || p.OrcaID == "" || p.OrcaTitle == nil) {
@@ -76,8 +80,8 @@ func (p submission) validate() error {
 
 func loadSession(ctx context.Context, q queryer, agent, id string) (session, error) {
 	var s session
-	err := q.QueryRowContext(ctx, `SELECT revision,title,manual,orca_id,orca_managed FROM sessions
-		WHERE agent=? AND session_id=?`, agent, id).Scan(&s.revision, &s.title, &s.manual, &s.orcaID, &s.orcaManaged)
+	err := q.QueryRowContext(ctx, `SELECT revision,title,manual,orca_id,orca_managed,project_key FROM sessions
+		WHERE agent=? AND session_id=?`, agent, id).Scan(&s.revision, &s.title, &s.manual, &s.orcaID, &s.orcaManaged, &s.projectKey)
 	return s, err
 }
 
@@ -140,17 +144,20 @@ func observeSubmission(ctx context.Context, tx *sql.Tx, p submission, now int64)
 		}
 	}
 	if !p.NativeOnly {
+		s.priorRevision, s.priorProject = s.revision, s.projectKey
 		s.revision = p.Revision
+		_, s.projectKey = inspectProject(p.Project)
 	}
 	if p.OrcaID != "" && p.OrcaID != s.orcaID {
 		s.orcaID = p.OrcaID
 		s.orcaManaged = ""
 	}
 	s.title = p.CurrentTitle
-	_, err = tx.ExecContext(ctx, `INSERT INTO sessions(agent,session_id,revision,title,manual,orca_id,orca_managed)
-		VALUES(?,?,?,?,?,?,?) ON CONFLICT(agent,session_id) DO UPDATE SET
-		revision=excluded.revision,title=excluded.title,manual=excluded.manual,orca_id=excluded.orca_id,orca_managed=excluded.orca_managed`,
-		p.Agent, p.SessionID, s.revision, s.title, s.manual, s.orcaID, s.orcaManaged)
+	_, err = tx.ExecContext(ctx, `INSERT INTO sessions(agent,session_id,revision,title,manual,orca_id,orca_managed,project_key)
+		VALUES(?,?,?,?,?,?,?,?) ON CONFLICT(agent,session_id) DO UPDATE SET
+		revision=excluded.revision,title=excluded.title,manual=excluded.manual,orca_id=excluded.orca_id,
+		orca_managed=excluded.orca_managed,project_key=excluded.project_key`,
+		p.Agent, p.SessionID, s.revision, s.title, s.manual, s.orcaID, s.orcaManaged, s.projectKey)
 	return s, err
 }
 
@@ -158,53 +165,26 @@ func (e *Engine) insertSubmission(ctx context.Context, tx *sql.Tx, p submission,
 	status, syncStatus := "queued", ""
 	var finalized *int64
 	now := e.now().UnixMilli()
+	skips, err := confirmationSkips(ctx, tx, p, s)
+	if err != nil {
+		return err
+	}
 	switch {
 	case p.NativeOnly:
 		status = "native"
 		syncStatus = syncPolicy(p.OrcaID, p.OrcaTitle, p.OrcaOrigin, s.orcaManaged, p.CurrentTitle)
-	case s.manual || payload == nil:
+	case s.manual || payload == nil || skips > 0:
 		status = "kept"
 		finalized = &now
 		payload = nil
 	}
-	_, err := tx.ExecContext(ctx, `INSERT INTO events(id,agent,session_id,revision,native_only,base,title,status,payload,
-		orca_id,orca_base,orca_origin,sync_status,created,updated,finalized) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
+	_, err = tx.ExecContext(ctx, `INSERT INTO events(id,agent,session_id,revision,native_only,base,title,status,payload,
+		orca_id,orca_base,orca_origin,sync_status,created,updated,finalized,turns_hash,turn_count,confirmation_skips,native_handle)
+		VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
 		rand.Text(), p.Agent, p.SessionID, p.Revision, p.NativeOnly, p.CurrentTitle, p.CurrentTitle,
-		status, payload, p.OrcaID, p.OrcaTitle, p.OrcaOrigin, syncStatus, now, now, finalized)
+		status, payload, p.OrcaID, p.OrcaTitle, p.OrcaOrigin, syncStatus, now, now, finalized,
+		turnsHash(p.OriginalGoal, p.Turns), len(p.Turns), skips, p.OrcaNativeHandle)
 	return err
-}
-
-func makePrompt(p submission) ([]byte, error) {
-	if p.NativeOnly {
-		return nil, nil
-	}
-	turns := make([]turn, 0, min(10, len(p.Turns)))
-	budget := 6000
-	for i := len(p.Turns) - 1; i >= 0 && len(turns) < 10 && budget > 0; i-- {
-		t := p.Turns[i]
-		text := strings.TrimSpace(t.Text)
-		if text == "" {
-			continue
-		}
-		runes := []rune(text)
-		n := min(len(runes), 1600, budget)
-		budget -= n
-		turns = append(turns, turn{Role: t.Role, Text: string(runes[:n])})
-	}
-	for left, right := 0, len(turns)-1; left < right; left, right = left+1, right-1 {
-		turns[left], turns[right] = turns[right], turns[left]
-	}
-	goal := ""
-	for _, t := range turns {
-		if t.Role == "user" {
-			goal = t.Text
-			break
-		}
-	}
-	if goal == "" {
-		return nil, nil
-	}
-	return json.Marshal(map[string]any{"recent_turns": turns, "original_goal": goal, "current_title": p.CurrentTitle, "project_hint": p.Project})
 }
 
 var categories = []string{"🎬", "🧩", "🔎", "📝", "📅", "🎨", "⚙️", "💬"}

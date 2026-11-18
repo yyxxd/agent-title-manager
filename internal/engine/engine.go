@@ -30,13 +30,17 @@ type Engine struct {
 	modelWake, syncWake chan struct{}
 	generate            func(context.Context, attemptRequest, func() error) modelResult
 	syncer              func(context.Context, string, string, string) error
+	isEnabled           func(context.Context, string) bool
 	now                 func() time.Time
 }
 
 // Open starts one durable worker per queue. dataDir belongs to a single running engine.
-func Open(dataDir string, syncer func(context.Context, string, string, string) error) (*Engine, error) {
+func Open(dataDir string, syncer func(context.Context, string, string, string) error, enabled ...func(context.Context, string) bool) (*Engine, error) {
 	if dataDir == "" {
 		return nil, errors.New("缺少数据目录")
+	}
+	if len(enabled) > 1 {
+		return nil, errors.New("只能提供一个启用判断")
 	}
 	if err := os.MkdirAll(dataDir, 0700); err != nil {
 		return nil, err
@@ -60,6 +64,9 @@ func Open(dataDir string, syncer func(context.Context, string, string, string) e
 	e := &Engine{db: db, dir: dataDir, lock: lock, ctx: ctx, cancel: cancel, now: time.Now,
 		modelWake: make(chan struct{}, 1), syncWake: make(chan struct{}, 1), syncer: syncer}
 	e.generate = e.runProvider
+	if len(enabled) == 1 {
+		e.isEnabled = enabled[0]
+	}
 	e.wg.Add(1)
 	go e.worker(e.modelWake, e.processModel)
 	if syncer != nil {

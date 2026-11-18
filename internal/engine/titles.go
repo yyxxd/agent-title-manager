@@ -20,6 +20,7 @@ type candidate struct {
 }
 type claimResponse struct {
 	Candidate *candidate `json:"candidate"`
+	Status    string     `json:"status,omitempty"`
 }
 type ackRequest struct {
 	Agent         string `json:"agent"`
@@ -35,43 +36,76 @@ func (e *Engine) claim(ctx context.Context, p claimRequest) (claimResponse, erro
 	return transact(ctx, e.db, func(tx *sql.Tx) (claimResponse, error) {
 		s, err := loadSession(ctx, tx, p.Agent, p.SessionID)
 		if errors.Is(err, sql.ErrNoRows) {
-			return claimResponse{}, nil
-		}
-		if err != nil || s.manual || (p.Revision != "" && p.Revision != s.revision) {
-			return claimResponse{}, err
-		}
-		if s.title != p.CurrentTitle {
-			return claimResponse{}, e.observeChangedTitle(ctx, tx, p)
-		}
-		var c candidate
-		err = tx.QueryRowContext(ctx, `SELECT id,title,base,revision FROM events WHERE agent=? AND session_id=?
-			AND revision=? AND base=? AND status IN ('candidate','claimed')`,
-			p.Agent, p.SessionID, s.revision, p.CurrentTitle).Scan(&c.ID, &c.Title, &c.BaseTitle, &c.Revision)
-		if errors.Is(err, sql.ErrNoRows) {
-			return claimResponse{}, nil
+			return claimResponse{Status: "none"}, nil
 		}
 		if err != nil {
 			return claimResponse{}, err
 		}
-		_, err = tx.ExecContext(ctx, `UPDATE events SET status='claimed',updated=? WHERE id=? AND status='candidate'`, e.now().UnixMilli(), c.ID)
-		return claimResponse{&c}, err
+		revision := p.Revision
+		if revision == "" {
+			revision = s.revision
+		}
+		var c candidate
+		var status string
+		err = tx.QueryRowContext(ctx, `SELECT id,title,base,revision,status FROM events WHERE agent=? AND session_id=?
+			AND revision=? AND native_only=0`, p.Agent, p.SessionID, revision).Scan(&c.ID, &c.Title, &c.BaseTitle, &c.Revision, &status)
+		if errors.Is(err, sql.ErrNoRows) {
+			return claimResponse{Status: "none"}, nil
+		}
+		if err != nil {
+			return claimResponse{}, err
+		}
+		if revision != s.revision {
+			return claimResponse{Status: "stale"}, nil
+		}
+		if s.title != p.CurrentTitle {
+			status, err = e.observeChangedTitle(ctx, tx, p)
+			return claimResponse{Status: status}, err
+		}
+		if status != "candidate" && status != "claimed" {
+			return claimResponse{Status: status}, nil
+		}
+		if s.manual || c.BaseTitle != p.CurrentTitle {
+			return claimResponse{Status: "stale"}, nil
+		}
+		return e.issueClaim(ctx, tx, c, status)
 	})
 }
 
-func (e *Engine) observeChangedTitle(ctx context.Context, tx *sql.Tx, p claimRequest) error {
+func (e *Engine) issueClaim(ctx context.Context, tx *sql.Tx, c candidate, status string) (claimResponse, error) {
+	if status == "claimed" {
+		return claimResponse{Candidate: &c, Status: "claimed"}, nil
+	}
+	now := e.now().UnixMilli()
+	conflict, err := titleConflict(ctx, tx, c.ID, c.Title)
+	if err != nil {
+		return claimResponse{}, err
+	}
+	if conflict {
+		_, err = tx.ExecContext(ctx, `UPDATE events SET status='kept',title=base,updated=?,finalized=? WHERE id=?`, now, now, c.ID)
+		return claimResponse{Status: "kept"}, err
+	}
+	_, err = tx.ExecContext(ctx, `UPDATE events SET status='claimed',updated=? WHERE id=?`, now, c.ID)
+	return claimResponse{Candidate: &c, Status: "claimed"}, err
+}
+
+func (e *Engine) observeChangedTitle(ctx context.Context, tx *sql.Tx, p claimRequest) (string, error) {
 	var inFlight bool
 	err := tx.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM events WHERE agent=? AND session_id=?
 		AND status='claimed' AND title=?)`, p.Agent, p.SessionID, p.CurrentTitle).Scan(&inFlight)
-	if err != nil || inFlight {
-		return err
+	if err != nil {
+		return "", err
+	}
+	if inFlight {
+		return "claimed", nil
 	}
 	if _, err := tx.ExecContext(ctx, `UPDATE sessions SET manual=1,title=? WHERE agent=? AND session_id=?`,
 		p.CurrentTitle, p.Agent, p.SessionID); err != nil {
-		return err
+		return "", err
 	}
 	_, err = tx.ExecContext(ctx, `UPDATE events SET status='stale',payload=NULL,updated=?
 		WHERE agent=? AND session_id=? AND status IN ('queued','candidate','claimed')`, e.now().UnixMilli(), p.Agent, p.SessionID)
-	return err
+	return "stale", err
 }
 
 func (e *Engine) ack(ctx context.Context, p ackRequest) (accepted, error) {
