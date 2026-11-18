@@ -49,7 +49,7 @@ type dailyStats struct {
 	ByModel []modelTotals `json:"byModel"`
 }
 
-const dailyQuery = `
+const statsQuery = `
 WITH outcomes AS (
 	SELECT agent,'' AS provider,'' AS model,0 AS attempts,0 AS tests,(status='applied') AS renames,
 		(status='kept') AS kept,NULL AS input,NULL AS output,NULL AS cached,0 AS unknown
@@ -76,12 +76,34 @@ func (e *Engine) daily(ctx context.Context, p dateRequest) (dailyStats, error) {
 		return dailyStats{}, errors.New("日期必须为 YYYY-MM-DD")
 	}
 	end := start.AddDate(0, 0, 1)
+	return e.statsBetween(ctx, start, end, date)
+}
+
+type dateRangeRequest struct {
+	Start string `json:"start"`
+	End   string `json:"end"`
+}
+
+func (e *Engine) dateRange(ctx context.Context, p dateRangeRequest) (dailyStats, error) {
+	loc := e.now().Location()
+	start, fromErr := time.ParseInLocation(time.DateOnly, p.Start, loc)
+	last, toErr := time.ParseInLocation(time.DateOnly, p.End, loc)
+	if fromErr != nil || toErr != nil {
+		return dailyStats{}, errors.New("开始和结束日期必须为 YYYY-MM-DD")
+	}
+	if last.Before(start) {
+		return dailyStats{}, errors.New("结束日期不能早于开始日期")
+	}
+	return e.statsBetween(ctx, start, last.AddDate(0, 0, 1), p.End)
+}
+
+func (e *Engine) statsBetween(ctx context.Context, start, end time.Time, date string) (dailyStats, error) {
 	var since int64
-	if err = e.db.QueryRowContext(ctx, "SELECT since FROM settings WHERE id=1").Scan(&since); err != nil {
+	if err := e.db.QueryRowContext(ctx, "SELECT since FROM settings WHERE id=1").Scan(&since); err != nil {
 		return dailyStats{}, err
 	}
-	reply := dailyStats{Date: date, Since: formatTime(since, local), ByAgent: []agentTotals{}, ByModel: []modelTotals{}}
-	rows, err := e.db.QueryContext(ctx, dailyQuery, start.UnixMilli(), end.UnixMilli(), start.UnixMilli(), end.UnixMilli())
+	reply := dailyStats{Date: date, Since: formatTime(since, start.Location()), ByAgent: []agentTotals{}, ByModel: []modelTotals{}}
+	rows, err := e.db.QueryContext(ctx, statsQuery, start.UnixMilli(), end.UnixMilli(), start.UnixMilli(), end.UnixMilli())
 	if err != nil {
 		return dailyStats{}, err
 	}

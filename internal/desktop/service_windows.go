@@ -67,7 +67,7 @@ func (s *Service) ServiceShutdown() error {
 	return errors.Join(err, s.backend.Close())
 }
 
-var engineMethods = []string{"providers.test", "providers.models", "providers.endpoints", "stats.daily", "records.list", "sync.retry", "sync.adopt"}
+var engineMethods = []string{"providers.test", "providers.models", "providers.endpoints", "stats.daily", "stats.range", "records.list", "sync.retry", "sync.adopt"}
 var pluginMethods = []string{"plugins.list", "plugins.install", "plugins.update", "plugins.enable", "plugins.disable", "plugins.restore"}
 
 func (s *Service) Call(ctx context.Context, method string, body string) (any, error) {

@@ -6,6 +6,8 @@ import { Models } from './Models';
 import { Plugins } from './Plugins';
 import { Records } from './Records';
 import './style.css';
+import './refinement.css';
+import './controls.css';
 
 const pages = [
   ['overview', '概览'],

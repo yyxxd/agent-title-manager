@@ -149,6 +149,8 @@ func (e *Engine) Handle(ctx context.Context, method string, params json.RawMessa
 		return dispatch(params, func(p endpointRequest) (apiEndpoints, error) { return e.previewEndpoints(ctx, p) })
 	case "stats.daily":
 		return dispatch(params, func(p dateRequest) (dailyStats, error) { return e.daily(ctx, p) })
+	case "stats.range":
+		return dispatch(params, func(p dateRangeRequest) (dailyStats, error) { return e.dateRange(ctx, p) })
 	case "records.list":
 		return dispatch(params, func(p listRequest) (recordList, error) { return e.records(ctx, p) })
 	case "sync.retry", "sync.adopt":

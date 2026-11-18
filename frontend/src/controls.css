@@ -1,0 +1,232 @@
+
+/* Small controls share color, shape and interaction states. */
+:root {
+  --field-hover: light-dark(#f3f6fc, #1d2a3d);
+  --popup-shadow: light-dark(0 9px 25px #253e651f, 0 9px 25px #0006);
+}
+.daily-overview .page-head .actions { flex-wrap: nowrap; }
+button.date-trigger, select, input:not([type="checkbox"], [type="radio"]) {
+  background: var(--surface);
+  border: 1px solid var(--control);
+  color: var(--ink);
+}
+button.date-trigger:hover, select:hover:not(:disabled), input:not(:disabled, [type="checkbox"], [type="radio"]):hover {
+  background-color: var(--field-hover);
+}
+:is(input:not([type="checkbox"], [type="radio"]), select, button.date-trigger):focus-visible {
+  border-color: var(--accent);
+  outline-offset: 2px;
+}
+button.date-trigger {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 125px;
+  font-size: 13px;
+  font-variant-numeric: tabular-nums;
+}
+.date-trigger svg { color: var(--muted); }
+.date-trigger:has(+ :popover-open) { border-color: var(--accent); background: var(--blue-bg); }
+.date-picker {
+  inset: auto;
+  position-area: bottom span-left;
+  margin: 7px 0 0;
+  width: 272px;
+  padding: 10px;
+  border: 1px solid var(--rule);
+  border-radius: 11px;
+  color: var(--ink);
+  background: var(--surface);
+  box-shadow: var(--popup-shadow);
+}
+.date-picker:popover-open { animation: control-open 140ms ease-out; }
+.calendar-heading { display: flex; align-items: center; justify-content: space-between; gap: 6px; margin-bottom: 6px; }
+.calendar-heading strong { font-size: 13px; font-weight: 650; }
+.calendar-heading button.icon-button { width: 28px; min-width: 28px; min-height: 28px; padding: 0; }
+.calendar-days { display: grid; grid-template-columns: repeat(7, 1fr); gap: 2px; text-align: center; }
+.calendar-weekday { color: var(--muted); line-height: 24px; font-size: 12px; }
+.calendar-days button { min-width: 0; min-height: 31px; padding: 1px; font-size: 13px; background: transparent; }
+.calendar-days button[data-outside=true] { color: var(--muted); }
+.calendar-days button[aria-current=date] { border-color: var(--control); }
+.calendar-days button[aria-pressed=true],
+.calendar-days button[aria-pressed=true]:hover { background: var(--accent-solid); color: var(--on-accent); font-weight: 650; }
+.calendar-days :focus-visible { outline-offset: -2px; }
+.calendar-days button:disabled { opacity: 1; color: light-dark(#697890, #8395b0); background: transparent; }
+.calendar-footer { display: flex; justify-content: flex-end; margin-top: 7px; padding-top: 7px; border-top: 1px solid var(--rule); }
+.calendar-footer button:not(.primary) { min-height: 28px; color: var(--accent); background: var(--blue-bg); font-size: 12px; }
+@supports (appearance: base-select) {
+  select, select::picker(select) { appearance: base-select; }
+  select { gap: 8px; text-align: start; }
+  select::picker-icon {
+    content: "";
+    flex: 0 0 6px;
+    width: 6px;
+    height: 6px;
+    margin: -3px 2px 0 auto;
+    align-self: center;
+    border-inline-end: 1.5px solid var(--muted);
+    border-block-end: 1.5px solid var(--muted);
+    transform: rotate(45deg);
+    transition: transform var(--motion);
+  }
+  select:open::picker-icon { transform: rotate(225deg); }
+  select:open { border-color: var(--accent); }
+  select::picker(select) {
+    margin-block: 5px;
+    padding: 4px;
+    border: 1px solid var(--rule);
+    border-radius: 9px;
+    color: var(--ink);
+    background: var(--surface);
+    box-shadow: var(--popup-shadow);
+    scrollbar-width: thin;
+  }
+  select:open::picker(select) { animation: control-open 140ms ease-out; }
+  option { padding: 6px 9px; gap: 8px; border-radius: 5px; font-size: 13px; }
+  option::checkmark { order: 1; margin-inline-start: auto; color: var(--accent); }
+  option:hover, option:focus-visible { background: var(--hover); }
+  option:focus-visible { outline: 1px solid var(--accent); outline-offset: -1px; }
+  option:checked { background: var(--blue-bg); color: var(--accent); font-weight: 600; }
+}
+summary { display: list-item; list-style: none; }
+summary::-webkit-details-marker { display: none; }
+summary::before {
+  content: "";
+  display: inline-block;
+  width: 6px;
+  height: 6px;
+  margin-inline: 2px 9px;
+  vertical-align: 2px;
+  color: var(--muted);
+  border-block-start: 1.5px solid currentColor;
+  border-inline-end: 1.5px solid currentColor;
+  transform: rotate(45deg);
+  transition: transform var(--motion);
+}
+details[open] > summary::before { transform: translateY(-2px) rotate(135deg); }
+summary:hover { color: var(--accent); }
+:where(button, input, select):disabled, button:disabled, input:disabled, select:disabled {
+  opacity: 1;
+  color: var(--muted);
+  background-color: var(--raised);
+  cursor: not-allowed;
+}
+@keyframes control-open { from { opacity: .65; transform: translateY(-3px); } }
+@container (max-width: 480px) {
+  .daily-overview .page-head .date-trigger { min-height: 44px; }
+  .daily-overview .date-picker button { min-height: 31px; min-width: 0; }
+}
+@media (max-width: 480px) { main { padding-inline: 16px; } }
+@media (prefers-reduced-motion: reduce) {
+  .date-picker:popover-open, select:open::picker(select) { animation: none; }
+  select::picker-icon, summary::before { transition: none; }
+}
+@media (forced-colors: active) {
+  .calendar-days button[aria-pressed=true], option:checked { color: HighlightText; background: Highlight; forced-color-adjust: none; }
+}
+
+.date-picker {
+  width: min(407px, calc(100vw - 24px)); max-block-size: calc(100dvh - 132px); overflow-y: auto;
+}
+.date-picker-layout {
+  display: grid;
+  grid-template-columns: 110px minmax(0, 1fr);
+  align-items: start;
+  gap: 12px;
+}
+.date-presets {
+  display: grid;
+  gap: 2px;
+  padding-inline-end: 9px;
+  border-inline-end: 1px solid var(--rule);
+}
+.date-presets button:not(.primary) {
+  text-align: start;
+  min-height: 31px;
+  padding-inline: 8px;
+  background: transparent;
+  font-size: 13px;
+}
+.date-presets button:hover:not(:disabled) { background: var(--hover); }
+.date-presets button[aria-pressed=true] {
+  color: var(--accent);
+  background: var(--blue-bg);
+  font-weight: 650;
+}
+.calendar-days button[data-in-range=true]:not([aria-pressed=true]) {
+  color: var(--accent);
+  background: var(--blue-bg);
+}
+.calendar-days button[data-range-edge=true]:not([data-outside=true]) {
+  color: var(--on-accent);
+  background: var(--accent-solid);
+  font-weight: 650;
+}
+.calendar-footer {
+  display: block;
+  min-height: 28px;
+  padding: 8px 3px 0;
+  color: var(--muted);
+  font-size: 12px;
+  font-variant-numeric: tabular-nums;
+}
+@media (max-width: 540px) {
+  .date-picker { width: min(346px, calc(100vw - 24px)); padding: 8px; }
+  .date-picker-layout { grid-template-columns: 82px minmax(0, 1fr); gap: 8px; }
+  .date-presets { padding-inline-end: 6px; }
+  .date-presets button:not(.primary) { padding-inline: 5px; }
+  .daily-overview .calendar-days button { min-height: 27px; }
+}
+nav button[aria-current]:hover:not(:disabled) { background: var(--surface); color: var(--accent); }
+
+.model-settings .model-api > .api-url-row { grid-template-columns: minmax(110px, 1fr) minmax(0, 2fr); }
+.api-url-field { min-width: 0; display: flex; align-items: center; gap: 5px; }
+.api-url-field input { flex: 1 1 0; }
+button.endpoint-trigger { flex: 0 0 34px; color: var(--muted); background: transparent; }
+button.endpoint-trigger:hover, button.endpoint-trigger:has(+ :popover-open) {
+  background: var(--blue-bg);
+  color: var(--accent);
+}
+.settings-popup {
+  inset: auto;
+  position-area: bottom span-left;
+  position-try-fallbacks: flip-block;
+  margin: 5px 0;
+  width: min(408px, calc(100vw - 32px));
+  max-height: min(350px, calc(100dvh - 92px));
+  overflow-y: auto;
+  padding: 9px;
+  border: 1px solid var(--rule);
+  border-radius: 11px;
+  color: var(--ink);
+  background: var(--surface);
+  box-shadow: var(--popup-shadow);
+}
+.settings-popup:popover-open { animation: control-open 140ms ease-out; }
+.settings-popup-head { display: flex; align-items: center; justify-content: space-between; gap: 8px; padding-inline-start: 5px; }
+.settings-popup .notice { margin: 7px 0 0; }
+.popup-actions { display: flex; align-items: center; gap: 2px; }
+button.popup-close { min-height: 29px; min-width: 29px; color: var(--muted); background: transparent; }
+button.popup-close:hover:not(:disabled) { color: var(--ink); background: var(--hover); }
+button.popup-close:disabled { background: transparent; color: var(--muted); opacity: .6; }
+.endpoint-values { display: grid; gap: 9px; padding: 6px 5px 4px; }
+.endpoint-values dt { font-size: 12px; color: var(--muted); }
+.endpoint-values dd { margin-top: 3px; font-size: 12px; overflow-wrap: anywhere; user-select: text; }
+.model-picker-trigger { display: inline-flex; align-items: center; gap: 7px; }
+.model-picker-trigger svg { color: var(--muted); }
+.model-picker-trigger:has(+ :popover-open) { color: var(--accent); background: var(--blue-bg); }
+.model-picker-search { position: relative; margin-top: 7px; }
+.model-picker-search svg { position: absolute; inset-inline-start: 9px; inset-block-start: 10px; color: var(--muted); pointer-events: none; }
+.model-picker-search input[type=search] { max-width: none; padding-inline-start: 30px; }
+.model-picker .model-options { margin: 5px 0 0; padding: 0; border: 0; border-radius: 0; max-height: 196px; }
+.model-picker .model-options li + li { border: 0; margin-top: 2px; }
+.model-picker .model-options button { grid-template-columns: minmax(0, 1fr) auto; align-items: center; gap: 6px; background: transparent; padding-inline: 8px; }
+.model-picker .model-options button:hover { background: var(--hover); }
+.model-picker .model-options button[aria-pressed=true] { background: var(--blue-bg); color: var(--accent); }
+.model-picker .model-options small { display: block; font-weight: 400; }
+@media (max-width: 480px) { .model-settings .model-api > .api-url-row { grid-template-columns: minmax(0, 1fr); gap: 4px; } }
+@media (prefers-reduced-motion: reduce) { .settings-popup:popover-open { animation: none; } }
+
+.endpoint-values code { font: 12px/1.55 "Cascadia Mono", Consolas, monospace; }
+.model-picker-search input[type=search]:focus-visible { outline: 1px solid var(--accent); outline-offset: -1px; }
+@media (max-width: 480px) { .settings-popup { width: min(408px, calc(100vw - 64px)); } }

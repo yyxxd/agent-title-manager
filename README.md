@@ -14,7 +14,7 @@ Claude 完成第一轮对话后会在后台生成标题。候选就绪后，发�
 
 配置自定义 API 时，选择 OpenAI Chat Completions、OpenAI Responses、Anthropic Messages 或 Gemini 协议，再填写 Base URL。应用会按协议补全请求地址并显示预览。可用当前草稿获取模型列表并搜索选择，也可手动填写模型 ID。已有 0.1.1 API 配置默认沿用 Chat Completions 和原请求地址。
 
-“概览”优先显示所选日期的改名次数和命名 Token，并提供按 Agent 和模型的用量明细。Token 合计为输入加输出，缓存计入输入，缺失用量会标明。“Agent 插件”在对应插件下直接显示简要说明。“记录”每行右侧显示命名状态，以及适用的 Orca 同步状态。
+“概览”优先显示所选日期范围的改名次数和命名 Token，并提供按 Agent 和模型的用量明细。Token 合计为输入加输出，缓存计入输入，缺失用量会标明。“Agent 插件”在对应插件下直接显示简要说明。“记录”每行右侧显示命名状态，以及适用的 Orca 同步状态。
 
 外观默认跟随 Windows 应用主题。在“模型与规则”中也可选浅色或深色，选择会保留。
 
@@ -38,7 +38,7 @@ Claude 完成第一轮对话后会在后台生成标题。候选就绪后，发�
 
 更新应用图标时，替换 `internal/desktop/icon.png` 后运行 `go generate ./cmd/atm`，并提交两个架构的资源文件。打包脚本会检查资源文件是否与源图一致。
 
-脚本执行前端构建和 Go 测试，将桌面可执行文件、bridge、内置插件和 Node.js 组装至 `out\windows-x64-*`，默认生成 `out\AgentTitleManager-0.1.2-windows-x64-setup.exe`。默认版本从 `internal/desktop/version.txt` 读取。当前构建产物未签名。
+脚本执行前端构建和 Go 测试，将桌面可执行文件、bridge、内置插件和 Node.js 组装至 `out\windows-x64-*`，默认生成 `out\AgentTitleManager-0.1.3-windows-x64-setup.exe`。默认版本从 `internal/desktop/version.txt` 读取。当前构建产物未签名。
 
 测试可为桌面应用和 bridge 同时设置绝对路径 `ATM_DATA_DIR`，隔离 SQLite、WebView2 数据及命名管道。验证安装程序时使用独立目录，例如 `setup.exe /S /NoIntegration /D=C:\temp\atm-sandbox`。插件操作仍须使用独立 Agent 配置与会话样本。
 

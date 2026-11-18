@@ -3,6 +3,8 @@ import { useState } from 'react';
 import { agentName, formatTime, localDate, num, providerName, rpc, type Counts, type Daily, type ModelUsage, type UsageSummary } from './rpc';
 import { Empty, Section, Status, useLoad } from './ui';
 import './overview.css';
+import { DateFilter } from './DateFilter';
+import { datePresets, type DateRange } from './dates';
 
 const tokenFields = [['input', '输入'], ['output', '输出'], ['cached', '缓存（计入输入）']] as const;
 type TokenKind = typeof tokenFields[number][0];
@@ -12,19 +14,23 @@ const usageAgentName = (agent: string) => agent === 'test' ? '连接测试' : ag
 const missingHint = '至少一项 Token 用量未记录的请求次数';
 
 export function Overview({ revision }: { revision: number }) {
-  const [date, setDate] = useState(localDate);
+  const [selection, setSelection] = useState<{ range: DateRange; preset?: string }>(() => {
+    const today = datePresets(localDate())[0];
+    return { range: today.range, preset: today.label };
+  });
+  const { range, preset } = selection;
   const [refresh, setRefresh] = useState(0);
   const [agent, setAgent] = useState('');
-  const { value, error } = useLoad(() => rpc<Daily>('stats.daily', { date }), `${date}:${refresh}:${revision}`);
+  const { value, error } = useLoad(() => rpc<Daily>('stats.range', range), `${range.start}:${range.end}:${refresh}:${revision}`);
   const rows = value?.byAgent ?? [];
   const agents = rows.filter((row) => row.agent !== 'test');
   const selected = rows.find((row) => row.agent === agent);
   const tokenScope = selected ?? value;
-  return <div className="daily-overview">
+  return <div className="daily-overview" data-refreshed={refresh || undefined}>
     <header className="page-head">
       <h1>概览</h1>
       <div className="actions">
-        <input aria-label="统计日期" type="date" max={localDate()} value={date} onChange={(event) => event.target.value && setDate(event.target.value)} />
+        <DateFilter range={range} preset={preset} onChange={(next, label) => setSelection({ range: next, preset: label })} />
         <button type="button" className="icon-button" aria-label="刷新统计" title="刷新统计" onClick={() => setRefresh((previous) => previous + 1)}><RefreshCw size={16} /></button>
       </div>
     </header>
@@ -32,8 +38,8 @@ export function Overview({ revision }: { revision: number }) {
     {value ? <>
       <DailySummary value={value} agents={agents} />
       <div className="daily-overview-detail">
-        <Section title="Agent 贡献" action={<span className="daily-overview-note">全部 Agent</span>}>
-          {agents.length ? <Activity rows={agents} /> : <Empty>所选日期无 Agent 活动</Empty>}
+        <Section title="Agent 贡献">
+          {agents.length ? <Activity key={refresh} rows={agents} /> : <Empty>所选日期无 Agent 活动</Empty>}
         </Section>
         <Section title="Token 明细" action={rows.length > 0 && <select aria-label="Token 明细的 Agent" value={selected?.agent ?? ''} onChange={(event) => setAgent(event.target.value)}>
           <option value="">{value?.testAttempts ? '全部请求' : '全部 Agent'}</option>
@@ -44,7 +50,7 @@ export function Overview({ revision }: { revision: number }) {
             : <Empty>此范围无模型请求</Empty>}
         </Section>
       </div>
-      <Section title="模型明细" action={<span className="daily-overview-note">{value?.testAttempts ? '全部请求' : '全部 Agent'}</span>}>
+      <Section title="模型明细" action={!!value?.testAttempts && <span className="daily-overview-note">全部请求</span>}>
         {value?.byModel?.length ? <ModelTable rows={value.byModel} /> : <Empty>所选日期无模型调用明细</Empty>}
       </Section>
       {value.since && <footer className="daily-overview-note">统计自 {formatTime(value.since)} 起</footer>}
