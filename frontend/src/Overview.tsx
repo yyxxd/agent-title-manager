@@ -1,6 +1,6 @@
 import { ArrowRight, RefreshCw } from 'lucide-react';
 import { useState } from 'react';
-import { agentName, formatTime, localDate, num, rpc, type Counts, type Daily } from './rpc';
+import { agentName, formatTime, localDate, num, providerName, rpc, token, type Counts, type Daily, type ModelUsage, type UsageSummary } from './rpc';
 import { Empty, Section, Status, useLoad } from './ui';
 
 const metrics = [['renames', '标题已应用'], ['attempts', '模型请求'], ['kept', '保留原标题'], ['unknownUsage', '用量未回报']] as const;
@@ -22,7 +22,10 @@ export function Overview({ openPlugins, revision }: { openPlugins: () => void; r
     </header>
     <Status error={error} />
     <section className="metrics panel" aria-label="当日标题统计">
-      {metrics.map(([key, label]) => <div key={key}><span>{label}</span><strong>{value ? num(value[key]) : '—'}</strong></div>)}
+      {metrics.map(([key, label]) => <div key={key}>
+        <span>{label}</span><strong>{value ? num(value[key]) : '—'}</strong>
+        {key === 'attempts' && !!value?.testAttempts && <span>含 {num(value.testAttempts)} 次测试</span>}
+      </div>)}
     </section>
     <div className="overview-grid">
       <Section title="Agent 活动">
@@ -35,6 +38,9 @@ export function Overview({ openPlugins, revision }: { openPlugins: () => void; r
         {value ? <TokenRows value={selected ?? value} /> : <Empty>{error ? '无法载入用量' : '正在读取用量…'}</Empty>}
       </Section>
     </div>
+    <Section title="模型调用">
+      {value?.byModel?.length ? <ModelTable rows={value.byModel} /> : <Empty>{value ? '当天没有模型活动' : error ? '无法载入模型活动' : '正在读取模型活动…'}</Empty>}
+    </Section>
     <footer className="overview-foot">
       {value?.since && <span>统计自 {formatTime(value.since)} 开始</span>}
       <button className="text-button" onClick={openPlugins}>管理 Agent <ArrowRight size={15} /></button>
@@ -57,9 +63,36 @@ function Activity({ rows }: { rows: (Counts & { agent: string })[] }) {
 
 function TokenRows({ value }: { value: Counts }) {
   return <dl className="token-rows">
-    <div><dt>输入</dt><dd>{num(value.inputTokens)}</dd></div>
-    <div><dt>输出</dt><dd>{num(value.outputTokens)}</dd></div>
-    <div><dt>缓存</dt><dd>{num(value.cachedTokens)}</dd></div>
+    <div><dt>输入</dt><dd><TokenTotal row={value} kind="input" /></dd></div>
+    <div><dt>输出</dt><dd><TokenTotal row={value} kind="output" /></dd></div>
+    <div><dt>缓存</dt><dd><TokenTotal row={value} kind="cached" /></dd></div>
     <div><dt>用量未回报</dt><dd>{num(value.unknownUsage)} 次</dd></div>
   </dl>;
+}
+
+function ModelTable({ rows }: { rows: ModelUsage[] }) {
+  return <div className="table-wrap" tabIndex={0} role="region" aria-label="当日模型调用">
+    <table>
+      <thead><tr>
+        <th>模型</th><th className="number">调用</th><th className="number">已知输入</th>
+        <th className="number">已知输出</th><th className="number">已知缓存</th><th className="number">用量未回报</th>
+      </tr></thead>
+      <tbody>{rows.map((row) => <tr key={`${row.provider}:${row.model}`}>
+        <th scope="row">{row.model || '未知模型'}<span className="model-source">{providerName(row.provider)}</span></th>
+        <td className="number">{num(row.attempts)}{!!row.testAttempts && <span className="model-source">含 {num(row.testAttempts)} 次测试</span>}</td>
+        <td className="number"><TokenTotal row={row} kind="input" /></td>
+        <td className="number"><TokenTotal row={row} kind="output" /></td>
+        <td className="number"><TokenTotal row={row} kind="cached" /></td>
+        <td className="number">{num(row.unknownUsage)}</td>
+      </tr>)}</tbody>
+    </table>
+  </div>;
+}
+
+function TokenTotal({ row, kind }: { row: UsageSummary; kind: 'input' | 'output' | 'cached' }) {
+  const value = row[`${kind}Tokens`];
+  const known = row[`${kind}Known`];
+  if (typeof value !== 'number' || known === 0) return <>—</>;
+  return <>{token(value)}{typeof known === 'number' && known < row.attempts &&
+    <span className="muted" title={`已回报 ${known} / ${row.attempts} 次`}>（部分）</span>}</>;
 }

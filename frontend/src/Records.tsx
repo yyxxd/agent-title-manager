@@ -1,24 +1,24 @@
 import { RefreshCw } from 'lucide-react';
 import { useState } from 'react';
-import { agentName, formatTime, num, rpc, type Attempt, type RecordItem } from './rpc';
+import { agentName, formatTime, providerName, rpc, token, type Attempt, type RecordItem } from './rpc';
 import { Empty, Section, Status, useAction, useLoad } from './ui';
 
 const states: Record<string, string> = {
   queued: '待处理', running: '命名中', candidate: '候选待领取', claimed: '待读回',
   applied: '标题已应用', kept: '保留原名', stale: '已过期', failed: '生成失败',
-  interrupted: '已中断', native: '已有原生标题', completed: '已完成',
+  interrupted: '已中断', native: '已有原生标题', completed: '已完成', disabled: '插件已停用',
   invalid_response: '响应无效', rejected_tool: '工具调用已拒绝',
 };
 const syncStates: Record<string, string> = {
   unbound: 'Orca 会话未确认绑定', unchanged: 'Orca 标题已一致', protected: 'Orca 标题受保护',
   pending: 'Orca 待同步', writing: 'Orca 同步中', synced: 'Orca 已同步并读回',
-  failed: 'Orca 同步失败', stale: 'Orca 同步已过期',
+  failed: 'Orca 同步失败', stale: 'Orca 同步已过期', skipped: 'Orca 安全跳过',
 };
 
 export function Records() {
   const [refresh, setRefresh] = useState(0);
   const [confirm, setConfirm] = useState('');
-  const { value, error } = useLoad(() => rpc<{ items: RecordItem[] }>('records.list', { limit: 50 }), refresh);
+  const { value, error } = useLoad(() => rpc<{ items: RecordItem[]; testAttempts?: Attempt[] }>('records.list', { limit: 50 }), refresh);
   const action = useAction();
   function sync(id: string, verb: 'adopt' | 'retry') {
     return action.run(async () => {
@@ -40,6 +40,9 @@ export function Records() {
         confirming={confirm === item.id} confirm={() => setConfirm(item.id)} cancel={() => setConfirm('')}
         sync={(verb) => void sync(item.id, verb)} />) : <Empty>{value ? '还没有处理记录' : error ? '无法读取记录' : '正在读取记录…'}</Empty>}
     </Section>
+    {!!value?.testAttempts?.length && <Section title="连接测试">
+      <ul className="attempt-list">{value.testAttempts.map((attempt, index) => <AttemptRow key={index} attempt={attempt} />)}</ul>
+    </Section>}
   </>;
 }
 
@@ -72,11 +75,12 @@ function RecordRow({ item, busy, confirming, confirm, cancel, sync }: {
 }
 
 function AttemptRow({ attempt }: { attempt: Attempt }) {
-  const token = (value?: number) => typeof value === 'number' ? num(value) : '未回报';
   const actual = attempt.actualTier && attempt.actualTier !== 'unknown' ? attempt.actualTier : '未回报';
+  const usage = (value?: number | null) => token(value, '未回报');
   return <li>
-    <strong>{attempt.provider === 'api' ? '自定义 API' : agentName(attempt.provider)} · {attempt.model || '未知模型'}</strong>
+    <strong>{providerName(attempt.provider)} · {attempt.model || '未知模型'}</strong>
+    {attempt.startedAt && <span>{formatTime(attempt.startedAt)}</span>}
     <span>{states[attempt.status] ?? attempt.status} · 请求档位 {attempt.requestedTier || '未回报'} · 实际档位 {actual}</span>
-    <span>{attempt.usageKnown ? `输入 ${token(attempt.inputTokens)} · 输出 ${token(attempt.outputTokens)} · 缓存 ${token(attempt.cachedTokens)} Token` : 'Token 用量未回报'}</span>
+    <span>Token 输入 {usage(attempt.inputTokens)} · 输出 {usage(attempt.outputTokens)} · 缓存 {usage(attempt.cachedTokens)}</span>
   </li>;
 }

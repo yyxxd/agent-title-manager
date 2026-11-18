@@ -6,7 +6,7 @@ const states: Record<string, string> = {
   enabled: '已启用', disabled: '已停用', action_required: '待操作', unavailable: '不可用', recovery_required: '待恢复',
 };
 
-type PluginState = Plugin & { takeoverRequired?: boolean; canRestore?: boolean };
+type PluginState = Plugin & { takeoverRequired?: boolean; canRestore?: boolean; entryPath?: string };
 type Confirmation = { id: string; verb: 'enable' | 'restore' };
 
 export function Plugins() {
@@ -49,6 +49,7 @@ export function Plugins() {
         <div className="item-heading"><h3>{plugin.name}</h3><span className="muted status-label">{states[plugin.status] ?? plugin.status}</span></div>
         {plugin.version && <span className="muted">v{plugin.version}</span>}
         {plugin.detail && <p>{plugin.detail}</p>}
+        {plugin.entryPath && <details><summary>启动入口</summary><code>{plugin.entryPath}</code></details>}
       </div>
       <div className="actions">
         {plugin.enabled ? <button disabled={action.busy} onClick={() => void mutate('disable', { id: plugin.id })}>停用</button>

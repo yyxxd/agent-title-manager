@@ -20,20 +20,36 @@ export function errorText(error: unknown): string {
   return '操作失败，请重试。';
 }
 
-export type Counts = {
+export type TokenUsage = {
+  inputTokens?: number | null;
+  outputTokens?: number | null;
+  cachedTokens?: number | null;
+};
+
+export type UsageSummary = TokenUsage & {
   attempts: number;
+  testAttempts?: number;
+  inputKnown?: number;
+  outputKnown?: number;
+  cachedKnown?: number;
+  unknownUsage: number;
+};
+
+export type Counts = UsageSummary & {
   renames: number;
   kept: number;
-  inputTokens: number;
-  outputTokens: number;
-  cachedTokens: number;
-  unknownUsage: number;
+};
+
+export type ModelUsage = UsageSummary & {
+  provider: string;
+  model: string;
 };
 
 export type Daily = Counts & {
   date: string;
   since?: string;
   byAgent: (Counts & { agent: string })[] | null;
+  byModel?: ModelUsage[] | null;
 };
 
 export type Settings = {
@@ -57,17 +73,13 @@ export type Plugin = {
   detail?: string;
 };
 
-export type Attempt = {
+export type Attempt = TokenUsage & {
   provider: string;
   model: string;
   status: string;
   startedAt?: string;
   requestedTier?: string;
   actualTier?: string;
-  inputTokens?: number;
-  outputTokens?: number;
-  cachedTokens?: number;
-  usageKnown: boolean;
 };
 
 export type RecordItem = {
@@ -85,8 +97,10 @@ export type RecordItem = {
 export type Preferences = { startup: boolean; startupAvailable: boolean };
 
 const agents: Record<string, string> = { codex: 'Codex', claude: 'Claude', pi: 'Pi', orca: 'Orca' };
-export const agentName = (id: string) => agents[id] ?? id;
+export const agentName = (id: string) => Object.hasOwn(agents, id) ? agents[id] : id;
+export const providerName = (id: string) => id === 'api' ? '自定义 API' : agentName(id);
 export const num = (value: number) => new Intl.NumberFormat('zh-CN').format(value);
+export const token = (value?: number | null, missing = '—') => typeof value === 'number' ? num(value) : missing;
 export const formatTime = (value: string) => new Date(value).toLocaleString('zh-CN', { hour12: false });
 
 export function localDate() {

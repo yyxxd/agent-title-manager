@@ -100,7 +100,7 @@ main { max-width: 1224px; margin: auto; padding: 28px 32px 42px; }
 .metrics > div + div { border-left: 1px solid var(--rule); }
 .metrics span { display: block; color: var(--muted); font-size: 13px; }
 .metrics strong { display: block; font-size: 27px; font-weight: 550; margin-top: 4px; line-height: 1.25; overflow-wrap: anywhere; }
-.overview-grid { display: grid; grid-template-columns: minmax(0, 1.65fr) minmax(0, 1fr); gap: 16px; }
+.overview-grid { display: grid; grid-template-columns: minmax(0, 1.65fr) minmax(0, 1fr); gap: 16px; margin-bottom: 16px; }
 .overview-grid .panel { margin-bottom: 0; min-width: 0; }
 .overview-foot { margin-top: 13px; display: flex; align-items: center; justify-content: flex-end; gap: 10px; flex-wrap: wrap; color: var(--muted); font-size: 13px; }
 .overview-foot span { margin-right: auto; }
@@ -114,6 +114,7 @@ th:last-child, td:last-child { padding-right: 0; }
 tbody tr:last-child > * { border-bottom: 0; }
 thead th { color: var(--muted); font-size: 12px; font-weight: 500; }
 .number { text-align: right; white-space: nowrap; }
+.model-source { display: block; color: var(--muted); font-size: 12px; font-weight: 400; }
 .value-track { position: relative; display: inline-block; min-width: 38px; padding-bottom: 3px; }
 .value-track::after { position: absolute; inset: auto 0 0 auto; width: var(--ratio); height: 1px; content: ""; background: var(--accent); }
 .token-rows > div { display: flex; justify-content: space-between; padding: 10px 0; gap: 16px; }
