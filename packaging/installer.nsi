@@ -4,11 +4,12 @@ OutFile "${OUTPUT}"
 InstallDir "$LOCALAPPDATA\Programs\AgentTitleManager"
 RequestExecutionLevel user
 SetCompressor /SOLID lzma
-BrandingText "Agent Title Manager"
+BrandingText "Agent Title Manager ${VERSION}"
 VIProductVersion "${VERSION}.0"
 VIAddVersionKey /LANG=2052 "ProductName" "Agent Title Manager"
 VIAddVersionKey /LANG=2052 "FileDescription" "Agent Title Manager 安装程序"
 VIAddVersionKey /LANG=2052 "FileVersion" "${VERSION}"
+VIAddVersionKey /LANG=2052 "ProductVersion" "${VERSION}"
 VIAddVersionKey /LANG=2052 "LegalCopyright" "Agent Title Manager contributors"
 
 !include "MUI2.nsh"

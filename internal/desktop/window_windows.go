@@ -6,6 +6,7 @@ import (
 	"os"
 	"path/filepath"
 	"slices"
+	"strings"
 	"sync/atomic"
 
 	"github.com/wailsapp/wails/v3/pkg/application"
@@ -16,6 +17,19 @@ import (
 var icon []byte
 
 const appName = "Agent Title Manager"
+
+//go:embed version.txt
+var defaultVersion string
+
+var buildVersion string
+
+func versionedAppName() string {
+	version := buildVersion
+	if version == "" {
+		version = strings.TrimSpace(defaultVersion)
+	}
+	return appName + " " + version
+}
 
 func Run(dir string, assets fs.FS, service *Service) error {
 	var primary atomic.Pointer[application.WebviewWindow]
@@ -38,7 +52,7 @@ func Run(dir string, assets fs.FS, service *Service) error {
 		},
 	})
 	window := app.Window.NewWithOptions(application.WebviewWindowOptions{
-		Title: appName, Width: 1080, Height: 780, MinWidth: 450, MinHeight: 450,
+		Title: versionedAppName(), Width: 1080, Height: 780, MinWidth: 450, MinHeight: 450,
 		URL: "/", Hidden: slices.Contains(os.Args[1:], "--background"),
 		BackgroundColour: application.NewRGB(23, 23, 25),
 	})
@@ -64,6 +78,6 @@ func setupTray(app *application.App, window *application.WebviewWindow) {
 	menu.AddSeparator()
 	menu.Add("退出").OnClick(func(_ *application.Context) { app.Quit() })
 	tray := app.SystemTray.New().SetIcon(icon).SetMenu(menu)
-	tray.SetTooltip(appName)
+	tray.SetTooltip(versionedAppName())
 	tray.OnClick(func() { show(window) })
 }

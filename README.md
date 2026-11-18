@@ -10,9 +10,15 @@ Windows 桌面应用，在本机管理 Codex、Claude、Pi 等 Agent 的自动�
 2. 在“Agent 插件”启用对应适配器。若发现受支持的旧版自动命名插件，按界面确认接管。Codex 若要求核准 Hook，请在 Codex 中运行 `/hooks`。
 3. 若使用 Orca，按需启用同步。处理记录提供失败重试及受保护标题的手动采用操作。
 
-关闭窗口后应用继续驻留托盘。可通过托盘菜单或“模型与规则”的“退出桌面应用”退出。Windows 登录启动默认关闭，可在同一页面打开。
+Claude 完成第一轮对话后会在后台生成标题。候选就绪后，发送下一条消息或重新打开该会话时应用。
+
+接管旧插件后，可在“Agent 插件”中对相应插件选择“恢复”，撤销接管。
+
+关闭窗口后应用继续驻留托盘。可通过托盘菜单或“模型与规则”的“退出桌面应用”退出。首次安装时 Windows 登录启动关闭，可在同一页面打开。
 
 升级桌面程序前先从托盘退出。重新打开后，“Agent 插件”会显示可用的随包更新，选择“更新至”即可升级对应内置适配器。
+
+从 0.1.0 升级到 0.1.1 时，可直接在原安装目录覆盖安装。打开后可在窗口标题或托盘提示中核对版本，Windows“已安装的应用”中也会显示对应版本。
 
 卸载前请在“Agent 插件”停用适配器，并用“恢复”撤销旧版插件接管，再从托盘退出。应用运行中、插件仍启用或旧版接管待恢复时，卸载程序会暂停。卸载成功后保留 `%LOCALAPPDATA%\AgentTitleManager` 中的用户数据。
 
@@ -24,7 +30,7 @@ Windows 桌面应用，在本机管理 Codex、Claude、Pi 等 Agent 的自动�
 .\packaging\build.ps1 -NodeDistribution C:\tools\node-win-x64 -MakeNsis C:\tools\nsis\makensis.exe
 ```
 
-脚本执行前端构建和 Go 测试，将桌面可执行文件、bridge、内置插件和 Node.js 组装至 `out\windows-x64-*`，生成 `out\AgentTitleManager-0.1.0-windows-x64-setup.exe`。当前构建产物未签名。
+脚本执行前端构建和 Go 测试，将桌面可执行文件、bridge、内置插件和 Node.js 组装至 `out\windows-x64-*`，默认生成 `out\AgentTitleManager-0.1.1-windows-x64-setup.exe`。默认版本从 `internal/desktop/version.txt` 读取。当前构建产物未签名。
 
 测试可为桌面应用和 bridge 同时设置绝对路径 `ATM_DATA_DIR`，隔离 SQLite、WebView2 数据及命名管道。验证安装程序时使用独立目录，例如 `setup.exe /S /NoIntegration /D=C:\temp\atm-sandbox`。插件操作仍须使用独立 Agent 配置与会话样本。
 

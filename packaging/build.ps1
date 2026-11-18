@@ -2,12 +2,15 @@
 param(
     [Parameter(Mandatory)][string]$NodeDistribution,
     [string]$MakeNsis = 'makensis.exe',
-    [string]$Version = '0.1.0',
+    [string]$Version,
     [switch]$NoInstaller
 )
 
 $ErrorActionPreference = 'Stop'
 $root = Split-Path $PSScriptRoot -Parent
+if (-not $PSBoundParameters.ContainsKey('Version')) {
+    $Version = (Get-Content -LiteralPath (Join-Path $root 'internal\desktop\version.txt') -Raw).Trim()
+}
 if ($Version -notmatch '^\d+\.\d+\.\d+$') { throw 'Version must use X.Y.Z.' }
 $node = (Resolve-Path -LiteralPath $NodeDistribution).Path
 foreach ($name in @('node.exe', 'LICENSE')) {
@@ -32,7 +35,8 @@ try {
     Invoke-Checked 'pnpm' @('--dir', 'frontend', 'install', '--frozen-lockfile')
     Invoke-Checked 'pnpm' @('--dir', 'frontend', 'build')
     Invoke-Checked 'go' @('test', './...')
-    Invoke-Checked 'go' @('build', '-trimpath', '-tags', 'production', '-ldflags', '-s -w -H windowsgui', '-o', (Join-Path $stage 'AgentTitleManager.exe'), './cmd/atm')
+    $desktopLinkFlags = "-s -w -H windowsgui -X github.com/yyxxd/agent-title-manager/internal/desktop.buildVersion=$Version"
+    Invoke-Checked 'go' @('build', '-trimpath', '-tags', 'production', '-ldflags', $desktopLinkFlags, '-o', (Join-Path $stage 'AgentTitleManager.exe'), './cmd/atm')
     Invoke-Checked 'go' @('build', '-trimpath', '-ldflags', '-s -w', '-o', (Join-Path $stage 'atm-bridge.exe'), './cmd/atm-bridge')
     foreach ($id in @('codex', 'claude', 'pi', 'example')) {
         Copy-Item -LiteralPath "plugins\$id" -Destination "$stage\plugins\$id" -Recurse
