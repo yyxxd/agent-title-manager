@@ -32,6 +32,7 @@ try {
     $env:CGO_ENABLED = '0'
     $stage = Join-Path $root "out\windows-x64-$Version-$([guid]::NewGuid().ToString('N').Substring(0, 8))"
     New-Item -ItemType Directory -Path (Join-Path $stage 'plugins') -Force | Out-Null
+    Invoke-Checked 'go' @('run', './packaging/windows-icon', '-check')
     Invoke-Checked 'pnpm' @('--dir', 'frontend', 'install', '--frozen-lockfile')
     Invoke-Checked 'pnpm' @('--dir', 'frontend', 'build')
     Invoke-Checked 'go' @('test', './...')

@@ -3,11 +3,16 @@ module github.com/yyxxd/agent-title-manager
 go 1.26.0
 
 require (
+	github.com/tc-hib/winres v0.3.1
 	golang.org/x/sys v0.48.0
 	modernc.org/sqlite v1.44.3
 )
 
-require github.com/go-ole/go-ole v1.3.0 // indirect
+require (
+	github.com/go-ole/go-ole v1.3.0 // indirect
+	github.com/nfnt/resize v0.0.0-20180221191011-83c6a9932646 // indirect
+	golang.org/x/image v0.45.0 // indirect
+)
 
 require (
 	github.com/Microsoft/go-winio v0.6.2
