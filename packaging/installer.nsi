@@ -51,6 +51,7 @@ Section "Agent Title Manager"
   SetErrorLevel 2
   Abort
 runtimeFound:
+  Call RequireClosedForUpgrade
   SetShellVarContext current
   SetOutPath "$INSTDIR"
   File "${PAYLOAD}\AgentTitleManager.exe"
@@ -72,6 +73,17 @@ runtimeFound:
   WriteRegDWORD HKCU "${UNINSTALL_KEY}" "NoRepair" 1
 done:
 SectionEnd
+
+Function RequireClosedForUpgrade
+  IfFileExists "$INSTDIR\AgentTitleManager.exe" 0 ready
+  ExecWait '"$INSTDIR\AgentTitleManager.exe" --check-uninstall' $0
+  StrCmp $0 2 running ready
+running:
+  MessageBox MB_ICONEXCLAMATION|MB_OK "请先从托盘退出 Agent Title Manager，再安装新版本。" /SD IDOK
+  SetErrorLevel 4
+  Quit
+ready:
+FunctionEnd
 
 Section "Uninstall"
   Call un.RequireReady
