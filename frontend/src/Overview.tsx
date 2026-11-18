@@ -14,11 +14,13 @@ const usageAgentName = (agent: string) => agent === 'test' ? '连接测试' : ag
 const missingHint = '至少一项 Token 用量未记录的请求次数';
 
 export function Overview({ revision }: { revision: number }) {
+  const presets = datePresets(localDate());
   const [selection, setSelection] = useState<{ range: DateRange; preset?: string }>(() => {
-    const today = datePresets(localDate())[0];
+    const today = presets[0];
     return { range: today.range, preset: today.label };
   });
-  const { range, preset } = selection;
+  const { preset } = selection;
+  const range = presets.find(({ label }) => label === preset)?.range ?? selection.range;
   const [refresh, setRefresh] = useState(0);
   const [agent, setAgent] = useState('');
   const { value, error } = useLoad(() => rpc<Daily>('stats.range', range), `${range.start}:${range.end}:${refresh}:${revision}`);
