@@ -146,10 +146,18 @@ func fixtureClaude(args []string, mode string) int {
 	if !slices.Contains(args, "--safe-mode") || slices.Contains(args, "--bare") || os.Getenv("ATM_CLAUDE_TITLE_WORKER") != "1" {
 		return 96
 	}
+	source := slices.Index(args, "--setting-sources")
+	if source < 0 || source+1 >= len(args) || args[source+1] != "" {
+		return 96
+	}
 	if slices.Contains(args, "auth") {
 		if mode == "noauth" {
 			fmt.Println(`{"loggedIn":false,"authMethod":"none","apiProvider":"firstParty"}`)
 			return 1
+		}
+		if mode == "injected-oauth" {
+			fmt.Println(`{"loggedIn":true,"authMethod":"oauth_token","apiProvider":"firstParty"}`)
+			return 0
 		}
 		fmt.Println(`{"loggedIn":true,"authMethod":"claude.ai","apiProvider":"firstParty"}`)
 		return 0

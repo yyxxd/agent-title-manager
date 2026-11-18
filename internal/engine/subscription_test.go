@@ -214,13 +214,15 @@ func TestClaudeSubscriptionPreflightAndTimeout(t *testing.T) {
 	s := Settings{ClaudeModel: "fixture-claude", ClaudeEffort: "max"}
 	started := 0
 	start := func() error { started++; return nil }
-	mode("noauth")
-	r := e.runClaude(t.Context(), s, "fixture", nil, start)
-	if started != 0 || r.failure != failureClaudeLogin || r.confirmed {
-		t.Fatal(r, started)
+	for _, auth := range []string{"noauth", "injected-oauth"} {
+		mode(auth)
+		r := e.runClaude(t.Context(), s, "fixture", nil, start)
+		if started != 0 || r.failure != failureClaudeLogin || r.confirmed {
+			t.Fatal(auth, r, started)
+		}
 	}
 	mode("ambiguous")
-	r = e.runClaude(t.Context(), s, "fixture", nil, start)
+	r := e.runClaude(t.Context(), s, "fixture", nil, start)
 	if started != 1 || r.status != "failed" || r.confirmed || r.usage.Input != nil {
 		t.Fatal(r, started)
 	}

@@ -31,6 +31,7 @@ func claudeExecutable() (string, error) {
 	return "", exec.ErrNotFound
 }
 
+// 空设置源排除用户配置注入的环境变量，CLI 仍可读取自身的原生登录。
 var claudeBaseArgs = []string{"--safe-mode", "--setting-sources", "",
 	"--settings", `{"disableAllHooks":true,"disableClaudeAiConnectors":true,"autoMemoryEnabled":false}`}
 
@@ -76,8 +77,8 @@ func claudeAuth(ctx context.Context, binary, dir string) modelResult {
 	if out.truncated || json.Unmarshal(out.Bytes(), &status) != nil || status.LoggedIn == nil {
 		return modelResult{status: "failed", message: "此版本无法确认 Claude Code 的原生订阅登录"}
 	}
-	if err == nil && *status.LoggedIn && status.Provider == "firstParty" &&
-		(status.Method == "claude.ai" || status.Method == "oauth_token") {
+	// oauth_token 也可能来自用户设置，只有 claude.ai 表示 CLI 原生登录。
+	if err == nil && *status.LoggedIn && status.Provider == "firstParty" && status.Method == "claude.ai" {
 		return modelResult{}
 	}
 	return modelResult{status: "failed", message: "隔离模式下未检测到 Claude Code 的原生订阅登录，请在原版 CLI 检查登录",
