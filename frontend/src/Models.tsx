@@ -169,7 +169,6 @@ function DesktopPreferences({ appearance }: { appearance: AppearanceControl }) {
       try {
         const persisted = await rpc<Preferences>('desktop.startup', { enabled: next });
         setStartup(persisted.startup);
-        return '开机启动设置已更新。';
       } catch (error) {
         setStartup(enabled);
         throw error;
@@ -180,7 +179,7 @@ function DesktopPreferences({ appearance }: { appearance: AppearanceControl }) {
   return <Section title="桌面">
     <div className="settings-rows">
       <AppearanceRow {...appearance} />
-      {value?.startupAvailable && <ModelSwitch checked={enabled} busy={action.busy} onChange={toggle}>登录 Windows 后在托盘运行</ModelSwitch>}
+      {value?.startupAvailable && <ModelSwitch checked={enabled} busy={action.busy} onChange={toggle}>开机自启</ModelSwitch>}
       <div className="setting-row"><span>后台运行</span><button type="button" disabled={quit.busy} onClick={() => void quit.run(() => rpc<void>('desktop.quit'))}>退出桌面应用</button></div>
       <Status error={error ?? action.error ?? quit.error} message={action.message} />
     </div>
