@@ -1,45 +1,106 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { errorText, rpc } from './rpc';
-import { Status, useAction } from './ui';
+import { toast } from './toast';
+import { StatusNotice, useAction } from './ui';
 
-const modes = [['system', '跟随系统'], ['light', '浅色'], ['dark', '深色']] as const;
-type Mode = (typeof modes)[number][0];
-type State = { mode: Mode; theme: 'light' | 'dark'; revision: number };
+export const appearanceModes = [
+  ['system', '跟随系统'],
+  ['light', '浅色'],
+  ['dark', '深色'],
+] as const;
+
+export type AppearanceMode = (typeof appearanceModes)[number][0];
+export type AppearanceState = { mode: AppearanceMode; theme: 'light' | 'dark'; revision: number };
+
+const modeLabels: Record<AppearanceMode, string> = {
+  system: '跟随系统',
+  light: '浅色',
+  dark: '深色',
+};
 
 export function useAppearance() {
-  const [state, setState] = useState<State>();
+  const [state, setState] = useState<AppearanceState>();
   const [loadError, setLoadError] = useState<string>();
   const latest = useRef(0);
-  const accept = useCallback((next: State) => {
+
+  const accept = useCallback((next: AppearanceState) => {
     if (next.revision < latest.current) return;
     latest.current = next.revision;
     document.documentElement.dataset.theme = next.theme;
     setState(next);
     setLoadError(undefined);
   }, []);
+
   useEffect(() => {
-    const stop = window.wails?.Events?.On('desktop:appearance', ({ data }) => accept(data as State));
-    void rpc<State>('desktop.appearance.get').then(accept, (error) => setLoadError(errorText(error)));
+    const stop = window.wails?.Events?.On('desktop:appearance', ({ data }) => accept(data as AppearanceState));
+    void rpc<AppearanceState>('desktop.appearance.get').then(accept, (error) => setLoadError(errorText(error)));
     return stop;
   }, [accept]);
-  return { state, accept, loadError };
+
+  const setMode = useCallback(
+    async (mode: AppearanceMode, notify = false) => {
+      const next = await rpc<AppearanceState>('desktop.appearance.set', { mode });
+      accept(next);
+      if (notify) toast.success(`外观已设为${modeLabels[mode]}`);
+      return next;
+    },
+    [accept],
+  );
+
+  const toggleLightDark = useCallback(async () => {
+    const currentTheme = state?.theme ?? (document.documentElement.dataset.theme === 'dark' ? 'dark' : 'light');
+    const nextMode: AppearanceMode = currentTheme === 'dark' ? 'light' : 'dark';
+    try {
+      await setMode(nextMode);
+      toast.success(`已切换为${nextMode === 'dark' ? '深色' : '浅色'}外观`);
+    } catch (error) {
+      toast.error(errorText(error));
+    }
+  }, [setMode, state?.theme]);
+
+  return { state, accept, setMode, toggleLightDark, loadError };
 }
 
 export type AppearanceControl = ReturnType<typeof useAppearance>;
 
-export function AppearanceRow({ state, accept, loadError }: AppearanceControl) {
+export function AppearanceRow({ state, setMode, loadError }: AppearanceControl) {
   const action = useAction();
-  return <>
-    <fieldset className="setting-row appearance-row" disabled={!state} aria-busy={action.busy}>
-      <span id="appearance-label">外观</span>
-      <div className="segmented" role="radiogroup" aria-labelledby="appearance-label">
-        {modes.map(([mode, label]) => <label key={mode}>
-          <input type="radio" name="appearance" value={mode} checked={state?.mode === mode}
-            onChange={() => { if (!action.busy) void action.run(async () => accept(await rpc<State>('desktop.appearance.set', { mode })), { success: 'silent', failure: 'toast' }); }} />
-          <span>{label}</span>
-        </label>)}
+
+  return (
+    <>
+      <div className="setting-row">
+        <div className="setting-copy">
+          <span className="setting-title" id="appearance-label">
+            主题外观
+          </span>
+          <span className="setting-desc">默认跟随 Windows 系统深浅色设置</span>
+        </div>
+        <div className="segmented" role="radiogroup" aria-labelledby="appearance-label">
+          {appearanceModes.map(([mode, label]) => (
+            <button
+              key={mode}
+              type="button"
+              role="radio"
+              aria-checked={state?.mode === mode}
+              className={`seg-btn ${state?.mode === mode ? 'active' : ''}`}
+              disabled={!state || action.busy}
+              onClick={() => {
+                if (state?.mode === mode || action.busy) return;
+                void action.run(async () => {
+                  await setMode(mode, true);
+                }, { success: 'silent', failure: 'toast' });
+              }}
+            >
+              {label}
+            </button>
+          ))}
+        </div>
       </div>
-    </fieldset>
-    <Status error={loadError} />
-  </>;
+      {loadError && (
+        <div style={{ padding: '0 18px 14px' }}>
+          <StatusNotice error={loadError} />
+        </div>
+      )}
+    </>
+  );
 }

@@ -81,16 +81,19 @@ export type Plugin = {
   id: string;
   name: string;
   version: string;
+  availableVersion?: string;
   enabled: boolean;
   status: string;
   kind: string;
   detail?: string;
+  entryPath?: string;
 };
 
 export type Attempt = TokenUsage & {
   provider: string;
   model: string;
   actualModel?: string;
+  source?: string;
   status: string;
   startedAt?: string;
   requestedTier?: string;
@@ -112,11 +115,11 @@ export type RecordItem = {
 
 export type Preferences = { startup: boolean; startupAvailable: boolean };
 
-const agents: Record<string, string> = { codex: 'Codex', claude: 'Claude', pi: 'Pi', orca: 'Orca' };
-export const agentName = (id: string) => Object.hasOwn(agents, id) ? agents[id] : id;
-export const providerName = (id: string) => id === 'api' ? '自定义 API' : id === 'claude' ? 'Claude Code' : agentName(id);
+const agents: Record<string, string> = { codex: 'Codex', claude: 'Claude Code', pi: 'Pi', orca: 'Orca' };
+export const agentName = (id: string) => (Object.hasOwn(agents, id) ? agents[id] : id);
+export const providerName = (id: string) => (id === 'api' ? '自定义 API' : id === 'claude' ? 'Claude Code' : agentName(id));
 export const num = (value: number) => new Intl.NumberFormat('zh-CN').format(value);
-export const token = (value?: number | null, missing = '—') => typeof value === 'number' ? num(value) : missing;
+export const token = (value?: number | null, missing = '未回报') => (typeof value === 'number' ? num(value) : missing);
 export const formatTime = (value: string) => new Date(value).toLocaleString('zh-CN', { hour12: false });
 
 export function localDate() {
