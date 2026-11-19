@@ -25,6 +25,24 @@ function setProgress(next?: Progress) { progress = next; emit(); }
 const getState = () => state;
 const getProgress = () => progress;
 
+const dismissedKey = 'atm.update.dismissedVersion';
+
+function readDismissedVersion(): string | undefined {
+  try {
+    return localStorage.getItem(dismissedKey) ?? undefined;
+  } catch {
+    return undefined;
+  }
+}
+
+function rememberDismissedVersion(version: string) {
+  try {
+    localStorage.setItem(dismissedKey, version);
+  } catch {
+    // 存储不可用时只影响本次运行的再次弹出，不阻断更新流程。
+  }
+}
+
 // Called once at app root. Keeps subscriptions alive regardless of page.
 export function useUpdateEvents() {
   useEffect(() => {
@@ -59,6 +77,7 @@ export function UpdateSection() {
   const [loaded, setLoaded] = useState(false);
   const [confirm, setConfirm] = useState(false);
   const [notesOpen, setNotesOpen] = useState(false);
+  const dismissedVersion = useRef(readDismissedVersion());
   const checking = useAction();
   const installing = useAction();
 
@@ -104,8 +123,16 @@ export function UpdateSection() {
   const available = view?.available;
 
   useEffect(() => {
-    if (available) setNotesOpen(true);
+    if (available && available.version !== dismissedVersion.current) setNotesOpen(true);
   }, [available?.version]);
+
+  function later() {
+    if (available) {
+      dismissedVersion.current = available.version;
+      rememberDismissedVersion(available.version);
+    }
+    setNotesOpen(false);
+  }
 
   return <Section title="软件更新">
     <div className="settings-rows update-rows">
@@ -135,7 +162,7 @@ export function UpdateSection() {
       <Status error={view?.error ?? checking.error ?? installing.error} />
     </div>
     {available && notesOpen && <UpdateNotesDialog available={available}
-      onLater={() => setNotesOpen(false)} onInstall={() => { setNotesOpen(false); setConfirm(true); }} />}
+      onLater={later} onInstall={() => { setNotesOpen(false); setConfirm(true); }} />}
     {confirm && <ConfirmDialog title="下载并安装更新" confirmLabel="确认安装" busy={installing.busy}
       error={installing.error} onCancel={() => setConfirm(false)} onConfirm={install}>
       <p>将下载并安装 <strong>{available?.version}</strong>。安装会在应用退出后自动进行，完成后重新打开。</p>
