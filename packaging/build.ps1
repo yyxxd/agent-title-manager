@@ -3,6 +3,7 @@ param(
     [Parameter(Mandatory)][string]$NodeDistribution,
     [string]$MakeNsis = 'makensis.exe',
     [string]$Version,
+    [string]$UpdatePublicKey = '',
     [switch]$NoInstaller
 )
 
@@ -36,9 +37,10 @@ try {
     Invoke-Checked 'pnpm' @('--dir', 'frontend', 'install', '--frozen-lockfile')
     Invoke-Checked 'pnpm' @('--dir', 'frontend', 'build')
     Invoke-Checked 'go' @('test', './...')
-    $desktopLinkFlags = "-s -w -H windowsgui -X github.com/yyxxd/agent-title-manager/internal/desktop.buildVersion=$Version"
+    $desktopLinkFlags = "-s -w -H windowsgui -X github.com/yyxxd/agent-title-manager/internal/desktop.buildVersion=$Version -X github.com/yyxxd/agent-title-manager/internal/desktop.updatePublicKey=$UpdatePublicKey"
     Invoke-Checked 'go' @('build', '-trimpath', '-tags', 'production', '-ldflags', $desktopLinkFlags, '-o', (Join-Path $stage 'AgentTitleManager.exe'), './cmd/atm')
     Invoke-Checked 'go' @('build', '-trimpath', '-ldflags', '-s -w', '-o', (Join-Path $stage 'atm-bridge.exe'), './cmd/atm-bridge')
+    Invoke-Checked 'go' @('build', '-trimpath', '-ldflags', '-s -w', '-o', (Join-Path $stage 'atm-update.exe'), './cmd/atm-update')
     foreach ($id in @('codex', 'claude', 'pi', 'example')) {
         Copy-Item -LiteralPath "plugins\$id" -Destination "$stage\plugins\$id" -Recurse
     }
