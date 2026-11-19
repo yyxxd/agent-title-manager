@@ -58,6 +58,14 @@ jobs:
           Expand-Archive $zip -DestinationPath node-dist
           Remove-Item $zip, SHASUMS256.txt
 
+      - name: Install NSIS
+        shell: pwsh
+        run: |
+          choco install nsis --no-progress -y
+          $nsis = 'C:\Program Files (x86)\NSIS\makensis.exe'
+          if (-not (Test-Path -LiteralPath $nsis)) { throw 'NSIS 安装失败：未找到 makensis.exe。' }
+          "NSIS_EXE=$nsis" >> $env:GITHUB_ENV
+
       - name: Build Windows x64 bundle and installer
         shell: pwsh
         env:
@@ -67,7 +75,7 @@ jobs:
           # The archive expands to node-vX.Y.Z-win-x64; build.ps1 needs that inner directory.
           $node = Join-Path $pwd 'node-dist/node-v22.14.0-win-x64'
           if (-not (Test-Path (Join-Path $node 'node.exe'))) { throw 'Node.js 解压目录缺少 node.exe。' }
-          .\packaging\build.ps1 -NodeDistribution $node -Version $version -UpdatePublicKey $env:UPDATE_PUBLIC_KEY
+          .\packaging\build.ps1 -NodeDistribution $node -Version $version -UpdatePublicKey $env:UPDATE_PUBLIC_KEY -MakeNsis $env:NSIS_EXE
 
       - name: Sign update manifest
         shell: pwsh
