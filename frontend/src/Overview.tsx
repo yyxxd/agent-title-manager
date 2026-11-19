@@ -27,6 +27,7 @@ type DatePreset = 'today' | '7d' | 'all' | 'custom';
 const agentColors: Record<string, string> = {
   codex: '#2563eb',
   claude: '#d97706',
+  antigravity: '#06b6d4',
   pi: '#10b981',
   orca: '#6366f1',
 };
@@ -34,6 +35,7 @@ const agentColors: Record<string, string> = {
 const agentDescriptions: Record<string, string> = {
   codex: 'Codex',
   claude: 'Claude Code',
+  antigravity: 'Antigravity',
   pi: 'Pi',
 };
 

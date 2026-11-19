@@ -43,6 +43,13 @@ export function AgentIcon({ id, size = 22 }: { id: string; size?: number }) {
       </svg>
     );
   }
+  if (id === 'antigravity') {
+    return (
+      <svg width={size} height={size} viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">
+        <path d="M12 2.8C14.15 2.8 17.35 10.35 20.55 18.75C21.05 20.1 20.1 21.45 18.65 21.1C16.5 20.55 14.95 11.4 12 11.4C9.05 11.4 7.5 20.55 5.35 21.1C3.9 21.45 2.95 20.1 3.45 18.75C6.65 10.35 9.85 2.8 12 2.8Z" />
+      </svg>
+    );
+  }
   if (id === 'pi') {
     return (
       <svg width={size} height={size} viewBox="145 145 510 510" aria-hidden="true">
