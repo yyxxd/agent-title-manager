@@ -2,7 +2,7 @@ import { ChevronDown, RefreshCw } from 'lucide-react';
 import { useEffect, useId, useRef, useState, type Dispatch, type SetStateAction } from 'react';
 import { ModelChoices, PopupClose } from './ModelDiscovery';
 import { providerName, rpc, type NativeProvider, type Settings, type SubscriptionCatalog, type SubscriptionModel } from './rpc';
-import { Status, useLoad } from './ui';
+import { InlineActionError, Status, useLoad } from './ui';
 
 export type NativeChoice = { model: string; effort: string };
 
@@ -43,11 +43,11 @@ export function useSubscriptionDraft(settings: Settings, setSettings: Dispatch<S
   function nativeDraft(testing = false) {
     if (provider === 'api' || !choice) return settings;
     if (catalog.value?.authRequired) {
-      if (testing) throw new Error(catalog.value.notice ?? '未登录');
+      if (testing) throw new InlineActionError(catalog.value.notice ?? '未登录');
       return settings;
     }
-    if (!choice.model) throw new Error('请先选择命名模型。');
-    if (catalog.value && !selected) throw new Error('当前模型已不在 CLI 目录中，请重新选择。');
+    if (!choice.model) throw new InlineActionError('请先选择命名模型。');
+    if (catalog.value && !selected) throw new InlineActionError('当前模型已不在 CLI 目录中，请重新选择。');
     if (!selected || !choice.effort) return settings;
     return withNativeChoice(settings, provider, { ...choice, effort: effortFor(selected, choice.effort) });
   }

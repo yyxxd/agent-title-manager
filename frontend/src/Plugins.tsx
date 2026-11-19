@@ -28,7 +28,7 @@ export function Plugins() {
     setTransfer(null);
     reload();
     return '插件状态已更新。';
-  });
+  }, { success: 'toast', failure: confirm ? 'inline' : 'toast' });
   const items = value?.items ?? [];
   return <>
     <header className="page-head"><h1>Agent 插件</h1>

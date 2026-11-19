@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState, type ReactNode } from 'react';
 import { errorText } from './rpc';
+import { toast } from './toast';
 
 export function Section({ title, children, action }: {
   title: string; children: ReactNode; action?: ReactNode;
@@ -58,18 +59,31 @@ export function useLoad<T>(load: () => Promise<T>, key: string | number): { valu
   return state?.key === key ? { value: state.value, error: state.error } : {};
 }
 
+// 需要用户就地修正的错误，仍留在按钮或对话框附近，不转成 Toast。
+export class InlineActionError extends Error {}
+
+type ActionFeedback = {
+  success?: 'toast' | 'inline' | 'silent';
+  failure?: 'toast' | 'inline';
+};
+
 export function useAction() {
   const [status, setStatus] = useState<{ busy: boolean; error?: string; message?: string }>({ busy: false });
   return {
     ...status,
     reset: () => setStatus({ busy: false }),
-    async run(action: () => Promise<string | void>) {
+    async run(action: () => Promise<string | void>, feedback: ActionFeedback = {}) {
       setStatus({ busy: true });
       try {
         const message = await action();
-        setStatus({ busy: false, message: message || undefined });
+        const mode = feedback.success ?? 'inline';
+        setStatus({ busy: false, message: mode === 'inline' ? message || undefined : undefined });
+        if (mode === 'toast' && message) toast.success(message);
       } catch (error) {
-        setStatus({ busy: false, error: errorText(error) });
+        const text = errorText(error);
+        const mode = error instanceof InlineActionError ? 'inline' : feedback.failure ?? 'inline';
+        setStatus({ busy: false, error: mode === 'inline' ? text : undefined });
+        if (mode === 'toast') toast.error(text);
       }
     },
   };

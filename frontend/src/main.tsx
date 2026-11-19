@@ -5,9 +5,11 @@ import { Overview } from './Overview';
 import { Models } from './Models';
 import { Plugins } from './Plugins';
 import { Records } from './Records';
+import { Toaster } from './toast';
 import './style.css';
 import './refinement.css';
 import './controls.css';
+import './toast.css';
 
 const pages = [
   ['overview', '概览'],
@@ -36,6 +38,7 @@ function App() {
       {page === 'plugins' && <Plugins />}
       {page === 'records' && <Records />}
     </main>
+    <Toaster />
   </div>;
 }
 

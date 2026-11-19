@@ -4,7 +4,7 @@ import { ApiFields } from './ModelApiFields';
 import { ModelSwitch } from './ModelSwitch';
 import { nativeChoice, SubscriptionFields, useSubscriptionDraft } from './SubscriptionFields';
 import { rpc, type Preferences, type Settings } from './rpc';
-import { Empty, Section, Status, useAction, useLoad } from './ui';
+import { Empty, InlineActionError, Section, Status, useAction, useLoad } from './ui';
 import './models.css';
 
 export function Models({ appearance }: { appearance: AppearanceControl }) {
@@ -95,7 +95,7 @@ function useModelDraft(initial: Settings) {
       try {
         const { hasApiKey: _, ...payload } = nativeDraft();
         if (addressChanged && saved.hasApiKey && !keyValue && !removeKey) {
-          throw new Error('API 地址已更改，请输入新密钥或开启「保存时移除旧密钥」。');
+          throw new InlineActionError('API 地址已更改，请输入新密钥或开启「保存时移除旧密钥」。');
         }
         const persisted = await rpc<Settings>('settings.save', { ...payload, apiKey });
         setSettings(persisted);
@@ -108,17 +108,17 @@ function useModelDraft(initial: Settings) {
         if (removeKey) setRemoveKey(false);
         throw error;
       }
-    });
+    }, { success: 'toast', failure: 'toast' });
   }
   function test() {
     return actions.run(async () => {
       const { provider, codexModel, codexEffort, claudeModel, claudeEffort, fast, maxTitleLength, apiProtocol, apiBaseUrl, apiModel } = nativeDraft(true);
-      if (provider === 'api' && (!apiBaseUrl.trim() || !apiModel.trim())) throw new Error('请先填写 API 地址和模型。');
+      if (provider === 'api' && (!apiBaseUrl.trim() || !apiModel.trim())) throw new InlineActionError('请先填写 API 地址和模型。');
       const target = provider === 'api' ? { apiProtocol, apiBaseUrl, apiModel, apiKey } : { codexModel, codexEffort, claudeModel, claudeEffort, fast };
       const result = await rpc<{ ok: boolean; model: string }>('providers.test', { provider, maxTitleLength, ...target });
       if (!result.ok) throw new Error('连接测试未通过。');
       return result.model ? `连接成功 · ${result.model}` : '连接成功。';
-    });
+    }, { success: 'toast', failure: 'toast' });
   }
   return { settings, edit, editNative, save, test, actions, credentials, catalog, selected };
 }
@@ -173,15 +173,15 @@ function DesktopPreferences({ appearance }: { appearance: AppearanceControl }) {
         setStartup(enabled);
         throw error;
       }
-    });
+    }, { success: 'silent', failure: 'toast' });
   }
 
   return <Section title="桌面">
     <div className="settings-rows">
       <AppearanceRow {...appearance} />
       {value?.startupAvailable && <ModelSwitch checked={enabled} busy={action.busy} onChange={toggle}>开机自启</ModelSwitch>}
-      <div className="setting-row"><span>后台运行</span><button type="button" disabled={quit.busy} onClick={() => void quit.run(() => rpc<void>('desktop.quit'))}>退出桌面应用</button></div>
-      <Status error={error ?? action.error ?? quit.error} message={action.message} />
+      <div className="setting-row"><span>后台运行</span><button type="button" disabled={quit.busy} onClick={() => void quit.run(() => rpc<void>('desktop.quit'), { success: 'silent', failure: 'toast' })}>退出桌面应用</button></div>
+      <Status error={error ?? action.error ?? quit.error} />
     </div>
   </Section>;
 }

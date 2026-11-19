@@ -58,7 +58,7 @@ export function Records() {
       setConfirm('');
       setRefresh((value) => value + 1);
       return '同步已排队。';
-    });
+    }, { success: 'toast', failure: confirm ? 'inline' : 'toast' });
   }
 
   return <>
