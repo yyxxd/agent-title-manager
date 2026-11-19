@@ -24,7 +24,21 @@ func TestMain(m *testing.M) {
 
 func installSubscriptionFixtures(t *testing.T) func(string) {
 	t.Helper()
-	root := t.TempDir()
+	root, err := os.MkdirTemp("", "atm-subscription-fixture-")
+	if err != nil {
+		t.Fatal(err)
+	}
+	// Windows 在进程退出后仍会短暂持有映像句柄，清理失败不代表测试逻辑失败。
+	t.Cleanup(func() {
+		var err error
+		for attempt := 0; attempt < 100; attempt++ {
+			if err = os.RemoveAll(root); err == nil {
+				return
+			}
+			time.Sleep(50 * time.Millisecond)
+		}
+		t.Logf("无法清理测试夹具目录 %s: %v", root, err)
+	})
 	original, err := os.Executable()
 	if err != nil {
 		t.Fatal(err)
