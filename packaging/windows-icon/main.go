@@ -3,8 +3,11 @@ package main
 
 import (
 	"bytes"
+	"encoding/binary"
+	"errors"
 	"flag"
 	"fmt"
+	"image"
 	"image/png"
 	"log"
 	"os"
@@ -66,8 +69,69 @@ func save(path string, content []byte, check bool) error {
 	if err != nil {
 		return err
 	}
-	if !bytes.Equal(committed, content) {
+	// PNG 压缩字节随 Go 工具链变化，只比较解码后的图标像素。
+	if !bytes.Equal(committed, content) && !sameImages(iconImages(committed), iconImages(content)) {
 		return fmt.Errorf("%s is out of date. Run go generate ./cmd/atm", path)
 	}
 	return nil
+}
+
+var pngSignature = []byte("\x89PNG\r\n\x1a\n")
+
+// iconImages 提取 ICO 或资源对象里内嵌的 PNG 图标。压缩字节可能不同，像素必须一致。
+func iconImages(data []byte) []image.Image {
+	var images []image.Image
+	for {
+		index := bytes.Index(data, pngSignature)
+		if index < 0 {
+			return images
+		}
+		payload, rest, err := pngStream(data[index:])
+		var img image.Image
+		if err == nil {
+			img, err = png.Decode(bytes.NewReader(payload))
+		}
+		if err != nil {
+			data = data[index+len(pngSignature):]
+			continue
+		}
+		images = append(images, img)
+		data = rest
+	}
+}
+
+func pngStream(data []byte) ([]byte, []byte, error) {
+	for offset := len(pngSignature); offset+8 <= len(data); {
+		length := int(binary.BigEndian.Uint32(data[offset:]))
+		kind := string(data[offset+4 : offset+8])
+		end := offset + 8 + length + 4
+		if length < 0 || end > len(data) {
+			return nil, nil, errors.New("PNG 数据不完整")
+		}
+		if kind == "IEND" {
+			return data[:end], data[end:], nil
+		}
+		offset = end
+	}
+	return nil, nil, errors.New("PNG 数据缺少结尾")
+}
+
+func sameImages(left, right []image.Image) bool {
+	if len(left) != len(right) || len(left) == 0 {
+		return false
+	}
+	for i := range left {
+		bounds := left[i].Bounds()
+		if bounds != right[i].Bounds() {
+			return false
+		}
+		for y := bounds.Min.Y; y < bounds.Max.Y; y++ {
+			for x := bounds.Min.X; x < bounds.Max.X; x++ {
+				if left[i].At(x, y) != right[i].At(x, y) {
+					return false
+				}
+			}
+		}
+	}
+	return true
 }
