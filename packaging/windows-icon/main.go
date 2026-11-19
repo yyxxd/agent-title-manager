@@ -8,6 +8,7 @@ import (
 	"flag"
 	"fmt"
 	"image"
+	"image/color"
 	"image/png"
 	"log"
 	"os"
@@ -127,11 +128,18 @@ func sameImages(left, right []image.Image) bool {
 		}
 		for y := bounds.Min.Y; y < bounds.Max.Y; y++ {
 			for x := bounds.Min.X; x < bounds.Max.X; x++ {
-				if left[i].At(x, y) != right[i].At(x, y) {
+				if !sameColor(left[i].At(x, y), right[i].At(x, y)) {
 					return false
 				}
 			}
 		}
 	}
 	return true
+}
+
+// 不同颜色模型的 color.Color 实现不可直接比较，统一按 RGBA 通道值判断。
+func sameColor(left, right color.Color) bool {
+	lr, lg, lb, la := left.RGBA()
+	rr, rg, rb, ra := right.RGBA()
+	return lr == rr && lg == rg && lb == rb && la == ra
 }
