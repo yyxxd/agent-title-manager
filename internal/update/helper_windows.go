@@ -2,6 +2,7 @@ package update
 
 import (
 	"database/sql"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
@@ -30,14 +31,14 @@ func NewWindowsHelper(h Handoff) *WindowsHelper {
 // key is compiled into the helper and used to re-verify the handoff.
 func (h *WindowsHelper) Deps(publicKeyHex string) helperDeps {
 	return helperDeps{
-		verify:       func() error { return verifyHandoff(h.handoff, publicKeyHex) },
-		waitExit:     h.waitExit,
-		prepare:      prepareSnapshot,
-		install:      installNSIS,
-		checkVersion: checkInstalledVersion,
-		verifyData:   verifyDatabase,
+		verify:        func() error { return verifyHandoff(h.handoff, publicKeyHex) },
+		waitExit:      h.waitExit,
+		prepare:       prepareSnapshot,
+		install:       installNSIS,
+		checkVersion:  checkInstalledVersion,
+		verifyData:    verifyDatabase,
 		verifyVersion: verifyRegistryVersion,
-		restart:      restartApp,
+		restart:       restartApp,
 	}
 }
 
@@ -137,6 +138,13 @@ var installFiles = []string{
 	"LICENSE.txt", "OIL-CODEX-TITLE-LICENSE.txt", "Uninstall.exe",
 }
 
+type installBackupManifest struct {
+	Files   []string `json:"files"`
+	Plugins bool     `json:"plugins"`
+}
+
+const installBackupManifestName = "install-manifest.json"
+
 // prepareSnapshot makes a consistent SQLite snapshot and copies only the
 // known install files. A failed or corrupt DB snapshot aborts the update and
 // leaves the backup directory in place for diagnosis.
@@ -151,49 +159,105 @@ func prepareSnapshot(installDir, dataDir string) (func() error, error) {
 	if _, err := vacuumDatabase(filepath.Join(dataDir, "engine.sqlite3"), filepath.Join(backupDir, "engine.sqlite3")); err != nil {
 		return nil, fmt.Errorf("数据库一致备份失败（备份保留于 %s）: %w", backupDir, err)
 	}
+	manifest := installBackupManifest{}
 	for _, name := range installFiles {
 		source := filepath.Join(installDir, name)
 		if _, err := os.Stat(source); errors.Is(err, os.ErrNotExist) {
 			continue
+		} else if err != nil {
+			return nil, err
 		}
 		if err := copyFile(source, filepath.Join(backupDir, "install", name)); err != nil {
 			return nil, err
 		}
+		manifest.Files = append(manifest.Files, name)
 	}
 	plugins := filepath.Join(installDir, "plugins")
 	if _, err := os.Stat(plugins); err == nil {
 		if err := copyTree(plugins, filepath.Join(backupDir, "install", "plugins")); err != nil {
 			return nil, err
 		}
+		manifest.Plugins = true
+	} else if !errors.Is(err, os.ErrNotExist) {
+		return nil, err
+	}
+	manifestData, err := json.Marshal(manifest)
+	if err != nil {
+		return nil, err
+	}
+	if err := os.WriteFile(filepath.Join(backupDir, installBackupManifestName), manifestData, 0600); err != nil {
+		return nil, err
 	}
 	return func() error { return restoreInstallFiles(installDir, backupDir) }, nil
 }
 
-// restoreInstallFiles overwrites only the files we backed up and verifies
-// each one exists afterwards.
+// restoreInstallFiles restores the files recorded in the backup and removes
+// known files and plugins introduced by the failed update.
 func restoreInstallFiles(installDir, backupDir string) error {
 	source := filepath.Join(backupDir, "install")
+	manifest, err := readInstallBackupManifest(source, backupDir)
+	if err != nil {
+		return err
+	}
+	present := make(map[string]bool, len(manifest.Files))
+	for _, name := range manifest.Files {
+		present[name] = true
+	}
 	for _, name := range installFiles {
 		from := filepath.Join(source, name)
-		if _, err := os.Stat(from); errors.Is(err, os.ErrNotExist) {
-			continue
-		}
-		if err := copyFile(from, filepath.Join(installDir, name)); err != nil {
+		to := filepath.Join(installDir, name)
+		if present[name] {
+			if err := copyFile(from, to); err != nil {
+				return err
+			}
+		} else if err := os.Remove(to); err != nil && !errors.Is(err, os.ErrNotExist) {
 			return err
 		}
 	}
-	plugins := filepath.Join(source, "plugins")
-	if _, err := os.Stat(plugins); err == nil {
-		if err := copyTree(plugins, filepath.Join(installDir, "plugins")); err != nil {
+	targetPlugins := filepath.Join(installDir, "plugins")
+	if manifest.Plugins {
+		if err := os.RemoveAll(targetPlugins); err != nil {
 			return err
 		}
+		if err := copyTree(filepath.Join(source, "plugins"), targetPlugins); err != nil {
+			return err
+		}
+	} else if err := os.RemoveAll(targetPlugins); err != nil {
+		return err
 	}
-	for _, name := range installFiles {
+	for _, name := range manifest.Files {
 		if _, err := os.Stat(filepath.Join(installDir, name)); err != nil {
 			return fmt.Errorf("恢复后缺少 %s: %w", name, err)
 		}
 	}
 	return nil
+}
+
+func readInstallBackupManifest(source, backupDir string) (installBackupManifest, error) {
+	var manifest installBackupManifest
+	data, err := os.ReadFile(filepath.Join(backupDir, installBackupManifestName))
+	if err == nil {
+		if err := json.Unmarshal(data, &manifest); err != nil {
+			return manifest, err
+		}
+		return manifest, nil
+	}
+	if !errors.Is(err, os.ErrNotExist) {
+		return manifest, err
+	}
+	for _, name := range installFiles {
+		if _, err := os.Stat(filepath.Join(source, name)); err == nil {
+			manifest.Files = append(manifest.Files, name)
+		} else if !errors.Is(err, os.ErrNotExist) {
+			return manifest, err
+		}
+	}
+	if _, err := os.Stat(filepath.Join(source, "plugins")); err == nil {
+		manifest.Plugins = true
+	} else if !errors.Is(err, os.ErrNotExist) {
+		return manifest, err
+	}
+	return manifest, nil
 }
 
 func copyFile(source, target string) error {

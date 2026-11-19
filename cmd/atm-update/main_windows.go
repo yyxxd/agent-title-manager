@@ -33,13 +33,12 @@ func main() {
 			handoff.AppPID, handoff.Version, handoff.PreviousVersion, handoff.Isolated, handoff.InstallDir)
 	}
 	started := time.Now()
-	status := update.RunHandoff(handoff, update.NewWindowsHelper(handoff).Deps(updatePublicKey))
+	status := update.RunHandoffWithStatus(handoff, update.NewWindowsHelper(handoff).Deps(updatePublicKey), func(status update.Status) error {
+		return update.WriteStatus(handoff.DataDir, status)
+	})
 	if logErr == nil {
 		fmt.Fprintf(log, "result ok=%v elapsed=%s message=%s\n",
 			status.OK, time.Since(started).Round(time.Millisecond), status.Message)
-	}
-	if err := update.WriteStatus(handoff.DataDir, status); err != nil {
-		fmt.Fprintln(os.Stderr, "写入更新结果失败:", err)
 	}
 	if !status.OK {
 		os.Exit(1)

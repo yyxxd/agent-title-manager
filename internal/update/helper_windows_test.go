@@ -1,0 +1,54 @@
+//go:build windows
+
+package update
+
+import (
+	"encoding/json"
+	"os"
+	"path/filepath"
+	"testing"
+)
+
+func TestRestoreInstallFilesHandlesLegacyMissingFiles(t *testing.T) {
+	root := t.TempDir()
+	installDir := filepath.Join(root, "install")
+	backupDir := filepath.Join(root, "backup")
+	backupInstall := filepath.Join(backupDir, "install")
+	if err := os.MkdirAll(backupInstall, 0700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(installDir, 0700); err != nil {
+		t.Fatal(err)
+	}
+	write := func(path, content string) {
+		t.Helper()
+		if err := os.WriteFile(path, []byte(content), 0600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	write(filepath.Join(backupInstall, "AgentTitleManager.exe"), "old")
+	manifest, err := json.Marshal(installBackupManifest{Files: []string{"AgentTitleManager.exe"}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	write(filepath.Join(backupDir, installBackupManifestName), string(manifest))
+	write(filepath.Join(installDir, "AgentTitleManager.exe"), "new")
+	write(filepath.Join(installDir, "atm-update.exe"), "new helper")
+	if err := os.MkdirAll(filepath.Join(installDir, "plugins"), 0700); err != nil {
+		t.Fatal(err)
+	}
+	write(filepath.Join(installDir, "plugins", "new.dll"), "new plugin")
+
+	if err := restoreInstallFiles(installDir, backupDir); err != nil {
+		t.Fatal(err)
+	}
+	if got, err := os.ReadFile(filepath.Join(installDir, "AgentTitleManager.exe")); err != nil || string(got) != "old" {
+		t.Fatalf("legacy file was not restored: %q %v", got, err)
+	}
+	if _, err := os.Stat(filepath.Join(installDir, "atm-update.exe")); !os.IsNotExist(err) {
+		t.Fatalf("new helper should be removed, got %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(installDir, "plugins")); !os.IsNotExist(err) {
+		t.Fatalf("new plugins should be removed, got %v", err)
+	}
+}
