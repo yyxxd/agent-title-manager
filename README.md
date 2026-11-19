@@ -40,7 +40,7 @@ Claude Code 命名来源使用原版 CLI 的 `claude.ai` 登录，适用于 Code
 .\packaging\build.ps1 -NodeDistribution C:\tools\node-win-x64 -MakeNsis C:\tools\nsis\makensis.exe
 ```
 
-更新应用图标时，替换 `internal/desktop/icon.png` 后运行 `go generate ./cmd/atm`，并提交两个架构的资源文件与 `packaging/app.ico`（安装程序和卸载程序使用）。打包脚本会检查这些文件是否与源图一致。
+更新应用图标时，替换 `internal/desktop/icon.png` 后运行 `go generate ./cmd/atm`，并提交两个架构的资源文件与 `packaging/app.ico`（安装程序和卸载程序使用）。打包脚本会用当前 Go 工具链重新生成这些资源，提交的文件供普通的 `go build` 使用。
 
 脚本执行前端构建和 Go 测试，将桌面可执行文件、bridge、内置插件和 Node.js 组装至 `out\windows-x64-*`，默认生成 `out\AgentTitleManager-0.1.6-windows-x64-setup.exe`。默认版本从 `internal/desktop/version.txt` 读取。当前构建产物未签名。
 
