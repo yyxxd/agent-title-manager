@@ -1,4 +1,4 @@
-import { useEffect, useSyncExternalStore, useState } from 'react';
+import { useEffect, useRef, useSyncExternalStore, useState } from 'react';
 import { rpc } from './rpc';
 import { toast } from './toast';
 import { ConfirmDialog, Section, Status, useAction } from './ui';
@@ -58,6 +58,7 @@ export function UpdateSection() {
   const downloading = useSyncExternalStore(subscribe, getProgress);
   const [loaded, setLoaded] = useState(false);
   const [confirm, setConfirm] = useState(false);
+  const [notesOpen, setNotesOpen] = useState(false);
   const checking = useAction();
   const installing = useAction();
 
@@ -102,6 +103,10 @@ export function UpdateSection() {
   const busy = checking.busy || installing.busy;
   const available = view?.available;
 
+  useEffect(() => {
+    if (available) setNotesOpen(true);
+  }, [available?.version]);
+
   return <Section title="软件更新">
     <div className="settings-rows update-rows">
       <div className="setting-row">
@@ -119,12 +124,7 @@ export function UpdateSection() {
         </div>
       </div>
       {view && !view.enabled && <p className="notice">正式签名密钥尚未配置，应用内更新暂不可用。</p>}
-      {available && <>
-        <div className="setting-row update-notes-row">
-          <span>更新说明</span>
-          <pre className="update-notes">{available.notes || '本次更新未提供说明。'}</pre>
-        </div>
-      </>}
+      {available && <div className="setting-row"><span>更新状态</span><strong className="update-version">已发现 {available.version}</strong></div>}
       {downloading && <div className="update-progress" role="status" aria-live="polite">
         <div className="update-progress-track">
           <div className="update-progress-fill" style={{
@@ -135,10 +135,33 @@ export function UpdateSection() {
       </div>}
       <Status error={view?.error ?? checking.error ?? installing.error} />
     </div>
+    {available && notesOpen && <UpdateNotesDialog available={available}
+      onLater={() => setNotesOpen(false)} onInstall={() => { setNotesOpen(false); setConfirm(true); }} />}
     {confirm && <ConfirmDialog title="下载并安装更新" confirmLabel="确认安装" busy={installing.busy}
       error={installing.error} onCancel={() => setConfirm(false)} onConfirm={install}>
       <p>将下载并安装 <strong>{available?.version}</strong>。安装会在应用退出后自动进行，完成后重新打开。</p>
       <p className="muted">下载或校验失败时不会替换当前版本。</p>
     </ConfirmDialog>}
   </Section>;
+}
+
+function UpdateNotesDialog({ available, onLater, onInstall }: {
+  available: Available; onLater: () => void; onInstall: () => void;
+}) {
+  const dialog = useRef<HTMLDialogElement>(null);
+  useEffect(() => {
+    const element = dialog.current;
+    element?.showModal();
+    return () => element?.close();
+  }, []);
+  return <dialog ref={dialog} className="update-notes-dialog" aria-label={`更新到 v${available.version}`}
+    onCancel={(event) => { event.preventDefault(); onLater(); }}>
+    <h2>更新到 v{available.version}</h2>
+    <p className="muted update-notes-summary">版本 {available.version}</p>
+    <pre className="update-notes">{available.notes || '本次更新未提供说明。'}</pre>
+    <div className="actions">
+      <button autoFocus onClick={onLater}>稍后</button>
+      <button className="primary" onClick={onInstall}>下载并安装</button>
+    </div>
+  </dialog>;
 }

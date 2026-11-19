@@ -5,6 +5,7 @@ import { Overview } from './Overview';
 import { Models } from './Models';
 import { Plugins } from './Plugins';
 import { Records } from './Records';
+import { Settings } from './Settings';
 import { Toaster } from './toast';
 import { useUpdateEvents } from './Update';
 import './style.css';
@@ -17,6 +18,7 @@ const pages = [
   ['models', '模型与规则'],
   ['plugins', 'Agent 插件'],
   ['records', '处理记录'],
+  ['settings', '设置'],
 ] as const;
 
 function App() {
@@ -36,7 +38,8 @@ function App() {
     </header>
     <main id="main" key={page}>
       {page === 'overview' && <Overview revision={revision} />}
-      {page === 'models' && <Models appearance={appearance} />}
+      {page === 'models' && <Models />}
+      {page === 'settings' && <Settings appearance={appearance} />}
       {page === 'plugins' && <Plugins />}
       {page === 'records' && <Records />}
     </main>
