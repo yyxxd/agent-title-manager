@@ -13,6 +13,7 @@ import (
 	"log"
 	"os"
 	"path/filepath"
+	"strings"
 
 	"github.com/tc-hib/winres"
 )
@@ -70,11 +71,44 @@ func save(path string, content []byte, check bool) error {
 	if err != nil {
 		return err
 	}
-	// PNG 压缩字节随 Go 工具链变化，只比较解码后的图标像素。
-	if !bytes.Equal(committed, content) && !sameImages(iconImages(committed), iconImages(content)) {
-		return fmt.Errorf("%s is out of date. Run go generate ./cmd/atm", path)
+	if bytes.Equal(committed, content) {
+		return nil
 	}
-	return nil
+	// PNG 压缩字节随 Go 工具链变化：比较解码后的像素与容器元数据。
+	if sameImages(iconImages(committed), iconImages(content)) && sameContainer(path, committed, content) {
+		return nil
+	}
+	return fmt.Errorf("%s is out of date. Run go generate ./cmd/atm", path)
+}
+
+func sameContainer(path string, left, right []byte) bool {
+	header := containerHeader(path, left)
+	return header != "" && header == containerHeader(path, right)
+}
+
+// containerHeader 返回与压缩无关的容器信息：对象架构，或图标目录的尺寸与位深。
+func containerHeader(path string, data []byte) string {
+	if strings.HasSuffix(path, ".syso") {
+		if len(data) < 2 {
+			return ""
+		}
+		return fmt.Sprintf("coff:%04x", binary.LittleEndian.Uint16(data))
+	}
+	if len(data) < 6 || binary.LittleEndian.Uint16(data[2:]) != 1 {
+		return ""
+	}
+	count := int(binary.LittleEndian.Uint16(data[4:]))
+	if 6+count*16 > len(data) {
+		return ""
+	}
+	var header strings.Builder
+	fmt.Fprintf(&header, "ico:%d", count)
+	for index := 0; index < count; index++ {
+		base := 6 + index*16
+		// 宽高、色数、平面数与位深必须一致；字节数和偏移随 PNG 压缩变化。
+		fmt.Fprintf(&header, ":%x", data[base:base+8])
+	}
+	return header.String()
 }
 
 var pngSignature = []byte("\x89PNG\r\n\x1a\n")

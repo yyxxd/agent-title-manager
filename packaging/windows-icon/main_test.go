@@ -67,3 +67,29 @@ func TestSameImagesRejectsPixelChanges(t *testing.T) {
 		t.Fatal("像素变化应判定为过期")
 	}
 }
+
+func TestContainerHeaderRejectsWrongArchitecture(t *testing.T) {
+	if !sameContainer("icon_windows_amd64.syso", []byte{0x64, 0x86}, []byte{0x64, 0x86, 0x00}) {
+		t.Fatal("相同架构应通过")
+	}
+	if sameContainer("icon_windows_amd64.syso", []byte{0x64, 0x86}, []byte{0x64, 0xAA}) {
+		t.Fatal("架构变化应判定为过期")
+	}
+}
+
+func TestContainerHeaderRejectsIconDirectoryChanges(t *testing.T) {
+	entry := func(width, height, bits byte) []byte {
+		data := make([]byte, 6+16)
+		data[2], data[3] = 1, 0
+		data[4], data[5] = 1, 0
+		data[6], data[7] = width, height
+		data[12], data[13] = bits, 0
+		return data
+	}
+	if !sameContainer("app.ico", entry(16, 16, 32), entry(16, 16, 32)) {
+		t.Fatal("相同图标目录应通过")
+	}
+	if sameContainer("app.ico", entry(16, 16, 32), entry(16, 16, 8)) {
+		t.Fatal("位深变化应判定为过期")
+	}
+}
