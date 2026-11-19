@@ -1,10 +1,10 @@
 // The resource objects are committed so ordinary Go builds include the icon.
+// The build script regenerates them with its own toolchain before packaging.
 package main
 
 import (
 	"bytes"
 	"flag"
-	"fmt"
 	"image/png"
 	"log"
 	"os"
@@ -15,14 +15,13 @@ import (
 
 func main() {
 	root := flag.String("root", ".", "repository root")
-	check := flag.Bool("check", false, "verify the committed resource objects")
 	flag.Parse()
-	if err := generate(*root, *check); err != nil {
+	if err := generate(*root); err != nil {
 		log.Fatal(err)
 	}
 }
 
-func generate(root string, check bool) error {
+func generate(root string) error {
 	pngBytes, err := os.ReadFile(filepath.Join(root, "internal", "desktop", "icon.png"))
 	if err != nil {
 		return err
@@ -41,12 +40,12 @@ func generate(root string, check bool) error {
 		return err
 	}
 	for _, arch := range []winres.Arch{winres.ArchAMD64, winres.ArchARM64} {
-		path := filepath.Join(root, "cmd", "atm", fmt.Sprintf("icon_windows_%s.syso", arch))
+		path := filepath.Join(root, "cmd", "atm", "icon_windows_"+string(arch)+".syso")
 		var object bytes.Buffer
 		if err := resources.WriteObject(&object, arch); err != nil {
 			return err
 		}
-		if err := save(path, object.Bytes(), check); err != nil {
+		if err := os.WriteFile(path, object.Bytes(), 0644); err != nil {
 			return err
 		}
 	}
@@ -55,19 +54,5 @@ func generate(root string, check bool) error {
 	if err := icon.SaveICO(&ico); err != nil {
 		return err
 	}
-	return save(filepath.Join(root, "packaging", "app.ico"), ico.Bytes(), check)
-}
-
-func save(path string, content []byte, check bool) error {
-	if !check {
-		return os.WriteFile(path, content, 0644)
-	}
-	committed, err := os.ReadFile(path)
-	if err != nil {
-		return err
-	}
-	if !bytes.Equal(committed, content) {
-		return fmt.Errorf("%s is out of date. Run go generate ./cmd/atm", path)
-	}
-	return nil
+	return os.WriteFile(filepath.Join(root, "packaging", "app.ico"), ico.Bytes(), 0644)
 }
