@@ -12,6 +12,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"net"
 	"net/http"
 	"path/filepath"
 	"strconv"
@@ -167,7 +168,8 @@ func ParsePublicKey(text string) (ed25519.PublicKey, error) {
 
 // Source is the release source; the default is GitHub, tests use an HTTP fixture.
 type Source struct {
-	client     *http.Client
+	metadata   *http.Client
+	download   *http.Client
 	releaseURL string
 	publicKey  ed25519.PublicKey
 }
@@ -178,7 +180,8 @@ func NewSource(releaseURL, publicKeyHex string) (*Source, error) {
 		return nil, err
 	}
 	return &Source{
-		client:     &http.Client{Timeout: 20 * time.Second},
+		metadata:   &http.Client{Timeout: 20 * time.Second},
+		download:   &http.Client{Transport: &http.Transport{DialContext: (&net.Dialer{Timeout: 10 * time.Second}).DialContext, ResponseHeaderTimeout: 20 * time.Second, IdleConnTimeout: 60 * time.Second}},
 		releaseURL: releaseURL,
 		publicKey:  public,
 	}, nil
@@ -238,7 +241,7 @@ func (s *Source) Download(ctx context.Context, check Check, dst io.Writer, progr
 	if err != nil {
 		return err
 	}
-	response, err := s.client.Do(request)
+	response, err := s.download.Do(request)
 	if err != nil {
 		return err
 	}
@@ -254,7 +257,7 @@ func (s *Source) Download(ctx context.Context, check Check, dst io.Writer, progr
 	buf := make([]byte, 64*1024)
 	var written int64
 	for {
-		n, readErr := limit.Read(buf)
+		n, readErr := readWithStall(ctx, limit, buf, 30*time.Second)
 		if n > 0 {
 			written += int64(n)
 			if written > check.Size {
@@ -303,7 +306,20 @@ func (s *Source) fetch(ctx context.Context, url string, limit int64) ([]byte, er
 		return nil, err
 	}
 	request.Header.Set("Accept", "application/vnd.github+json")
-	response, err := s.client.Do(request)
+	var response *http.Response
+	for attempt := 0; attempt < 3; attempt++ {
+		response, err = s.metadata.Do(request)
+		if err == nil && response.StatusCode < 500 {
+			break
+		}
+		if response != nil {
+			response.Body.Close()
+		}
+		if err := ctx.Err(); err != nil {
+			return nil, err
+		}
+		time.Sleep(time.Duration(attempt+1) * 150 * time.Millisecond)
+	}
 	if err != nil {
 		return nil, err
 	}
@@ -312,6 +328,25 @@ func (s *Source) fetch(ctx context.Context, url string, limit int64) ([]byte, er
 		return nil, fmt.Errorf("检查更新失败: HTTP %d", response.StatusCode)
 	}
 	return io.ReadAll(io.LimitReader(response.Body, limit))
+}
+
+func readWithStall(ctx context.Context, r io.Reader, buf []byte, timeout time.Duration) (int, error) {
+	type result struct {
+		n   int
+		err error
+	}
+	ch := make(chan result, 1)
+	go func() { n, err := r.Read(buf); ch <- result{n, err} }()
+	timer := time.NewTimer(timeout)
+	defer timer.Stop()
+	select {
+	case out := <-ch:
+		return out.n, out.err
+	case <-timer.C:
+		return 0, errors.New("download stalled")
+	case <-ctx.Done():
+		return 0, ctx.Err()
+	}
 }
 
 func findAsset(assets []Asset, name string) *Asset {

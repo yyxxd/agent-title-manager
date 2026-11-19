@@ -62,6 +62,13 @@ func (s *Service) ServiceStartup(ctx context.Context, _ application.ServiceOptio
 		return errors.Join(err, listener.Close())
 	}
 	s.backend, s.listener, s.done = backend, listener, make(chan struct{})
+	if backend.Plugins != nil {
+		if result, err := backend.Plugins(ctx, "plugins.auto-update", nil); err == nil && s.emit != nil {
+			s.emit("plugins:auto-update", result)
+		} else if err != nil {
+			log.Printf("plugin auto-update: %v", err)
+		}
+	}
 	s.ingress = startIngress(ctx, backend)
 	if s.updater != nil {
 		s.updater.start(ctx)
@@ -86,7 +93,7 @@ func (s *Service) ServiceShutdown() error {
 }
 
 var engineMethods = []string{"providers.test", "providers.models", "providers.subscriptionModels", "providers.endpoints", "stats.daily", "stats.range", "records.list", "sync.retry", "sync.adopt"}
-var pluginMethods = []string{"plugins.list", "plugins.install", "plugins.update", "plugins.enable", "plugins.disable", "plugins.restore"}
+var pluginMethods = []string{"plugins.list", "plugins.install", "plugins.update", "plugins.enable", "plugins.disable", "plugins.restore", "plugins.auto-update"}
 
 func (s *Service) Call(ctx context.Context, method string, body string) (any, error) {
 	if len(body) > 256*1024 || !json.Valid([]byte(body)) || !strings.HasPrefix(strings.TrimSpace(body), "{") {
