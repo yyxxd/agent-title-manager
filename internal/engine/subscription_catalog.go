@@ -35,11 +35,30 @@ type subscriptionRequest struct {
 	Refresh  bool   `json:"refresh,omitempty"`
 }
 
+const (
+	catalogReady = "ready"
+	catalogAuth  = "auth"
+	catalogError = "error"
+)
+
 type subscriptionSnapshot struct {
 	sequence    uint64
 	fingerprint string
-	catalog     subscriptionCatalog
-	err         error
+	catalog     subscriptionCatalog // 最近一次成功读取的列表，失败时保留
+	state       string
+	notice      string
+}
+
+// result 返回缓存对外表现的状态。失败或未登录时锁定该来源，不提供可选择项。
+func (s subscriptionSnapshot) result() (subscriptionCatalog, error) {
+	switch s.state {
+	case catalogAuth:
+		return subscriptionCatalog{Items: []subscriptionModel{}, Notice: s.notice, AuthRequired: true}, nil
+	case catalogError:
+		return subscriptionCatalog{}, errors.New(s.notice)
+	default:
+		return s.catalog, nil
+	}
 }
 
 // catalogFingerprint 标识一份 CLI 目录对应的可执行文件版本。CLI 升级后路径、大小或修改时间会变化。
@@ -63,15 +82,18 @@ func catalogFingerprint(provider string) string {
 	return binary + "|" + strconv.FormatInt(info.Size(), 10) + "|" + strconv.FormatInt(info.ModTime().UnixNano(), 10)
 }
 
-// cachedSubscription 默认复用与当前 CLI 版本匹配的模型目录，只有 CLI 升级或手动刷新时才重新读取。
+// cachedSubscription 复用与当前 CLI 版本匹配的模型目录。失败或未登录会锁定该来源，
+// 直到用户手动刷新并重新读取成功；锁定期间不再自动启动 CLI。
 func (e *Engine) cachedSubscription(ctx context.Context, provider string, refresh bool) (subscriptionCatalog, error) {
 	fingerprint := catalogFingerprint(provider)
 	if !refresh {
 		e.catalogMu.Lock()
-		snapshot := e.catalogSnapshots[provider]
+		snapshot, ok := e.catalogSnapshots[provider]
 		e.catalogMu.Unlock()
-		// 未登录结果不缓存，登录状态变化后可立即重新读取。
-		if snapshot.err == nil && !snapshot.catalog.AuthRequired && snapshot.fingerprint == fingerprint {
+		if ok && (snapshot.state == catalogAuth || snapshot.state == catalogError) {
+			return snapshot.result()
+		}
+		if ok && snapshot.state == catalogReady && snapshot.fingerprint == fingerprint {
 			return snapshot.catalog, nil
 		}
 	}
@@ -84,29 +106,45 @@ func (e *Engine) refreshSubscriptionFor(ctx context.Context, provider, fingerpri
 	}
 	e.catalogMu.Lock()
 	e.catalogSequence++
-	snapshot := subscriptionSnapshot{sequence: e.catalogSequence, fingerprint: fingerprint}
+	sequence := e.catalogSequence
 	e.catalogMu.Unlock()
-	snapshot.catalog, snapshot.err = e.catalog(ctx, provider)
+	catalog, err := e.catalog(ctx, provider)
 	e.catalogMu.Lock()
 	defer e.catalogMu.Unlock()
-	if current := e.catalogSnapshots[provider]; current.sequence > snapshot.sequence {
-		return current.catalog, current.err
+	if current := e.catalogSnapshots[provider]; current.sequence > sequence {
+		return current.result()
 	}
 	if e.catalogSnapshots == nil {
 		e.catalogSnapshots = make(map[string]subscriptionSnapshot, 2)
 	}
+	previous := e.catalogSnapshots[provider]
+	snapshot := subscriptionSnapshot{sequence: sequence, fingerprint: previous.fingerprint, catalog: previous.catalog}
+	if fingerprint != "" {
+		snapshot.fingerprint = fingerprint
+	}
+	switch {
+	case err != nil:
+		snapshot.state = catalogError
+		snapshot.notice = err.Error()
+	case catalog.AuthRequired:
+		snapshot.state = catalogAuth
+		snapshot.notice = catalog.Notice
+	default:
+		snapshot.state = catalogReady
+		snapshot.catalog = catalog
+	}
 	e.catalogSnapshots[provider] = snapshot
-	if snapshot.err == nil && !snapshot.catalog.AuthRequired && fingerprint != "" {
+	if snapshot.fingerprint != "" {
 		e.saveCatalogCacheLocked()
 	}
-	return snapshot.catalog, snapshot.err
+	return snapshot.result()
 }
 
 func (e *Engine) subscriptionForValidation(ctx context.Context, provider string) (subscriptionCatalog, error) {
 	return e.cachedSubscription(ctx, provider, false)
 }
 
-const catalogCacheVersion = 1
+const catalogCacheVersion = 2
 
 type catalogCacheFile struct {
 	Version int                          `json:"version"`
@@ -116,13 +154,15 @@ type catalogCacheFile struct {
 type catalogCacheEntry struct {
 	Fingerprint string              `json:"fingerprint"`
 	Catalog     subscriptionCatalog `json:"catalog"`
+	State       string              `json:"state"`
+	Notice      string              `json:"notice,omitempty"`
 }
 
 func (e *Engine) catalogCachePath() string {
 	return filepath.Join(e.dir, "model-catalogs.json")
 }
 
-// loadCatalogCache 读取上次成功读取的目录。缓存损坏或版本不符时按未缓存处理。
+// loadCatalogCache 读取上次的目录与可用状态。缓存损坏或版本不符时按未缓存处理。
 func loadCatalogCache(dir string) map[string]subscriptionSnapshot {
 	data, err := os.ReadFile(filepath.Join(dir, "model-catalogs.json"))
 	if err != nil {
@@ -137,19 +177,26 @@ func loadCatalogCache(dir string) map[string]subscriptionSnapshot {
 		if (provider != "codex" && provider != "claude") || entry.Fingerprint == "" {
 			continue
 		}
-		snapshots[provider] = subscriptionSnapshot{fingerprint: entry.Fingerprint, catalog: entry.Catalog}
+		switch entry.State {
+		case catalogReady, catalogAuth, catalogError:
+		default:
+			continue
+		}
+		snapshots[provider] = subscriptionSnapshot{fingerprint: entry.Fingerprint, catalog: entry.Catalog,
+			state: entry.State, notice: entry.Notice}
 	}
 	return snapshots
 }
 
-// saveCatalogCacheLocked 原子写入当前内存中的有效目录，调用方需持有 catalogMu。
+// saveCatalogCacheLocked 原子写入当前内存中的目录与可用状态，调用方需持有 catalogMu。
 func (e *Engine) saveCatalogCacheLocked() {
 	file := catalogCacheFile{Version: catalogCacheVersion, Entries: make(map[string]catalogCacheEntry, len(e.catalogSnapshots))}
 	for provider, snapshot := range e.catalogSnapshots {
-		if snapshot.err != nil || snapshot.catalog.AuthRequired || snapshot.fingerprint == "" {
+		if snapshot.fingerprint == "" {
 			continue
 		}
-		file.Entries[provider] = catalogCacheEntry{Fingerprint: snapshot.fingerprint, Catalog: snapshot.catalog}
+		file.Entries[provider] = catalogCacheEntry{Fingerprint: snapshot.fingerprint, Catalog: snapshot.catalog,
+			State: snapshot.state, Notice: snapshot.notice}
 	}
 	data, err := json.Marshal(file)
 	if err != nil {

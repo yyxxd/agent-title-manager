@@ -87,8 +87,10 @@ func TestSubscriptionCatalogRequiresLogin(t *testing.T) {
 	if settings := call[Settings](t, e, "settings.get", nil); settings != saved {
 		t.Fatal(settings, saved)
 	}
+	// 重新登录属于外部状态变化，按约定需要手动刷新解锁。
 	mode("")
-	catalog := call[subscriptionCatalog](t, e, "providers.subscriptionModels", subscriptionRequest{Provider: "claude"})
+	catalog := call[subscriptionCatalog](t, e, "providers.subscriptionModels",
+		subscriptionRequest{Provider: "claude", Refresh: true})
 	if catalog.AuthRequired || len(catalog.Items) != 2 || catalog.Items[0].ID != saved.ClaudeModel ||
 		len(catalog.Items[0].Efforts) != 1 || catalog.Items[0].Efforts[0] != saved.ClaudeEffort {
 		t.Fatal(catalog)
@@ -218,6 +220,123 @@ func TestSubscriptionCatalogCacheFollowsCLI(t *testing.T) {
 	call[subscriptionCatalog](t, e, "providers.subscriptionModels", subscriptionRequest{Provider: "codex", Refresh: true})
 	if calls.Load() != 3 {
 		t.Fatalf("手动刷新后读取了 %d 次目录", calls.Load())
+	}
+}
+
+func TestSubscriptionCatalogLocksAfterLoginRequired(t *testing.T) {
+	binDir := t.TempDir()
+	name := "codex"
+	if runtime.GOOS == "windows" {
+		name += ".exe"
+	}
+	if err := os.WriteFile(filepath.Join(binDir, name), []byte("v1"), 0700); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("PATH", binDir)
+	dataDir := t.TempDir()
+	var calls atomic.Int64
+	install := func(e *Engine) {
+		e.catalog = func(context.Context, string) (subscriptionCatalog, error) {
+			switch calls.Add(1) {
+			case 1, 3:
+				return subscriptionCatalog{Items: []subscriptionModel{{ID: "fixture"}}}, nil
+			default:
+				return subscriptionCatalog{Items: []subscriptionModel{}, Notice: "请先登录", AuthRequired: true}, nil
+			}
+		}
+	}
+	request := subscriptionRequest{Provider: "codex"}
+	refreshed := subscriptionRequest{Provider: "codex", Refresh: true}
+	e := engineAt(t, dataDir, nil)
+	install(e)
+	if catalog := call[subscriptionCatalog](t, e, "providers.subscriptionModels", request); catalog.AuthRequired {
+		t.Fatal(catalog)
+	}
+	if locked := call[subscriptionCatalog](t, e, "providers.subscriptionModels", refreshed); !locked.AuthRequired || calls.Load() != 2 {
+		t.Fatalf("刷新结果 %v，读取了 %d 次目录", locked, calls.Load())
+	}
+	// 锁定后打开页面直接返回未登录，不再启动 CLI。
+	if locked := call[subscriptionCatalog](t, e, "providers.subscriptionModels", request); !locked.AuthRequired || calls.Load() != 2 {
+		t.Fatalf("锁定后结果 %v，读取了 %d 次目录", locked, calls.Load())
+	}
+	if err := e.Close(); err != nil {
+		t.Fatal(err)
+	}
+	// 锁定状态跨重启保留。
+	e = engineAt(t, dataDir, nil)
+	install(e)
+	if locked := call[subscriptionCatalog](t, e, "providers.subscriptionModels", request); !locked.AuthRequired || calls.Load() != 2 {
+		t.Fatalf("重启后结果 %v，读取了 %d 次目录", locked, calls.Load())
+	}
+	// 手动刷新成功才解除锁定。
+	if ready := call[subscriptionCatalog](t, e, "providers.subscriptionModels", refreshed); ready.AuthRequired ||
+		len(ready.Items) != 1 || calls.Load() != 3 {
+		t.Fatalf("解锁结果 %v，读取了 %d 次目录", ready, calls.Load())
+	}
+	if err := e.Close(); err != nil {
+		t.Fatal(err)
+	}
+	e = engineAt(t, dataDir, nil)
+	install(e)
+	if ready := call[subscriptionCatalog](t, e, "providers.subscriptionModels", request); ready.AuthRequired ||
+		len(ready.Items) != 1 || calls.Load() != 3 {
+		t.Fatalf("重启后结果 %v，读取了 %d 次目录", ready, calls.Load())
+	}
+}
+
+func TestSubscriptionCatalogLocksAfterError(t *testing.T) {
+	binDir := t.TempDir()
+	name := "codex"
+	if runtime.GOOS == "windows" {
+		name += ".exe"
+	}
+	if err := os.WriteFile(filepath.Join(binDir, name), []byte("v1"), 0700); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("PATH", binDir)
+	dataDir := t.TempDir()
+	const failure = "读取模型目录超时，请刷新重试"
+	var calls atomic.Int64
+	install := func(e *Engine) {
+		e.catalog = func(context.Context, string) (subscriptionCatalog, error) {
+			switch calls.Add(1) {
+			case 1, 3:
+				return subscriptionCatalog{Items: []subscriptionModel{{ID: "fixture"}}}, nil
+			default:
+				return subscriptionCatalog{}, errors.New(failure)
+			}
+		}
+	}
+	request := subscriptionRequest{Provider: "codex"}
+	refreshed := subscriptionRequest{Provider: "codex", Refresh: true}
+	lockedRequest, _ := json.Marshal(refreshed)
+	e := engineAt(t, dataDir, nil)
+	install(e)
+	call[subscriptionCatalog](t, e, "providers.subscriptionModels", request)
+	if _, err := e.Handle(t.Context(), "providers.subscriptionModels", lockedRequest); err == nil || !strings.Contains(err.Error(), failure) {
+		t.Fatal(err)
+	}
+	// 锁定后打开页面返回保存的失败原因，不再读取。
+	params, _ := json.Marshal(request)
+	for range 2 {
+		if _, err := e.Handle(t.Context(), "providers.subscriptionModels", params); err == nil || !strings.Contains(err.Error(), failure) {
+			t.Fatal(err)
+		}
+		if calls.Load() != 2 {
+			t.Fatalf("锁定后读取了 %d 次目录", calls.Load())
+		}
+	}
+	if err := e.Close(); err != nil {
+		t.Fatal(err)
+	}
+	// 锁定状态跨重启保留，直到手动刷新成功。
+	e = engineAt(t, dataDir, nil)
+	install(e)
+	if _, err := e.Handle(t.Context(), "providers.subscriptionModels", params); err == nil || !strings.Contains(err.Error(), failure) {
+		t.Fatal(err)
+	}
+	if ready := call[subscriptionCatalog](t, e, "providers.subscriptionModels", refreshed); len(ready.Items) != 1 || calls.Load() != 3 {
+		t.Fatalf("解锁结果 %v，读取了 %d 次目录", ready, calls.Load())
 	}
 }
 

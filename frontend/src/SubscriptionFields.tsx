@@ -78,7 +78,8 @@ export function SubscriptionFields({ provider, choice, catalog, selected, onRefr
   const items = loggedOut ? undefined : value?.items;
   const missing = !!items?.length && !!choice.model && !selected;
   const busy = !value && !error;
-  const disabled = busy || loggedOut;
+  // 读取失败或未登录时锁定选择，直到手动刷新成功。
+  const disabled = busy || loggedOut || !!error;
   const visibleChoice = disabled ? undefined : choice;
   const emptyMessage = '此 CLI 当前没有可见模型。';
   const normalized = query.trim().toLowerCase();
