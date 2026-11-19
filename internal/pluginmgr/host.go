@@ -25,6 +25,8 @@ func resolveHost(id string) (host, error) {
 		env, relative = "CLAUDE_CONFIG_DIR", ".claude"
 	case "pi":
 		env, relative = "PI_CODING_AGENT_DIR", filepath.Join(".pi", "agent")
+	case "antigravity":
+		env, relative, settings = "ANTIGRAVITY_CONFIG_DIR", filepath.Join(".gemini", "config"), "hooks.json"
 	default:
 		return host{}, errors.New("宿主不受支持")
 	}
@@ -55,6 +57,8 @@ func events(agent string) []event {
 		return []event{{"SessionStart", "start", true, 120}, {"Stop", "stop", true, 120}}
 	case "claude":
 		return []event{{"SessionStart", "start", false, 3}, {"UserPromptSubmit", "prompt", false, 3}, {"Stop", "stop", true, 120}}
+	case "antigravity":
+		return []event{{"SessionStart", "start", false, 10}, {"PreInvocation", "prompt", false, 10}, {"Stop", "stop", false, 10}}
 	}
 	return nil
 }
@@ -138,6 +142,9 @@ func registration(h host, base snapshot, entry string, adding bool) (change, err
 		if h.id == "pi" {
 			return editPi(root, entry, adding)
 		}
+		if h.id == "antigravity" {
+			return editAntigravity(root, entry, adding)
+		}
 		return editHostHooks(root, h.id, entry, adding)
 	})
 	return change{File: h.settings, Before: base, After: out}, err
@@ -164,6 +171,52 @@ func editPi(root object, entry string, adding bool) (bool, error) {
 		kept = append(kept, entry)
 	}
 	return true, setList(root, "extensions", kept)
+}
+
+func editAntigravity(root object, entry string, adding bool) (bool, error) {
+	const groupName = "agent-title-manager"
+	groups, err := get[object](root, groupName)
+	if err != nil {
+		return false, err
+	}
+	changed := false
+	for _, e := range events("antigravity") {
+		command := entry + " " + e.arg
+		items, err := get[[]json.RawMessage](groups, e.name)
+		if err != nil {
+			return false, err
+		}
+		kept := make([]json.RawMessage, 0, len(items))
+		found := false
+		for _, raw := range items {
+			var h map[string]any
+			if json.Unmarshal(raw, &h) != nil {
+				return false, errors.New("Antigravity Hook �����޷�����")
+			}
+			if h["type"] == "command" && h["command"] == command {
+				found = true
+				changed = true
+				continue
+			}
+			kept = append(kept, raw)
+		}
+		if adding && !found {
+			raw, _ := json.Marshal(map[string]any{"type": "command", "command": command, "timeout": 10})
+			kept = append(kept, raw)
+			changed = true
+		}
+		if len(kept) == 0 {
+			delete(groups, e.name)
+		} else if err := setList(groups, e.name, kept); err != nil {
+			return false, err
+		}
+	}
+	if len(groups) == 0 {
+		delete(root, groupName)
+	} else if err := setObject(root, groupName, groups); err != nil {
+		return false, err
+	}
+	return changed, nil
 }
 
 func editHostHooks(root object, id, entry string, adding bool) (bool, error) {

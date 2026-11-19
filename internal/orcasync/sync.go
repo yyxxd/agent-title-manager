@@ -33,13 +33,14 @@ type NativeTitleReader func(ctx context.Context, agent, sessionID, nativeHandle 
 type preflight func(context.Context, place) error
 
 type place struct {
-	ID      string  `json:"orcaSessionId"`
-	Agent   string  `json:"agent"`
-	Kind    string  `json:"kind"`
-	HostID  string  `json:"hostId"`
-	Title   *string `json:"title"`
-	PaneKey string  `json:"paneKey"`
-	Handle  string  `json:"handle"`
+	ID        string  `json:"orcaSessionId"`
+	Agent     string  `json:"agent"`
+	Kind      string  `json:"kind"`
+	HostID    string  `json:"hostId"`
+	Title     *string `json:"title"`
+	PaneKey   string  `json:"paneKey"`
+	Handle    string  `json:"handle"`
+	PaneTitle string  `json:"-"`
 }
 
 // SyncVerified requires a fresh read of the bound native session immediately
@@ -166,6 +167,7 @@ type visualNode struct {
 	Children []visualNode    `json:"children"`
 	Splits   []visualNode    `json:"splits"`
 	Panes    json.RawMessage `json:"panes"`
+	Root     *visualNode     `json:"root"`
 }
 
 func observeTerminal(ctx context.Context, run runCLI, id, agent string) (place, error) {
@@ -191,11 +193,11 @@ func observeTerminal(ctx context.Context, run runCLI, id, agent string) (place, 
 		return place{}, fmt.Errorf("%w: terminal not unique", ErrSkipped)
 	}
 	t := match[0]
-	tabTitle, _, ok := findVisualTab(result.Layouts, t.TabID, t.LeafID, t.Handle)
+	tabTitle, paneTitle, ok := findVisualTab(result.Layouts, t.TabID, t.LeafID, t.Handle)
 	if !ok {
 		return place{}, fmt.Errorf("%w: terminal layout", ErrSkipped)
 	}
-	return place{ID: id, Agent: bound.Agent, Kind: "terminal", HostID: "local", Title: &tabTitle, PaneKey: bound.PaneKey, Handle: t.Handle}, nil
+	return place{ID: id, Agent: bound.Agent, Kind: "terminal", HostID: "local", Title: &tabTitle, PaneKey: bound.PaneKey, Handle: t.Handle, PaneTitle: paneTitle}, nil
 }
 
 func findVisualTab(raw json.RawMessage, tabID, leafID, handle string) (string, string, bool) {
@@ -222,6 +224,11 @@ func findVisualTab(raw json.RawMessage, tabID, leafID, handle string) (string, s
 		}
 		for _, c := range append(append(n.Children, n.Splits...), []visualNode{}...) {
 			if t, p, ok := walk(c); ok {
+				return t, p, ok
+			}
+		}
+		if n.Root != nil {
+			if t, p, ok := walk(*n.Root); ok {
 				return t, p, ok
 			}
 		}

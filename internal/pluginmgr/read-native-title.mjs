@@ -44,9 +44,15 @@ async function readClaude() {
   return session && readObservedTitle(session);
 }
 
+async function readAntigravity() {
+  const { readTitle, rootDir } = await importAdapter("annotations.mjs");
+  const data = process.env.ANTIGRAVITY_DATA_DIR || rootDir();
+  return readTitle(data, sessionId);
+}
+
 try {
-  if (/^[a-f0-9]{8}-(?:[a-f0-9]{4}-){3}[a-f0-9]{12}$/i.test(sessionId)) {
-    const title = await (agent === "claude" ? readClaude() : readCodex());
+  if (/^[A-Za-z0-9_-]{1,120}$/.test(sessionId)) {
+    const title = await (agent === "claude" ? readClaude() : agent === "antigravity" ? readAntigravity() : readCodex());
     if (typeof title === "string" && Buffer.byteLength(title) <= 4096) {
       process.stdout.write(JSON.stringify({ title }));
     }

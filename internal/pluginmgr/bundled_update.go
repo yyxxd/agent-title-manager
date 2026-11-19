@@ -19,7 +19,7 @@ func (m *Manager) AutoUpdateBuiltins(ctx context.Context) (AutoUpdateResult, err
 		m.autoMu.Unlock()
 		return result, nil
 	}
-	for _, id := range []string{"codex", "claude", "pi"} {
+	for _, id := range []string{"codex", "claude", "pi", "antigravity"} {
 		old, ok := state.Items[id]
 		if !ok || old.Dir == "" {
 			continue

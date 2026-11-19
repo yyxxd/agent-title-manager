@@ -1,7 +1,7 @@
 import { spawn } from "node:child_process";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import { setTimeout as delay } from "node:timers/promises";
-import { ack, bridge, readInput, readRuntime, submitEvent, validCandidate } from "./client.mjs";
+import { ack, bridge, readInput, readRuntime, submitEvent, validCandidate, waitCandidate } from "./client.mjs";
 import { bindOrca, submitNative } from "./orca.mjs";
 import { identify, originalGoal, readObservedTitle, snapshot } from "./transcript.mjs";
 import { writeTitle } from "./annotations.mjs";
@@ -14,6 +14,8 @@ async function submitStop(input, identified, rpc) {
   const state = snapshot(identified, input); if (!state?.revision) return;
   const binding = await bindOrca(state.agent, state.sessionId, { locator: identified.sessionId });
   await submitEvent(rpc, { ...state, ...binding, originalGoal: originalGoal(identified) }, { fresh: () => snapshot(identified, input)?.revision === state.revision });
+  const result = await waitCandidate(rpc, state, { fresh: () => snapshot(identified, input)?.revision === state.revision });
+  if (result?.candidate) await confirm({ ...input, id: result.candidate.id, title: result.candidate.title, baseTitle: state.currentTitle, revision: state.revision }, identified, rpc);
 }
 async function confirm(input, identified, rpc) {
   if (typeof input.id !== "string" || typeof input.title !== "string") return;
@@ -31,16 +33,18 @@ export async function handleAntigravity(mode, input, rpc, runBackground = backgr
   const identified = identify(input); if (!identified) return {};
   if (mode === "confirm") { await confirm(input, identified, rpc); return {}; }
   const event = input.hookEventName ?? input.hook_event_name;
-  if (mode === "stop" && event === "Stop") { await submitStop(input, identified, rpc); return { decision: "" }; }
+  const reason = input.terminationReason;
+  if (mode === "stop" && event === "Stop" && input.continuationActive !== true && reason !== "ERROR" && reason !== "USER_CANCELED") { await submitStop(input, identified, rpc); return { decision: "" }; }
   if (mode !== "start" && mode !== "prompt") return {};
   const state = snapshot(identified, input); if (!state?.revision) return {};
-  if (mode === "start" && state.currentTitle) {
-    const b = await binding(state.agent, state.sessionId, { locator: identified.sessionId });
-    if (b.orcaSessionId) await submitNative(rpc, state, b);
+  const result = await rpc("title.claim", { agent: "antigravity", sessionId: state.sessionId, revision: state.revision, currentTitle: state.currentTitle });
+  if (!validCandidate(result?.candidate, state)) {
+    if (mode === "start" && state.currentTitle) {
+      const b = await binding(state.agent, state.sessionId, { locator: identified.sessionId });
+      if (b.orcaSessionId) await submitNative(rpc, state, b);
+    }
     return {};
   }
-  const result = await rpc("title.claim", { agent: "antigravity", sessionId: state.sessionId, revision: state.revision, currentTitle: state.currentTitle });
-  if (!validCandidate(result?.candidate, state)) return {};
   const latest = snapshot(identified, input); if (!latest || latest.revision !== state.revision || latest.currentTitle !== state.currentTitle) return {};
   runBackground("confirm", { ...input, conversationId: identified.sessionId, transcriptPath: identified.path, id: result.candidate.id, title: result.candidate.title, baseTitle: state.currentTitle, revision: state.revision });
   return {};

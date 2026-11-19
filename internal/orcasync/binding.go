@@ -54,12 +54,12 @@ func boundChat(ctx context.Context, run runCLI, agent, sessionId, nativeHandle, 
 	if !hasProviderMapping(ctx, run, nativeHandle, id) {
 		return place{}, false
 	}
-	at, err := showChat(ctx, run, id)
 	if agent == "pi" || agent == "antigravity" {
-		if terminal, terminalErr := showTerminal(ctx, run, id, agent); terminalErr == nil {
+		if terminal, terminalErr := observeTerminal(ctx, run, id, agent); terminalErr == nil {
 			return terminal, true
 		}
 	}
+	at, err := showChat(ctx, run, id)
 	return at, err == nil && at.Agent == agent
 }
 

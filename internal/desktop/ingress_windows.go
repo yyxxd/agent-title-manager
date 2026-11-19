@@ -206,5 +206,5 @@ func canonicalParams(fields map[string]json.RawMessage, allow ...string) (json.R
 }
 
 func isBuiltinAgent(id string) bool {
-	return id == "codex" || id == "claude" || id == "pi"
+	return id == "codex" || id == "claude" || id == "pi" || id == "antigravity"
 }

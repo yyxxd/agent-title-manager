@@ -1,7 +1,7 @@
 import { closeSync, fstatSync, openSync, readFileSync, readSync, realpathSync } from "node:fs";
 import { homedir } from "node:os";
 import { basename, dirname, isAbsolute, join, relative, resolve } from "node:path";
-import { fingerprint, nativeOrigin, recentTurns, safeID, textOf } from "./client.mjs";
+import { fingerprint, isTextConfirmation, nativeOrigin, recentTurns, safeID, textOf } from "./client.mjs";
 import { readTitle, rootDir } from "./annotations.mjs";
 
 const MAX = 8 * 1024 * 1024;
@@ -35,18 +35,18 @@ export function identify(input, dataDir = process.env.ANTIGRAVITY_DATA_DIR || ro
   if (resolve(path) !== resolve(expected)) return undefined;
   return { sessionId: id, path, appDataDir: configured };
 }
-function readLines(path) {
+function readLines(path, head = false) {
   const fd = openSync(path, "r");
-  try { const stat = fstatSync(fd); if (!stat.isFile() || stat.size > MAX) return []; const buf = Buffer.alloc(stat.size); readSync(fd, buf, 0, stat.size, 0); return buf.toString("utf8").split(/\r?\n/).filter(Boolean); }
+  try { const stat = fstatSync(fd); if (!stat.isFile()) return []; const size = Math.min(head ? 256 * 1024 : 1024 * 1024, stat.size); const start = head ? 0 : Math.max(0, stat.size - size); const buf = Buffer.alloc(size); readSync(fd, buf, 0, size, start); const lines = buf.toString("utf8").split(/\r?\n/); if (start) lines.shift(); return lines.filter(Boolean); }
   finally { closeSync(fd); }
 }
-function collect(path) {
+function collect(path, head = false) {
   const rows = [];
-  for (const line of readLines(path)) {
+  for (const line of readLines(path, head)) {
     let row; try { row = JSON.parse(line); } catch { continue; }
     if (!row || !["USER_INPUT", "PLANNER_RESPONSE"].includes(row.type)) continue;
     if (row.type === "USER_INPUT" && row.source === "USER_EXPLICIT") {
-      const text = clean(row.content); if (text && !/^\s*\//.test(text)) rows.push({ role: "user", text, id: String(row.step_index ?? rows.length) });
+      const text = clean(row.content); if (text && !/^\s*\//.test(text)) rows.push({ role: "user", text, confirmation: isTextConfirmation(row.content), id: String(row.step_index ?? rows.length) });
     } else if (row.type === "PLANNER_RESPONSE" && row.source === "MODEL") {
       const hasTools = Array.isArray(row.tool_calls) && row.tool_calls.length > 0;
       const text = clean(row.content); if (text && !hasTools) rows.push({ role: "assistant", text, id: String(row.step_index ?? rows.length) });
@@ -54,12 +54,13 @@ function collect(path) {
   }
   return rows;
 }
-export function originalGoal(identified) { return collect(identified.path).find(row => row.role === "user")?.text; }
+export function originalGoal(identified) { return collect(identified.path, true).find(row => row.role === "user")?.text; }
 export function readObservedTitle(identified) { return readTitle(identified.appDataDir, identified.sessionId); }
 export function snapshot(identified, input = {}) {
   const rows = collect(identified.path), user = rows.findLast(row => row.role === "user"), answer = rows.findLast(row => row.role === "assistant");
   if (!user || !answer) return undefined;
   const currentTitle = readObservedTitle(identified);
   const turns = recentTurns(rows.map(({ role, text }) => ({ role, text })));
-  return { agent: "antigravity", sessionId: identified.sessionId, currentTitle, titleOrigin: rows.filter(r => r.role === "user").length <= 1 ? "auto" : "unknown", revision: fingerprint(user.id, answer.id, answer.text), project: typeof input.cwd === "string" && isAbsolute(input.cwd) ? input.cwd : undefined, turns, confirmationOnly: false };
+  const users = rows.filter(r => r.role === "user");
+  return { agent: "antigravity", sessionId: identified.sessionId, currentTitle, titleOrigin: users.length <= 1 ? "auto" : "unknown", revision: fingerprint(user.id, answer.id, answer.text), project: typeof input.cwd === "string" && isAbsolute(input.cwd) ? input.cwd : undefined, turns, confirmationOnly: users.length > 0 && users.slice(1).every(r => r.confirmation) };
 }

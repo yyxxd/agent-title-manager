@@ -30,17 +30,22 @@ func ResolveTitleOrigin(ctx context.Context, agent, sessionId, nativeHandle, orc
 	}
 	title = *at.Title
 	if at.Kind == "terminal" {
-		return title, terminalOrigin(title, agent), true
+		return title, terminalOrigin(at, agent), true
 	}
 	return title, titleOrigin(ctx, orcaDatabase(), agent, strings.TrimPrefix(at.ID, idPrefix), title), true
 }
 
-func terminalOrigin(title, agent string) string {
+func terminalOrigin(at place, agent string) string {
+	title := ""
+	if at.Title != nil {
+		title = *at.Title
+	}
 	if strings.TrimSpace(title) == "" {
 		return titleAuto
 	}
-	common := map[string]bool{"Terminal": true, "pwsh": true, "pwsh.exe": true, "powershell": true, "powershell.exe": true, "cmd": true, "cmd.exe": true, "agy": true, "agy.exe": true, "pi": true, "pi.exe": true}
-	if common[title] || title == agent || title == agent+".exe" {
+	common := map[string]bool{"terminal": true, "pwsh": true, "pwsh.exe": true, "powershell": true, "powershell.exe": true, "cmd": true, "cmd.exe": true, "bash": true, "zsh": true, "sh": true, "agy": true, "agy.exe": true, "antigravity": true, "pi": true, "pi.exe": true}
+	base := strings.ToLower(filepath.Base(title))
+	if title == at.PaneTitle || common[base] || base == strings.ToLower(agent) || base == strings.ToLower(agent)+".exe" {
 		return titleAuto
 	}
 	return titleUnknown
