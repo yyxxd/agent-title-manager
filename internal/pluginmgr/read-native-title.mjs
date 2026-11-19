@@ -1,4 +1,5 @@
-import { opendirSync, lstatSync, readFileSync } from "node:fs";
+import { opendirSync, lstatSync, readFileSync, existsSync } from "node:fs";
+import { homedir } from "node:os";
 import { join } from "node:path";
 import { pathToFileURL } from "node:url";
 
@@ -46,8 +47,15 @@ async function readClaude() {
 
 async function readAntigravity() {
   const { readTitle, rootDir } = await importAdapter("annotations.mjs");
-  const data = process.env.ANTIGRAVITY_DATA_DIR || rootDir();
-  return readTitle(data, sessionId);
+  if (process.env.ANTIGRAVITY_DATA_DIR) return readTitle(process.env.ANTIGRAVITY_DATA_DIR, sessionId);
+  const gemini = join(homedir(), ".gemini");
+  const preferred = rootDir();
+  if (existsSync(join(preferred, "annotations", sessionId + ".pbtxt"))) return readTitle(preferred, sessionId);
+  const found = [];
+  const dir = opendirSync(gemini);
+  try { for (let n = 0; n < 4096; n++) { const item = dir.readSync(); if (!item) break; if (!item.isDirectory() || !item.name.startsWith("antigravity")) continue; const data = join(gemini, item.name); if (existsSync(join(data, "annotations", sessionId + ".pbtxt"))) found.push(data); } }
+  finally { dir.closeSync(); }
+  return found.length === 1 ? readTitle(found[0], sessionId) : "";
 }
 
 try {
