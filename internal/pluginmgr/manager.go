@@ -17,6 +17,26 @@ import (
 type Manager struct {
 	root, bundled string
 	gate          atomic.Pointer[enabledFlags]
+	autoUpdate    AutoUpdateResult
+}
+
+type AutoUpdateResult struct {
+	Upgraded []AutoUpdated      `json:"upgraded,omitempty"`
+	Failed   []AutoUpdateFailed `json:"failed,omitempty"`
+}
+type AutoUpdated struct {
+	ID          string `json:"id"`
+	Name        string `json:"name"`
+	FromVersion string `json:"fromVersion"`
+	ToVersion   string `json:"toVersion"`
+	Enabled     bool   `json:"enabled"`
+}
+type AutoUpdateFailed struct {
+	ID             string `json:"id"`
+	Name           string `json:"name"`
+	CurrentVersion string `json:"currentVersion"`
+	TargetVersion  string `json:"targetVersion"`
+	Error          string `json:"error"`
 }
 
 type Item struct {
@@ -150,6 +170,9 @@ func (m *Manager) Handle(ctx context.Context, method string, params json.RawMess
 		return struct {
 			Items []Item `json:"items"`
 		}{m.list(state)}, nil
+	}
+	if method == "plugins.auto-update" {
+		return m.AutoUpdateBuiltins(ctx)
 	}
 	var req request
 	if len(params) == 0 || json.Unmarshal(params, &req) != nil ||
