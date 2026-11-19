@@ -1,6 +1,7 @@
 import { closeSync, fstatSync, openSync, readFileSync, readSync, realpathSync } from "node:fs";
 import { homedir } from "node:os";
 import { basename, dirname, isAbsolute, join, relative, resolve } from "node:path";
+import { StringDecoder } from "node:string_decoder";
 import { fingerprint, isTextConfirmation, nativeOrigin, recentTurns, safeID, textOf } from "./client.mjs";
 
 const maxTailBytes = 768 * 1024;
@@ -135,13 +136,53 @@ function scanTail(identified) {
   return { recordTitle, messages, truncated };
 }
 
+const scanChunkBytes = 1024 * 1024;
+// Stop 与确认轮询会在同一进程内反复调用；记录只追加写入，大小不变即可复用结果。
+let scanCache = { path: "", size: -1, title: undefined };
+
+// 尾部窗口可能落在标题记录之后；sidecar 缺失时完整扫描一次，取最后一条标题记录。
+function scanRecordedTitle({ path, sessionId }) {
+  const descriptor = openSync(path, "r");
+  try {
+    const info = fstatSync(descriptor);
+    if (!info.isFile()) return undefined;
+    if (scanCache.path === path && scanCache.size === info.size) return scanCache.title;
+    const decoder = new StringDecoder("utf8");
+    const buffer = Buffer.allocUnsafe(scanChunkBytes);
+    let carry = "";
+    let title;
+    for (let position = 0; position < info.size; ) {
+      const bytes = readSync(descriptor, buffer, 0, Math.min(buffer.length, info.size - position), position);
+      if (bytes <= 0) break;
+      position += bytes;
+      const lines = (carry + decoder.write(buffer.subarray(0, bytes))).split("\n");
+      carry = lines.pop();
+      for (const line of lines) {
+        const found = recordedTitle(line, sessionId);
+        if (found !== undefined) title = found;
+      }
+    }
+    const found = recordedTitle(carry + decoder.end(), sessionId);
+    const result = found === undefined ? title : found;
+    scanCache = { path, size: info.size, title: result };
+    return result;
+  } finally { closeSync(descriptor); }
+}
+
+function recordedTitle(line, sessionId) {
+  if (!line.includes('"custom-title"')) return undefined;
+  const data = collect(line, sessionId);
+  return data && "title" in data ? data.title : undefined;
+}
+
 function reconcileTitle(identified, recordTitle, truncated, input = {}) {
   const sidecar = customTitleFromSidecar(identified);
   if (recordTitle !== undefined && sidecar !== undefined && recordTitle !== sidecar) return undefined;
-  const title = recordTitle ?? sidecar;
+  // 大文件不代表标题未知：整份记录都确认没有标题，才按无标题处理。
+  const title = recordTitle ?? sidecar ?? (truncated ? scanRecordedTitle(identified) : undefined);
   const hookTitle = typeof input.session_title === "string" ? input.session_title : undefined;
   if (hookTitle !== undefined && title !== undefined && hookTitle !== title) return undefined;
-  return title ?? hookTitle ?? (truncated ? undefined : "");
+  return title ?? hookTitle ?? "";
 }
 
 export function readObservedTitle(identified) {

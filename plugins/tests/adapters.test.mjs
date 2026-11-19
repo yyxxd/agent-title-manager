@@ -210,6 +210,42 @@ test("Claude 读不到开头的真实目标时保留空值，两个原生标题�
   assert.equal(readObservedTitle(identify(input, root)), undefined);
 });
 
+test("Claude 大会话没有标题记录时仍按无标题提交", async t => {
+  const { root, path, input } = await claudeFixture(t);
+  const records = [
+    { type: "progress", data: "x".repeat(800 * 1024) },
+    { type: "user", uuid: "recent-user", message: { content: "尾部的新请求" } },
+    { type: "assistant", uuid: "recent-assistant", message: { content: "尾部的答复" } },
+  ];
+  await writeFile(path, records.map(record => JSON.stringify({ sessionId, ...record })).join("\n") + "\n");
+  assert.equal(readObservedTitle(identify(input, root)), "");
+  let submitted;
+  await handleClaude("stop", { ...input, hook_event_name: "Stop" }, async (method, params) => {
+    assert.equal(method, "event.submit");
+    submitted = params;
+  }, undefined, binding, root);
+  assert.equal(submitted.currentTitle, "");
+  assert.equal(submitted.turns.at(-1).text, "尾部的答复");
+});
+
+test("Claude 大会话的标题记录在尾部窗口之前时沿用该标题", async t => {
+  const { root, path, input } = await claudeFixture(t);
+  const records = [
+    { type: "custom-title", customTitle: "早期标题" },
+    { type: "progress", data: "x".repeat(800 * 1024) },
+    { type: "user", uuid: "recent-user", message: { content: "尾部的新请求" } },
+    { type: "assistant", uuid: "recent-assistant", message: { content: "尾部的答复" } },
+  ];
+  await writeFile(path, records.map(record => JSON.stringify({ sessionId, ...record })).join("\n") + "\n");
+  assert.equal(readObservedTitle(identify(input, root)), "早期标题");
+  let submitted;
+  await handleClaude("stop", { ...input, hook_event_name: "Stop" }, async (method, params) => {
+    assert.equal(method, "event.submit");
+    submitted = params;
+  }, undefined, binding, root);
+  assert.equal(submitted.currentTitle, "早期标题");
+});
+
 function piFixture(initialBranch = [{ type: "message", message: { role: "user", content: "核对 Pi 会话" } }]) {
   let title;
   let leaf = "leaf";
