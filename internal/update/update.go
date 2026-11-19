@@ -69,6 +69,13 @@ var (
 	ErrHashMismatch = errors.New("安装包校验失败")
 )
 
+// updatePublicKey is injected into the helper at build time and is its only
+// trust root for the final pre-install verification.
+var updatePublicKey string
+
+// PublicKey returns the build-injected update trust root.
+func PublicKey() string { return updatePublicKey }
+
 // Newer compares two X.Y.Z versions; it rejects malformed versions.
 func Newer(current, candidate string) (bool, error) {
 	a, err := parseVersion(current)

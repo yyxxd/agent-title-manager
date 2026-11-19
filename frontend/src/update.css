@@ -1,5 +1,5 @@
 .update-rows .update-version {
-  justify-self: start;
+  justify-self: end;
   font-size: 16px;
   font-weight: 650;
   letter-spacing: -0.01em;
@@ -23,6 +23,9 @@
   background: var(--raised);
   border-radius: 7px;
 }
+.update-notes-dialog { max-height: min(560px, calc(100vh - 32px)); }
+.update-notes-dialog .update-notes { max-height: 300px; overflow-y: auto; margin: 12px 0 18px; }
+.update-notes-summary { margin-top: 5px; }
 .update-progress {
   padding: 8px 14px 14px;
 }

@@ -1,19 +1,15 @@
 import { useEffect, useRef, useState, type FormEvent, type ReactNode } from 'react';
-import { AppearanceRow, type AppearanceControl } from './Appearance';
 import { ApiFields } from './ModelApiFields';
 import { ModelSwitch } from './ModelSwitch';
 import { nativeChoice, SubscriptionFields, useSubscriptionDraft } from './SubscriptionFields';
-import { rpc, type Preferences, type Settings } from './rpc';
-import { UpdateSection } from './Update';
+import { rpc, type Settings } from './rpc';
 import { Empty, InlineActionError, Section, Status, useAction, useLoad } from './ui';
 import './models.css';
 
-export function Models({ appearance }: { appearance: AppearanceControl }) {
+export function Models() {
   const { value, error } = useLoad(() => rpc<Settings>('settings.get'), 'settings');
   return <div className="model-settings">
     <header className="page-head"><h1>模型与规则</h1></header>
-    <DesktopPreferences appearance={appearance} />
-    <UpdateSection />
     <Status error={error} />
     {value ? <ModelForm initial={value} /> : !error && <Empty>正在读取模型配置。</Empty>}
   </div>;
@@ -153,36 +149,6 @@ function ProviderFields({ settings, edit, busy, native }: { settings: Settings; 
       {native}
       {settings.provider === "codex" && <ModelSwitch checked={settings.fast} busy={busy} onChange={(checked) => edit('fast', checked)}>请求 Codex Fast 档位</ModelSwitch>}
       {settings.provider === "codex" && <ModelSwitch checked={settings.fallbackEnabled} busy={busy} onChange={(checked) => edit('fallbackEnabled', checked)}>Codex 确认失败时改用 API</ModelSwitch>}
-    </div>
-  </Section>;
-}
-
-function DesktopPreferences({ appearance }: { appearance: AppearanceControl }) {
-  const { value, error } = useLoad(() => rpc<Preferences>('desktop.get'), 'desktop');
-  const [startup, setStartup] = useState<boolean>();
-  const action = useAction();
-  const quit = useAction();
-  const enabled = startup ?? value?.startup ?? false;
-
-  function toggle(next: boolean) {
-    setStartup(next);
-    void action.run(async () => {
-      try {
-        const persisted = await rpc<Preferences>('desktop.startup', { enabled: next });
-        setStartup(persisted.startup);
-      } catch (error) {
-        setStartup(enabled);
-        throw error;
-      }
-    }, { success: 'silent', failure: 'toast' });
-  }
-
-  return <Section title="桌面">
-    <div className="settings-rows">
-      <AppearanceRow {...appearance} />
-      {value?.startupAvailable && <ModelSwitch checked={enabled} busy={action.busy} onChange={toggle}>开机自启</ModelSwitch>}
-      <div className="setting-row"><span>后台运行</span><button type="button" disabled={quit.busy} onClick={() => void quit.run(() => rpc<void>('desktop.quit'), { success: 'silent', failure: 'toast' })}>退出桌面应用</button></div>
-      <Status error={error ?? action.error ?? quit.error} />
     </div>
   </Section>;
 }

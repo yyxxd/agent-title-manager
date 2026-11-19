@@ -19,6 +19,7 @@
 }
 
 * { box-sizing: border-box; }
+html, body, #root { width: 100%; min-height: 100%; }
 body { margin: 0; }
 ::selection { background: var(--accent); color: var(--surface); }
 :focus-visible { outline: 2px solid var(--focus-color); outline-offset: -2px; }
@@ -118,6 +119,11 @@ fieldset { margin: 0; border: 0; padding: 0; min-width: 0; }
   min-height: 48px;
   gap: 12px;
   padding: 7px 14px;
+}
+.settings-page .model-switch {
+  display: flex;
+  justify-content: space-between;
+  cursor: pointer;
 }
 .settings-rows > :is(label, .setting-row) + :is(label, .setting-row) { border-top: 1px solid var(--rule); }
 .settings-rows > .check { display: flex; justify-content: space-between; flex-direction: row-reverse; cursor: pointer; }

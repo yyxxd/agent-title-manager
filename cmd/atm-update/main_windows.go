@@ -9,10 +9,6 @@ import (
 	"github.com/yyxxd/agent-title-manager/internal/update"
 )
 
-// updatePublicKey is injected at build time and is the helper's only trust
-// root; the handoff file itself is untrusted and re-verified before install.
-var updatePublicKey string
-
 // atm-update is launched by the desktop app after verification. It waits for
 // the app to exit, runs the original NSIS installer and restarts the result.
 func main() {
@@ -33,7 +29,7 @@ func main() {
 			handoff.AppPID, handoff.Version, handoff.PreviousVersion, handoff.Isolated, handoff.InstallDir)
 	}
 	started := time.Now()
-	status := update.RunHandoffWithStatus(handoff, update.NewWindowsHelper(handoff).Deps(updatePublicKey), func(status update.Status) error {
+	status := update.RunHandoffWithStatus(handoff, update.NewWindowsHelper(handoff).Deps(update.PublicKey()), func(status update.Status) error {
 		return update.WriteStatus(handoff.DataDir, status)
 	})
 	if logErr == nil {

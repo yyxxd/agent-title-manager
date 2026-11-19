@@ -274,3 +274,12 @@ func TestParsePublicKeyRejectsInvalid(t *testing.T) {
 		}
 	}
 }
+
+func TestPublicKeyReturnsBuildInjectedValue(t *testing.T) {
+	previous := updatePublicKey
+	updatePublicKey = strings.Repeat("a", 64)
+	defer func() { updatePublicKey = previous }()
+	if got := PublicKey(); got != updatePublicKey {
+		t.Fatalf("injected public key was not exposed to the helper: %q", got)
+	}
+}
