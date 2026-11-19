@@ -31,10 +31,25 @@ type Service struct {
 	quit              func()
 	appearance        *appearance
 	appearanceChanged func()
+	emit              func(string, any)
+	updater           *updateController
 }
 
 func NewService(scope string, open func() (Backend, error)) *Service {
 	return &Service{scope: scope, open: open}
+}
+
+// SetUpdater attaches the in-app update controller to the service.
+func (s *Service) SetUpdater(c *updateController) {
+	s.updater = c
+	if c != nil {
+		// Late-bound: Service.emit is assigned when the Wails app starts.
+		c.bind(func(name string, data any) {
+			if s.emit != nil {
+				s.emit(name, data)
+			}
+		})
+	}
 }
 
 func (s *Service) ServiceStartup(ctx context.Context, _ application.ServiceOptions) error {
@@ -48,6 +63,9 @@ func (s *Service) ServiceStartup(ctx context.Context, _ application.ServiceOptio
 	}
 	s.backend, s.listener, s.done = backend, listener, make(chan struct{})
 	s.ingress = startIngress(ctx, backend)
+	if s.updater != nil {
+		s.updater.start(ctx)
+	}
 	go func() {
 		defer close(s.done)
 		if err := ipc.Serve(ctx, listener, s.pluginEvent); err != nil {
@@ -96,6 +114,12 @@ func (s *Service) Call(ctx context.Context, method string, body string) (any, er
 	case method == "desktop.quit":
 		s.quit()
 		return nil, nil
+	case method == "desktop.update.get":
+		return s.updater.snapshot()
+	case method == "desktop.update.check":
+		return s.updater.refresh(ctx)
+	case method == "desktop.update.install":
+		return s.updater.install(ctx, json.RawMessage(body))
 	default:
 		return nil, errors.New("桌面不支持此方法")
 	}

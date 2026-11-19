@@ -1,0 +1,95 @@
+name: release-windows
+
+on:
+  push:
+    tags:
+      - 'v*'
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 11
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      - name: Verify signing configuration
+        shell: pwsh
+        env:
+          SEED: ${{ secrets.UPDATE_SIGNING_SEED }}
+          PUBLIC: ${{ vars.UPDATE_PUBLIC_KEY }}
+        run: |
+          if (-not $env:SEED -or -not $env:PUBLIC) {
+            throw '发布签名密钥或公钥未配置：请设置 Secret UPDATE_SIGNING_SEED 与变量 UPDATE_PUBLIC_KEY。'
+          }
+          $env:ATM_SIGNING_SEED = $env:SEED
+          $derived = go run ./internal/releasekey
+          if ($derived -ne $env:PUBLIC.Trim().ToLowerInvariant()) {
+            throw '公开验证公钥与签名私钥不匹配，请核对仓库变量 UPDATE_PUBLIC_KEY。'
+          }
+
+      - name: Download and verify official Node.js Windows x64 distribution
+        shell: pwsh
+        run: |
+          $version = 'v22.14.0'
+          $zip = "node-$version-win-x64.zip"
+          Invoke-WebRequest "https://nodejs.org/dist/$version/$zip" -OutFile $zip
+          Invoke-WebRequest "https://nodejs.org/dist/$version/SHASUMS256.txt" -OutFile SHASUMS256.txt
+          $line = Get-Content SHASUMS256.txt | Where-Object { $_ -match " $zip$" }
+          if (-not $line) { throw '未找到 Node.js SHA-256 清单项。' }
+          $want = ($line -split '\s+')[0]
+          $got = (Get-FileHash -Algorithm SHA256 -LiteralPath $zip).Hash.ToLowerInvariant()
+          if ($got -ne $want.ToLowerInvariant()) { throw "Node.js 校验失败: $got" }
+          Expand-Archive $zip -DestinationPath node-dist
+          Remove-Item $zip, SHASUMS256.txt
+
+      - name: Build Windows x64 bundle and installer
+        shell: pwsh
+        env:
+          UPDATE_PUBLIC_KEY: ${{ vars.UPDATE_PUBLIC_KEY }}
+        run: |
+          $version = $env:GITHUB_REF_NAME.TrimStart('v')
+          # The archive expands to node-vX.Y.Z-win-x64; build.ps1 needs that inner directory.
+          $node = Join-Path $pwd 'node-dist/node-v22.14.0-win-x64'
+          if (-not (Test-Path (Join-Path $node 'node.exe'))) { throw 'Node.js 解压目录缺少 node.exe。' }
+          .\packaging\build.ps1 -NodeDistribution $node -Version $version -UpdatePublicKey $env:UPDATE_PUBLIC_KEY
+
+      - name: Sign update manifest
+        shell: pwsh
+        env:
+          ATM_SIGNING_KEY: ${{ secrets.UPDATE_SIGNING_SEED }}
+        run: |
+          $version = $env:GITHUB_REF_NAME.TrimStart('v')
+          # A tag push has no release body; the signed tag commit message is the release note.
+          $env:ATM_RELEASE_NOTES = (git log -1 --format=%B $env:GITHUB_REF_NAME).Trim()
+          $installer = "out\AgentTitleManager-$version-windows-x64-setup.exe"
+          $hash = (Get-FileHash -Algorithm SHA256 -LiteralPath $installer).Hash.ToLowerInvariant()
+          $size = (Get-Item -LiteralPath $installer).Length
+          $file = Split-Path $installer -Leaf
+          go run ./cmd/atm-sign -version $version -file $file -size $size -sha256 $hash -output out\update-manifest.json
+          "INSTALLER=$installer" >> $env:GITHUB_ENV
+
+      - name: Publish GitHub Release
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          $notes = (git log -1 --format=%B $env:GITHUB_REF_NAME).Trim()
+          gh release create $env:GITHUB_REF_NAME `
+            $env:INSTALLER out\update-manifest.json `
+            --title $env:GITHUB_REF_NAME --notes $notes

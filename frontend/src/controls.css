@@ -220,6 +220,9 @@ button.popup-close:disabled { background: transparent; color: var(--muted); opac
 .model-picker-trigger { display: inline-flex; align-items: center; gap: 7px; }
 .model-picker-trigger svg { color: var(--muted); }
 .model-picker-trigger:has(+ :popover-open) { color: var(--accent); background: var(--blue-bg); }
+.subscription-controls .model-picker-trigger:not(:disabled) { background: var(--surface); border-color: var(--control); }
+.subscription-controls .model-picker-trigger:not(:disabled):hover { background: var(--field-hover); }
+.subscription-controls .model-picker-trigger:not(:disabled):has(+ :popover-open) { color: var(--accent); background: var(--blue-bg); }
 .model-picker-search { position: relative; margin-top: 7px; }
 .model-picker-search svg { position: absolute; inset-inline-start: 9px; inset-block-start: 10px; color: var(--muted); pointer-events: none; }
 .model-picker-search input[type=search] { max-width: none; padding-inline-start: 30px; }

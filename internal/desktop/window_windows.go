@@ -24,12 +24,23 @@ var defaultVersion string
 
 var buildVersion string
 
+// updatePublicKey is injected at build time as a hex Ed25519 public key.
+// An empty value disables in-app updates and surfaces that in the UI.
+var updatePublicKey string
+
+// UpdatePublicKey returns the hex-encoded Ed25519 key injected at build time.
+func UpdatePublicKey() string { return updatePublicKey }
+
 func versionedAppName() string {
-	version := buildVersion
-	if version == "" {
-		version = strings.TrimSpace(defaultVersion)
+	return appName + " " + BuildVersion()
+}
+
+// BuildVersion returns the version embedded at build time, or the shipped default.
+func BuildVersion() string {
+	if buildVersion != "" {
+		return buildVersion
 	}
-	return appName + " " + version
+	return strings.TrimSpace(defaultVersion)
 }
 
 func Run(dir string, assets fs.FS, service *Service) error {
@@ -72,6 +83,9 @@ func Run(dir string, assets fs.FS, service *Service) error {
 		window.Hide()
 	})
 	service.quit = app.Quit
+	service.emit = func(name string, data any) { app.Event.Emit(name, data) }
+	service.updater.bind(service.emit)
+	reportUpdateStatus(app, service)
 	connectAppearance(app, window, service)
 	setupTray(app, window)
 	return app.Run()

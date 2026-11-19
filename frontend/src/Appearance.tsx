@@ -35,11 +35,11 @@ export function AppearanceRow({ state, accept, loadError }: AppearanceControl) {
       <div className="segmented" role="radiogroup" aria-labelledby="appearance-label">
         {modes.map(([mode, label]) => <label key={mode}>
           <input type="radio" name="appearance" value={mode} checked={state?.mode === mode}
-            onChange={() => { if (!action.busy) void action.run(async () => accept(await rpc<State>('desktop.appearance.set', { mode }))); }} />
+            onChange={() => { if (!action.busy) void action.run(async () => accept(await rpc<State>('desktop.appearance.set', { mode })), { success: 'silent', failure: 'toast' }); }} />
           <span>{label}</span>
         </label>)}
       </div>
     </fieldset>
-    <Status error={loadError ?? action.error} />
+    <Status error={loadError} />
   </>;
 }

@@ -18,6 +18,10 @@ import (
 )
 
 func main() {
+	if len(os.Args) == 2 && os.Args[1] == "--version" {
+		fmt.Println(desktop.BuildVersion())
+		return
+	}
 	if len(os.Args) == 2 && os.Args[1] == "--check-uninstall" {
 		os.Exit(uninstallStatus())
 	}
@@ -53,6 +57,14 @@ func run() error {
 			ResolveTitleOrigin: orcasync.ResolveTitleOrigin, Close: core.Close,
 		}, nil
 	})
+	// NewUpdateController(appDir, dataDir, ...): helper lives beside the app;
+	// downloads and the handoff file live in the isolated data dir.
+	updater, err := desktop.NewUpdateController(filepath.Dir(exe), dir, desktop.BuildVersion(),
+		desktop.UpdatePublicKey(), os.Getenv("ATM_UPDATE_URL"))
+	if err != nil {
+		return err
+	}
+	service.SetUpdater(updater)
 	return desktop.Run(dir, frontend.Assets(), service)
 }
 
