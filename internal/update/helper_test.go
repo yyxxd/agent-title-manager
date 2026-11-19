@@ -6,21 +6,46 @@ import (
 	"os"
 	"path/filepath"
 	"reflect"
+	"strings"
 	"testing"
 )
 
+func okDeps(steps *[]string) helperDeps {
+	return helperDeps{
+		verify:       func() error { record(steps, "verify"); return nil },
+		waitExit:     func(uint32) error { record(steps, "wait"); return nil },
+		prepare:      func(_, _ string) (func() error, error) { record(steps, "backup"); return func() error { record(steps, "restore"); return nil }, nil },
+		install:      func(_, _ string, _ bool) error { record(steps, "install"); return nil },
+		checkVersion: func(_, version string) error { record(steps, "version:"+version); return nil },
+		verifyData:   func(string) error { record(steps, "data"); return nil },
+		verifyVersion: func(_, version string) error { record(steps, "registry:"+version); return nil },
+		restart:      func(string) error { record(steps, "restart"); return nil },
+	}
+}
+
+func record(steps *[]string, value string) {
+	if steps != nil {
+		*steps = append(*steps, value)
+	}
+}
+
 func TestRunHandoffSuccessOrder(t *testing.T) {
 	var steps []string
-	status := runHandoff(testHandoff(t), helperDeps{
-		waitExit:     func(uint32) error { steps = append(steps, "wait"); return nil },
-		prepare:      func(_, _ string) (func() error, error) { steps = append(steps, "backup"); return func() error { steps = append(steps, "restore"); return nil }, nil },
-		install:      func(_, _ string, _ bool) error { steps = append(steps, "install"); return nil },
-		checkVersion: func(_, _ string) error { steps = append(steps, "version"); return nil },
-		verifyData:   func(string) error { steps = append(steps, "data"); return nil },
-		restart:      func(string) error { steps = append(steps, "restart"); return nil },
-	})
-	if !status.OK || !reflect.DeepEqual(steps, []string{"wait", "backup", "install", "version", "data", "restart"}) {
+	status := runHandoff(testHandoff(t), okDeps(&steps))
+	want := []string{"verify", "wait", "backup", "install", "version:0.1.7", "data", "registry:0.1.7", "restart"}
+	if !status.OK || !reflect.DeepEqual(steps, want) {
 		t.Fatalf("unexpected status or order: %+v %v", status, steps)
+	}
+}
+
+func TestRunHandoffVerifyFailureStopsBeforeInstall(t *testing.T) {
+	var steps []string
+	deps := okDeps(&steps)
+	deps.verify = func() error { record(&steps, "verify-fail"); return errors.New("tampered") }
+	status := runHandoff(testHandoff(t), deps)
+	if status.OK || !strings.Contains(status.Message, "未安装") ||
+		!reflect.DeepEqual(steps, []string{"verify-fail"}) {
+		t.Fatalf("verify failure should stop immediately: %+v %v", status, steps)
 	}
 }
 
@@ -30,21 +55,22 @@ func TestRunHandoffFailuresRestoreAndRestartOld(t *testing.T) {
 		wantSteps []string
 		breakStep func(*helperDeps)
 	}{
-		{"install", []string{"restore", "restart"}, func(d *helperDeps) { d.install = func(string, string, bool) error { return errors.New("boom") } }},
-		{"version", []string{"install", "restore", "restart"}, func(d *helperDeps) { d.checkVersion = func(string, string) error { return errors.New("wrong") } }},
-		{"data", []string{"install", "version", "restore", "restart"}, func(d *helperDeps) { d.verifyData = func(string) error { return errors.New("lost") } }},
+		{"install", []string{"verify", "wait", "backup", "restore", "version:0.1.6", "restart"},
+			func(d *helperDeps) { d.install = func(string, string, bool) error { return errors.New("boom") } }},
+		{"version", []string{"verify", "wait", "backup", "install", "restore", "restart"},
+			func(d *helperDeps) {
+				d.checkVersion = func(_, version string) error {
+					if version == "0.1.7" { return errors.New("wrong") }
+					return nil
+				}
+			}},
+		{"data", []string{"verify", "wait", "backup", "install", "version:0.1.7", "restore", "version:0.1.6", "restart"},
+			func(d *helperDeps) { d.verifyData = func(string) error { return errors.New("lost") } }},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
 			var steps []string
-			deps := helperDeps{
-				waitExit:     func(uint32) error { return nil },
-				prepare:      func(_, _ string) (func() error, error) { return func() error { steps = append(steps, "restore"); return nil }, nil },
-				install:      func(_, _ string, _ bool) error { steps = append(steps, "install"); return nil },
-				checkVersion: func(_, _ string) error { steps = append(steps, "version"); return nil },
-				verifyData:   func(string) error { steps = append(steps, "data"); return nil },
-				restart:      func(string) error { steps = append(steps, "restart"); return nil },
-			}
+			deps := okDeps(&steps)
 			tc.breakStep(&deps)
 			status := runHandoff(testHandoff(t), deps)
 			if status.OK || !reflect.DeepEqual(steps, tc.wantSteps) {
@@ -54,16 +80,40 @@ func TestRunHandoffFailuresRestoreAndRestartOld(t *testing.T) {
 	}
 }
 
+func TestRunHandoffFailedRollbackDoesNotRestart(t *testing.T) {
+	var steps []string
+	deps := okDeps(&steps)
+	deps.install = func(string, string, bool) error { return errors.New("boom") }
+	deps.prepare = func(_, _ string) (func() error, error) {
+		return func() error { record(&steps, "restore-fail"); return errors.New("locked") }, nil
+	}
+	status := runHandoff(testHandoff(t), deps)
+	if status.OK || strings.Contains(status.Message, "旧版本已恢复") ||
+		strings.Contains(strings.Join(steps, ","), "restart") {
+		t.Fatalf("failed rollback must not claim success or restart: %+v %v", status, steps)
+	}
+}
+
 func TestRunHandoffWaitTimeoutDoesNotInstall(t *testing.T) {
-	installed := false
-	status := runHandoff(testHandoff(t), helperDeps{
-		waitExit: func(uint32) error { return errors.New("timeout") },
-		prepare:  func(_, _ string) (func() error, error) { return nil, nil },
-		install:  func(_, _ string, _ bool) error { installed = true; return nil },
-		restart:  func(string) error { return nil },
-	})
-	if status.OK || installed {
-		t.Fatalf("should not install after wait failure: %+v %v", status, installed)
+	var steps []string
+	deps := okDeps(&steps)
+	deps.waitExit = func(uint32) error { return errors.New("timeout") }
+	status := runHandoff(testHandoff(t), deps)
+	if status.OK || strings.Contains(strings.Join(steps, ","), "install") {
+		t.Fatalf("should not install after wait failure: %+v %v", status, steps)
+	}
+}
+
+func TestRunHandoffBackupFailureKeepsBackupAndDoesNotInstall(t *testing.T) {
+	var steps []string
+	deps := okDeps(&steps)
+	deps.prepare = func(_, _ string) (func() error, error) {
+		return nil, errors.New("database backup corrupt")
+	}
+	status := runHandoff(testHandoff(t), deps)
+	if status.OK || !strings.Contains(status.Message, "备份保留") ||
+		strings.Contains(strings.Join(steps, ","), "install") {
+		t.Fatalf("backup failure should abort and report: %+v %v", status, steps)
 	}
 }
 
@@ -87,7 +137,14 @@ func TestStatusRoundTrip(t *testing.T) {
 	if err := WriteStatus(dir, want); err != nil {
 		t.Fatal(err)
 	}
-	got, err := ReadStatus(dir)
+	peek, err := ReadStatus(dir)
+	if err != nil || peek != want {
+		t.Fatalf("status peek failed: %+v %v", peek, err)
+	}
+	if _, err := os.Stat(StatusPath(dir)); err != nil {
+		t.Fatal("status file should be retained until consumed")
+	}
+	got, err := ConsumeStatus(dir)
 	if err != nil || got != want {
 		t.Fatalf("status round trip failed: %+v %v", got, err)
 	}
@@ -100,5 +157,7 @@ func testHandoff(t *testing.T) Handoff {
 	t.Helper()
 	dir := t.TempDir()
 	return Handoff{AppPID: 123, Installer: filepath.Join(dir, "setup.exe"), InstallDir: filepath.Join(dir, "app"),
-		DataDir: dir, Version: "0.1.7", Restart: filepath.Join(dir, "app", "AgentTitleManager.exe"), Isolated: true}
+		DataDir: dir, Version: "0.1.7", PreviousVersion: "0.1.6",
+		Restart: filepath.Join(dir, "app", "AgentTitleManager.exe"),
+		Manifest: filepath.Join(dir, "update-manifest.json"), Isolated: true}
 }

@@ -17,7 +17,9 @@ type Handoff struct {
 	InstallDir string `json:"installDir"`
 	DataDir    string `json:"dataDir"`
 	Version    string `json:"version"`
+	PreviousVersion string `json:"previousVersion"`
 	Restart    string `json:"restart"`
+	Manifest   string `json:"manifest"`
 	Isolated   bool   `json:"isolated"`
 }
 
@@ -40,10 +42,10 @@ func ReadHandoff(path string) (Handoff, error) {
 	if err := decoder.Decode(&h); err != nil {
 		return h, fmt.Errorf("更新参数无效: %w", err)
 	}
-	if h.Installer == "" || h.InstallDir == "" || h.DataDir == "" || h.Version == "" || h.Restart == "" {
+	if h.Installer == "" || h.InstallDir == "" || h.DataDir == "" || h.Version == "" || h.PreviousVersion == "" || h.Restart == "" || h.Manifest == "" {
 		return h, errors.New("更新参数不完整")
 	}
-	for _, path := range []string{h.Installer, h.InstallDir, h.DataDir, h.Restart} {
+	for _, path := range []string{h.Installer, h.InstallDir, h.DataDir, h.Restart, h.Manifest} {
 		if !filepath.IsAbs(path) {
 			return h, errors.New("更新参数必须使用绝对路径")
 		}
@@ -74,6 +76,8 @@ func WriteStatus(dataDir string, status Status) error {
 	return os.Rename(temp.Name(), StatusPath(dataDir))
 }
 
+// ReadStatus reads the helper result without consuming it, so the UI can
+// pick it up from any page after a restart.
 func ReadStatus(dataDir string) (Status, error) {
 	var status Status
 	data, err := os.ReadFile(StatusPath(dataDir))
@@ -83,8 +87,14 @@ func ReadStatus(dataDir string) (Status, error) {
 	if err := json.Unmarshal(data, &status); err != nil {
 		return status, err
 	}
-	if err := os.Remove(StatusPath(dataDir)); err != nil {
+	return status, nil
+}
+
+// ConsumeStatus reads and removes the helper result once the UI has fetched it.
+func ConsumeStatus(dataDir string) (Status, error) {
+	status, err := ReadStatus(dataDir)
+	if err != nil {
 		return status, err
 	}
-	return status, nil
+	return status, os.Remove(StatusPath(dataDir))
 }

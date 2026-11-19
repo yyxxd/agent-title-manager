@@ -57,7 +57,9 @@ func run() error {
 			ResolveTitleOrigin: orcasync.ResolveTitleOrigin, Close: core.Close,
 		}, nil
 	})
-	updater, err := desktop.NewUpdateController(dir, filepath.Dir(exe), desktop.BuildVersion(),
+	// NewUpdateController(appDir, dataDir, ...): helper lives beside the app;
+	// downloads and the handoff file live in the isolated data dir.
+	updater, err := desktop.NewUpdateController(filepath.Dir(exe), dir, desktop.BuildVersion(),
 		desktop.UpdatePublicKey(), os.Getenv("ATM_UPDATE_URL"))
 	if err != nil {
 		return err

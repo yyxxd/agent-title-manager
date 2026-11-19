@@ -40,7 +40,17 @@ func NewService(scope string, open func() (Backend, error)) *Service {
 }
 
 // SetUpdater attaches the in-app update controller to the service.
-func (s *Service) SetUpdater(c *updateController) { s.updater = c }
+func (s *Service) SetUpdater(c *updateController) {
+	s.updater = c
+	if c != nil {
+		// Late-bound: Service.emit is assigned when the Wails app starts.
+		c.bind(func(name string, data any) {
+			if s.emit != nil {
+				s.emit(name, data)
+			}
+		})
+	}
+}
 
 func (s *Service) ServiceStartup(ctx context.Context, _ application.ServiceOptions) error {
 	listener, err := ipc.Listen(s.scope)

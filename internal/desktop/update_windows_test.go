@@ -78,17 +78,31 @@ func TestUpdateCheckAndInstallFlow(t *testing.T) {
 		t.Fatal(err)
 	}
 	launched := 0
-	c.launch = func(_, _ string) error { launched++; return nil }
+	var launchedBinary, launchedParam string
+	c.launch = func(binary, param string) error {
+		launched++
+		launchedBinary, launchedParam = binary, param
+		return nil
+	}
 	installDir := filepath.Join(t.TempDir(), "app")
 	result, err := c.install(context.Background(), json.RawMessage(`{"installDir":`+mustJSON(installDir)+`}`))
 	if err != nil || result["started"] != true {
 		t.Fatalf("install failed: %+v %v", result, err)
+	}
+	if want := filepath.Join(dataDir, "updates", "atm-update.exe"); launchedBinary != want {
+		t.Fatalf("helper copied from wrong root: got %q want %q", launchedBinary, want)
+	}
+	if want := filepath.Join(dataDir, "update-handoff.json"); launchedParam != want {
+		t.Fatalf("handoff written to wrong root: got %q want %q", launchedParam, want)
 	}
 	if _, err := os.Stat(filepath.Join(dataDir, "update-handoff.json")); err != nil {
 		t.Fatal("handoff not written:", err)
 	}
 	if _, err := os.Stat(filepath.Join(dataDir, "updates", "setup.exe")); err != nil {
 		t.Fatal("verified installer not saved:", err)
+	}
+	if _, err := os.Stat(filepath.Join(dir, "updates")); !errors.Is(err, os.ErrNotExist) {
+		t.Fatal("update files leaked into app directory:", err)
 	}
 	if launched != 1 {
 		t.Fatalf("helper launched %d times", launched)

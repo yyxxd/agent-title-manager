@@ -54,6 +54,7 @@ type Check struct {
 	Size        int64  `json:"size"`
 	SHA256      string `json:"sha256"`
 	DownloadURL string `json:"-"`
+	Manifest    []byte `json:"-"`
 }
 
 const (
@@ -220,7 +221,8 @@ func (s *Source) CheckLatest(ctx context.Context, current string) (Check, error)
 		return Check{}, fmt.Errorf("%w: 资产大小与清单不一致", ErrUntrusted)
 	}
 	return Check{Version: manifest.Version, Notes: release.Body, Installer: manifest.File,
-		Size: manifest.Size, SHA256: manifest.SHA256, DownloadURL: installer.BrowserDownloadURL}, nil
+		Size: manifest.Size, SHA256: manifest.SHA256, DownloadURL: installer.BrowserDownloadURL,
+		Manifest: raw}, nil
 }
 
 // Download streams a verified installer into dst, checking size and SHA-256.

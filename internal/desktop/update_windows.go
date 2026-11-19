@@ -25,7 +25,7 @@ const defaultReleaseURL = "https://api.github.com/repos/yyxxd/agent-title-manage
 // time; without it the update page is explicitly disabled.
 type updateController struct {
 	mu         sync.Mutex
-	dir        string
+	appDir     string
 	dataDir    string
 	current    string
 	publicKey  string
@@ -40,8 +40,8 @@ type updateController struct {
 }
 
 // NewUpdateController constructs the update controller for a desktop service.
-func NewUpdateController(dir, dataDir, current, publicKey, releaseURL string) (*updateController, error) {
-	c := &updateController{dir: dir, dataDir: dataDir, current: current,
+func NewUpdateController(appDir, dataDir, current, publicKey, releaseURL string) (*updateController, error) {
+	c := &updateController{appDir: appDir, dataDir: dataDir, current: current,
 		publicKey: publicKey, releaseURL: releaseURL}
 	if releaseURL == "" {
 		c.releaseURL = defaultReleaseURL
@@ -58,11 +58,12 @@ func NewUpdateController(dir, dataDir, current, publicKey, releaseURL string) (*
 }
 
 type updateView struct {
-	Current   string        `json:"current"`
-	Enabled   bool          `json:"enabled"`
-	Available *update.Check `json:"available,omitempty"`
-	Error     string        `json:"error,omitempty"`
-	Busy      bool          `json:"busy"`
+	Current   string         `json:"current"`
+	Enabled   bool           `json:"enabled"`
+	Available *update.Check  `json:"available,omitempty"`
+	Notice    *update.Status `json:"notice,omitempty"`
+	Error     string         `json:"error,omitempty"`
+	Busy      bool           `json:"busy"`
 }
 
 // reportUpdateStatus surfaces the helper's result through the existing toast
@@ -75,6 +76,8 @@ func reportUpdateStatus(app *application.App, service *Service) {
 	if err != nil || status.Message == "" {
 		return
 	}
+	// Keep the file until the UI fetches it; the event only prompts a refresh,
+	// so a result survives restarts from any page.
 	application.InvokeAsync(func() {
 		app.Event.Emit("desktop:update-status", status)
 	})
@@ -97,6 +100,9 @@ func (c *updateController) snapshot() (updateView, error) {
 	if c.enabled && c.latest.Version != "" {
 		available := c.latest
 		view.Available = &available
+	}
+	if notice, err := update.ConsumeStatus(c.dataDir); err == nil && notice.Message != "" {
+		view.Notice = &notice
 	}
 	return view, nil
 }
@@ -142,6 +148,16 @@ func (c *updateController) checkNow(ctx context.Context) (update.Check, error) {
 		c.latest = check
 	}
 	c.mu.Unlock()
+	if c.emit != nil {
+		c.mu.Lock()
+		view := updateView{Current: c.current, Enabled: c.enabled, Busy: c.busy}
+		if c.enabled && c.latest.Version != "" {
+			available := c.latest
+			view.Available = &available
+		}
+		c.mu.Unlock()
+		c.emit("desktop:update-state", view)
+	}
 	return check, err
 }
 
@@ -178,6 +194,9 @@ func (c *updateController) install(ctx context.Context, raw json.RawMessage) (ma
 
 	installer, err := c.download(ctx, check)
 	if err != nil {
+		if c.emit != nil {
+			c.emit("desktop:update-progress", map[string]any{"done": false, "downloaded": 0, "total": 0})
+		}
 		return nil, err
 	}
 	installDir := request.InstallDir
@@ -205,12 +224,15 @@ func (c *updateController) download(ctx context.Context, check update.Check) (st
 	defer file.Close()
 	progress := func(done, total int64) {
 		if c.emit != nil {
-			c.emit("desktop:update-progress", map[string]any{"downloaded": done, "total": total})
+			c.emit("desktop:update-progress", map[string]any{"done": false, "downloaded": done, "total": total})
 		}
 	}
 	if err := c.source.Download(ctx, check, file, progress); err != nil {
 		os.Remove(file.Name())
 		return "", err
+	}
+	if c.emit != nil {
+		c.emit("desktop:update-progress", map[string]any{"done": true, "downloaded": check.Size, "total": check.Size})
 	}
 	if err := file.Close(); err != nil {
 		os.Remove(file.Name())
@@ -220,6 +242,12 @@ func (c *updateController) download(ctx context.Context, check update.Check) (st
 	final := filepath.Join(dir, check.Installer)
 	if err := os.Rename(file.Name(), final); err != nil {
 		os.Remove(file.Name())
+		return "", err
+	}
+	if len(check.Manifest) == 0 {
+		return "", errors.New("更新清单缺失")
+	}
+	if err := os.WriteFile(filepath.Join(dir, "update-manifest.json"), check.Manifest, 0600); err != nil {
 		return "", err
 	}
 	return final, nil
@@ -232,7 +260,9 @@ func (c *updateController) handoff(check update.Check, installer, installDir str
 		return err
 	}
 	handoff := update.Handoff{AppPID: uint32(pid), Installer: installer, InstallDir: installDir,
-		DataDir: c.dataDir, Version: check.Version, Restart: exe, Isolated: os.Getenv("ATM_UPDATE_ISOLATED") == "1"}
+		DataDir: c.dataDir, Version: check.Version, PreviousVersion: c.current, Restart: exe,
+		Manifest: filepath.Join(c.dataDir, "updates", "update-manifest.json"),
+		Isolated: os.Getenv("ATM_UPDATE_ISOLATED") == "1"}
 	path := filepath.Join(c.dataDir, "update-handoff.json")
 	data, err := json.Marshal(handoff)
 	if err != nil {
@@ -241,7 +271,7 @@ func (c *updateController) handoff(check update.Check, installer, installDir str
 	if err := os.WriteFile(path, data, 0600); err != nil {
 		return err
 	}
-	helper := filepath.Join(c.dir, "atm-update.exe")
+	helper := filepath.Join(c.appDir, "atm-update.exe")
 	// Run from a copy in the data dir so NSIS can replace the installed helper.
 	copyPath := filepath.Join(c.dataDir, "updates", "atm-update.exe")
 	if err := copyFile(helper, copyPath); err != nil {
