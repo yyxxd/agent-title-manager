@@ -54,11 +54,10 @@ export function AgentIcon({ id, size = 22 }: { id: string; size?: number }) {
   }
   if (id === 'orca') {
     return (
-      <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.85" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
-        <path d="M21 12a9 9 0 0 0-9-9 9.75 9.75 0 0 0-6.74 2.74L3 8" />
-        <path d="M3 3v5h5" />
-        <path d="M3 12a9 9 0 0 0 9 9 9.75 9.75 0 0 0 6.74-2.74L21 16" />
-        <path d="M16 16h5v5" />
+      <svg width={size} height={size} viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">
+        <path d="M14.11 5.56C14.04 5.54 13.97 5.62 13.91 5.82L11.74 13.48C11.46 14.22 10.16 14.92 8.70 15.20C7.18 15.48 5.98 14.92 4.30 14.74C3.30 14.64 2.48 15.32 1.84 16.22C1.74 16.36 1.84 16.43 2.12 16.43L8.35 16.35C9.68 16.28 10.64 16.06 11.28 15.76C11.38 15.71 11.44 15.60 11.50 15.40L14.20 5.86C14.24 5.68 14.19 5.58 14.11 5.56Z" />
+        <path d="M22.14 8.36C20.22 8.16 18.08 8.12 16.68 8.74C15.10 9.44 14.08 10.92 13.40 13.06L11.74 18.28C11.68 18.46 11.82 18.52 11.94 18.32L14.84 13.38C15.54 12.18 16.12 11.60 17.28 11.14C19.00 10.46 20.90 9.64 22.16 8.54C22.25 8.46 22.23 8.37 22.14 8.36Z" />
+        <ellipse cx="16.89" cy="7.29" rx="1.44" ry="0.52" transform="rotate(-9.3 16.89 7.29)" />
       </svg>
     );
   }
