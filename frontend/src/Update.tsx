@@ -124,7 +124,6 @@ export function UpdateSection() {
         </div>
       </div>
       {view && !view.enabled && <p className="notice">正式签名密钥尚未配置，应用内更新暂不可用。</p>}
-      {available && <div className="setting-row"><span>更新状态</span><strong className="update-version">已发现 {available.version}</strong></div>}
       {downloading && <div className="update-progress" role="status" aria-live="polite">
         <div className="update-progress-track">
           <div className="update-progress-fill" style={{
