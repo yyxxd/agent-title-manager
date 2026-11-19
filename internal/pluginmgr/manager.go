@@ -29,17 +29,14 @@ type Item struct {
 	Kind             string `json:"kind"`
 	Detail           string `json:"detail,omitempty"`
 	EntryPath        string `json:"entryPath,omitempty"`
-	TakeoverRequired bool   `json:"takeoverRequired,omitempty"`
-	CanRestore       bool   `json:"canRestore,omitempty"`
 }
 
 type request struct {
-	ID       string `json:"id"`
-	Source   string `json:"source"`
-	Path     string `json:"path"`
-	Repo     string `json:"repo"`
-	Ref      string `json:"ref"`
-	Takeover bool   `json:"takeover"`
+	ID     string `json:"id"`
+	Source string `json:"source"`
+	Path   string `json:"path"`
+	Repo   string `json:"repo"`
+	Ref    string `json:"ref"`
 }
 
 var builtins = map[string]string{
@@ -107,7 +104,7 @@ func (m *Manager) SyncVerified(ctx context.Context, id, expectedTitle, newTitle,
 	return orcasync.SyncVerified(ctx, id, expectedTitle, newTitle, agent, sessionID, nativeHandle, m.readNativeTitle)
 }
 
-// UninstallReady checks recorded registrations and backups without editing
+// UninstallReady checks recorded registrations without editing
 // user files or creating the plugin data directory.
 func (m *Manager) UninstallReady(ctx context.Context) error {
 	if err := ctx.Err(); err != nil {
@@ -118,27 +115,19 @@ func (m *Manager) UninstallReady(ctx context.Context) error {
 		return fmt.Errorf("无法确认插件状态：%w", err)
 	}
 	if state.Pending != nil {
-		return fmt.Errorf("请先恢复未完成的插件变更（%s）", state.Pending.ID)
+		return fmt.Errorf("请先停用以回滚未完成的插件变更（%s）", state.Pending.ID)
 	}
-	var active, takeover []string
+	var active []string
 	for id, r := range state.Items {
 		if r.Enabled || len(r.Registration) != 0 || r.Entry != "" {
 			active = append(active, id)
 		}
-		if len(r.Takeover) != 0 {
-			takeover = append(takeover, id)
-		}
 	}
 	sort.Strings(active)
-	sort.Strings(takeover)
-	var problems []error
 	if len(active) != 0 {
-		problems = append(problems, fmt.Errorf("请先停用插件 %v", active))
+		return fmt.Errorf("请先停用插件 %v", active)
 	}
-	if len(takeover) != 0 {
-		problems = append(problems, fmt.Errorf("请先恢复旧插件 %v", takeover))
-	}
-	return errors.Join(problems...)
+	return nil
 }
 
 func (m *Manager) Handle(ctx context.Context, method string, params json.RawMessage) (any, error) {
@@ -162,7 +151,7 @@ func (m *Manager) Handle(ctx context.Context, method string, params json.RawMess
 			return m.locked(ctx, func(state registry) (any, error) { return m.updateBuiltin(ctx, state, req.ID) })
 		}
 		return m.install(ctx, method, req)
-	case "plugins.enable", "plugins.disable", "plugins.restore":
+	case "plugins.enable", "plugins.disable":
 		return m.locked(ctx, func(state registry) (any, error) { return m.modify(ctx, state, method, req) })
 	default:
 		return nil, errors.New("未知插件管理请求")
@@ -191,7 +180,7 @@ func (m *Manager) item(state registry, id string) Item {
 	r := state.Items[id]
 	item := Item{
 		ID: id, Name: r.Manifest.Name, Version: r.Manifest.Version, Enabled: r.Enabled,
-		Kind: "community", Status: "disabled", CanRestore: r.Previous != nil || len(r.Takeover) > 0,
+		Kind: "community", Status: "disabled",
 	}
 	if r.Enabled {
 		item.Status = "enabled"
@@ -203,8 +192,8 @@ func (m *Manager) item(state registry, id string) Item {
 		m.describeCommunity(&item, r)
 	}
 	if state.Pending != nil && state.Pending.ID == id {
-		item.Enabled, item.CanRestore, item.Status = false, true, "recovery_required"
-		item.Detail = "插件变更尚未完成。请选择恢复，或先处理宿主设置冲突。"
+		item.Enabled, item.Status = false, "recovery_required"
+		item.Detail = "插件变更尚未完成。请停用该插件以回滚未完成变更，或先处理宿主设置冲突。"
 	}
 	return item
 }
@@ -240,19 +229,11 @@ func (m *Manager) describeBuiltin(id string, item *Item, r record) {
 	}
 	h, err := resolveHost(id)
 	if err == nil {
-		var before snapshot
-		before, err = readSettings(h.settings)
-		if err == nil {
-			var changes []change
-			changes, err = legacyChanges(h, before)
-			item.TakeoverRequired = len(changes) > 0
-		}
+		_, err = readSettings(h.settings)
 	}
 	switch {
 	case err != nil:
 		item.Status, item.Detail = "action_required", "请检查宿主设置文件是否可读取。"
-	case item.TakeoverRequired:
-		item.Status, item.Detail = "action_required", "检测到已知的旧版自动命名插件，需明确选择接管。"
 	case bundleErr != nil:
 		item.Status, item.Detail = "unavailable", "缺少随桌面应用发行的适配器文件。"
 	}
@@ -319,7 +300,7 @@ func (m *Manager) install(ctx context.Context, method string, req request) (any,
 
 func (m *Manager) installStaged(state registry, method string, req request, stage string) (any, error) {
 	if state.Pending != nil {
-		return nil, errors.New("请先恢复有未完成变更的插件")
+		return nil, errors.New("请先停用以回滚有未完成变更的插件")
 	}
 	manifest, err := readManifest(stage)
 	if err != nil {
@@ -337,8 +318,5 @@ func (m *Manager) installStaged(state registry, method string, req request, stag
 		return nil, errors.New("插件已安装，请使用更新")
 	}
 	next := record{release: release{Manifest: manifest, Dir: filepath.Base(stage)}}
-	if update {
-		next.Previous = &current.release
-	}
 	return m.commitItem(state, manifest.ID, next, nil)
 }

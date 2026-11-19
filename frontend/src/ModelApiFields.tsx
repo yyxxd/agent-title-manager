@@ -1,90 +1,196 @@
-import { ModelDiscovery, PopupClose } from './ModelDiscovery';
-import { Info } from 'lucide-react';
-import { useId, useRef } from 'react';
-import { ModelSwitch } from './ModelSwitch';
-import { rpc, type ApiEndpoints, type Settings } from './rpc';
-import { Status, useLoad } from './ui';
+import { useEffect, useState } from 'react';
+import { ModelCombobox } from './ModelCombobox';
+import { rpc, type ApiEndpoints, type ApiModel, type ApiProtocol, type Settings } from './rpc';
+import { toast } from './toast';
+import { StatusNotice, useAction, useLoad } from './ui';
 
-const protocols = [
-  ['chat', 'OpenAI Chat Completions'],
-  ['responses', 'OpenAI Responses'],
-  ['anthropic', 'Anthropic Messages'],
-  ['gemini', 'Google Gemini'],
-] as const;
+const protocols: { value: ApiProtocol; label: string }[] = [
+  { value: 'responses', label: 'OpenAI Responses' },
+  { value: 'chat', label: 'OpenAI Chat Completions' },
+  { value: 'anthropic', label: 'Anthropic Messages' },
+  { value: 'gemini', label: 'Google Gemini' },
+];
 
 type ApiFieldsProps = {
-  settings: Settings; edit: <K extends keyof Settings>(field: K, value: Settings[K]) => void;
-  keyValue: string; apiKey?: string; removeKey: boolean; addressChanged: boolean; busy: boolean;
-  credentialRevision: number; setKey: (key: string) => void; setRemoveKey: (enabled: boolean) => void;
+  title: string;
+  settings: Settings;
+  edit: <K extends keyof Settings>(field: K, value: Settings[K]) => void;
+  keyValue: string;
+  apiKey?: string;
+  removeKey: boolean;
+  addressChanged: boolean;
+  busy: boolean;
+  credentialRevision: number;
+  setKey: (key: string) => void;
+  setRemoveKey: (enabled: boolean) => void;
 };
 
-export function ApiFields({
-  settings, edit, keyValue, apiKey, removeKey, addressChanged, busy, credentialRevision, setKey, setRemoveKey,
+export function ModelApiFields({
+  title,
+  settings,
+  edit,
+  keyValue,
+  apiKey,
+  removeKey,
+  addressChanged,
+  busy,
+  credentialRevision,
+  setKey,
+  setRemoveKey,
 }: ApiFieldsProps) {
   const { apiBaseUrl, apiProtocol, apiModel, hasApiKey } = settings;
   const target = { apiBaseUrl, apiProtocol };
   const hasAddress = !!apiBaseUrl.trim();
   const targetKey = JSON.stringify([apiProtocol, apiBaseUrl]);
-  const listing = useLoad(() => hasAddress
-    ? rpc<ApiEndpoints>('providers.endpoints', target)
-    : Promise.resolve(undefined), targetKey);
-  const generation = useLoad(() => hasAddress && apiModel
-    ? rpc<ApiEndpoints>('providers.endpoints', { ...target, apiModel })
-    : Promise.resolve(undefined), JSON.stringify([targetKey, apiModel]));
+
+  const listing = useLoad(
+    () => (hasAddress ? rpc<ApiEndpoints>('providers.endpoints', target) : Promise.resolve(undefined)),
+    targetKey,
+  );
+  const generation = useLoad(
+    () =>
+      hasAddress && apiModel
+        ? rpc<ApiEndpoints>('providers.endpoints', { ...target, apiModel })
+        : Promise.resolve(undefined),
+    JSON.stringify([targetKey, apiModel]),
+  );
+
+  const [models, setModels] = useState<ApiModel[]>();
+  const modelsAction = useAction();
+
+  useEffect(() => {
+    setModels(undefined);
+    modelsAction.reset();
+  }, [targetKey, credentialRevision]);
+
   const generationUrl = listing.value && (apiModel ? generation.value?.generationUrl : listing.value.generationUrl);
-  const listingUnavailable = listing.value?.modelsUrl === '';
-  const modelInput = useRef<HTMLInputElement>(null);
-  const keyId = useId();
-  const baseUrlId = useId();
+  const modelsUrl = listing.value?.modelsUrl;
+  const listingUnavailable = modelsUrl === '';
   const canUseSavedKey = hasApiKey && !addressChanged;
-  const keyNeedsAttention = hasApiKey && addressChanged && !keyValue && !removeKey;
+  const keyNeedsAttention = hasApiKey && addressChanged && !keyValue.trim() && !removeKey;
 
-  return <div className="settings-rows panel-body model-api">
-    <label>协议<select value={apiProtocol} onChange={(event) => edit('apiProtocol', event.target.value as Settings['apiProtocol'])}>
-      {protocols.map(([value, label]) => <option key={value} value={value}>{label}</option>)}
-    </select></label>
-    <div className="setting-row api-url-row">
-      <label htmlFor={baseUrlId}>Base URL</label>
-      <div className="api-url-field">
-        <input id={baseUrlId} type="url" placeholder="https://…" value={apiBaseUrl} onChange={(event) => edit('apiBaseUrl', event.target.value)} />
-        <EndpointPreview modelsUrl={listing.value?.modelsUrl} generationUrl={generationUrl}
-          generationError={listing.value ? generation.error : undefined} />
-      </div>
-    </div>
-    {listing.error && <Status error={listing.error} />}
-    <label>API 密钥<input autoComplete="new-password" type="password" value={keyValue} disabled={removeKey}
-      placeholder={canUseSavedKey ? '已保存密钥' : '输入密钥'} aria-describedby={keyNeedsAttention ? keyId : undefined}
-      onChange={(event) => setKey(event.target.value)} /></label>
-    {keyNeedsAttention && <p className="model-key-note muted" id={keyId}>地址已更改。保存前请替换或移除旧密钥。</p>}
-    {hasApiKey && <ModelSwitch checked={removeKey} busy={busy} onChange={setRemoveKey}>保存时移除旧密钥</ModelSwitch>}
-    <label>API 模型<input ref={modelInput} placeholder="输入模型 ID" value={apiModel} onChange={(event) => edit('apiModel', event.target.value)} /></label>
-    <ModelDiscovery key={JSON.stringify([targetKey, credentialRevision])}
-      target={target} apiKey={apiKey} blocked={!listing.value?.modelsUrl}
-      listingUnavailable={listingUnavailable} selected={apiModel} onSelect={(id) => {
-        edit('apiModel', id);
-        modelInput.current?.focus();
-      }} />
-  </div>;
-}
+  function fetchModels(notify = false) {
+    if (!hasAddress || listingUnavailable) return;
+    void modelsAction.run(async () => {
+      const result = await rpc<{ items: ApiModel[] }>('providers.models', { ...target, apiKey });
+      setModels(result.items ?? []);
+      if (notify) toast.success('已拉取最新可用模型列表');
+    }, { success: 'silent', failure: 'inline' });
+  }
 
-function EndpointPreview({ generationUrl, modelsUrl, generationError }: {
-  generationUrl?: string; modelsUrl?: string; generationError?: string;
-}) {
-  const panelId = useId();
-  if (!generationUrl && !modelsUrl && !generationError) return null;
-  return <>
-    <button type="button" className="icon-button endpoint-trigger" aria-label="查看实际请求地址"
-      title="查看实际请求地址" popoverTarget={panelId}><Info size={15} aria-hidden="true" /></button>
-    <div id={panelId} popover="auto" className="settings-popup endpoint-popup" role="dialog" aria-label="实际请求地址">
-      <div className="settings-popup-head">
-        <h3>实际请求地址</h3>
-        <PopupClose panelId={panelId} label="关闭请求地址" />
+  return (
+    <section className="card">
+      <div className="card-header">
+        <h2 className="card-title">{title}</h2>
+        <span className="card-sub">支持 OpenAI / Anthropic / Gemini 协议</span>
       </div>
-      <dl className="endpoint-values">
-        {generationUrl && <div><dt>生成地址</dt><dd><code>{generationUrl}</code></dd></div>}
-        {modelsUrl && <div><dt>模型列表地址</dt><dd><code>{modelsUrl}</code></dd></div>}
-      </dl>
-      {generationError && <Status error={`无法预览生成地址：${generationError}`} />}
-    </div>
-  </>;
+      <div className="card-body form-fields">
+        <div className="field-row-2">
+          <div className="field">
+            <label className="field-label" htmlFor="api-protocol">
+              接口协议
+            </label>
+            <select
+              id="api-protocol"
+              className="select"
+              disabled={busy}
+              value={apiProtocol}
+              onChange={(e) => edit('apiProtocol', e.target.value as ApiProtocol)}
+            >
+              {protocols.map((p) => (
+                <option key={p.value} value={p.value}>
+                  {p.label}
+                </option>
+              ))}
+            </select>
+          </div>
+
+          <div className="field">
+            <label className="field-label" htmlFor="api-key">
+              API 密钥
+            </label>
+            <div className="input-group">
+              <input
+                id="api-key"
+                type="password"
+                className="input"
+                autoComplete="new-password"
+                disabled={busy || removeKey}
+                value={keyValue}
+                placeholder={canUseSavedKey ? '已安全保存（留空则沿用）' : '输入 API Key'}
+                onChange={(e) => {
+                  if (removeKey) setRemoveKey(false);
+                  setKey(e.target.value);
+                }}
+              />
+              {hasApiKey && (
+                <button
+                  type="button"
+                  className={`btn btn-sm ${removeKey ? '' : 'btn-ghost'}`}
+                  disabled={busy}
+                  title={removeKey ? '撤销清除' : '保存时清除已存密钥'}
+                  onClick={() => {
+                    const next = !removeKey;
+                    setRemoveKey(next);
+                    if (next) setKey('');
+                  }}
+                >
+                  {removeKey ? '已标记清除' : '清除'}
+                </button>
+              )}
+            </div>
+          </div>
+        </div>
+
+        {keyNeedsAttention && (
+          <p className="field-hint warn">Base URL 已修改：保存前请填写新密钥，或点击右侧「清除」移除旧密钥。</p>
+        )}
+
+        <div className="field">
+          <label className="field-label" htmlFor="api-base-url">
+            Base URL
+          </label>
+          <input
+            id="api-base-url"
+            type="url"
+            className="input mono"
+            disabled={busy}
+            placeholder="https://api.example.com"
+            value={apiBaseUrl}
+            onChange={(e) => edit('apiBaseUrl', e.target.value)}
+          />
+          {listing.error && <StatusNotice error={listing.error} />}
+          {(generationUrl || modelsUrl) && (
+            <div className="field-preview mono">
+              {generationUrl && <span>实际请求：{generationUrl}</span>}
+              {modelsUrl && <span>模型列表：{modelsUrl}</span>}
+            </div>
+          )}
+          {listing.value && generation.error && <StatusNotice error={`无法预览生成地址：${generation.error}`} />}
+          {listingUnavailable && <p className="field-hint">此地址不提供模型列表接口，请直接输入模型 ID。</p>}
+        </div>
+
+        <div className="field">
+          <span className="field-label">API 模型</span>
+          <ModelCombobox
+            value={apiModel}
+            placeholder="输入模型 ID 或从右侧列表选择"
+            options={(models ?? []).map((item) => ({ id: item.id, name: item.name }))}
+            allowCustomInput
+            disabled={busy}
+            dropdownDisabled={!hasAddress || listingUnavailable}
+            busy={modelsAction.busy}
+            error={modelsAction.error ? `${modelsAction.error} 可手动输入模型 ID。` : undefined}
+            emptyMessage="模型列表为空，可手动输入模型 ID。"
+            onInputChange={(next) => edit('apiModel', next)}
+            onSelect={(id) => edit('apiModel', id)}
+            onOpenFetch={() => {
+              if (!models && !modelsAction.busy) fetchModels(false);
+            }}
+            onRefresh={() => fetchModels(true)}
+          />
+        </div>
+      </div>
+    </section>
+  );
 }

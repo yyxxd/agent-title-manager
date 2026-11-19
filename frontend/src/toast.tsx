@@ -35,7 +35,6 @@ function schedule(item: ToastItem) {
   timers.set(item.id, setTimeout(() => remove(item.id), durations[item.kind]));
 }
 
-// 相同提示复用同一条，连续触发时只重置计时，避免堆叠重复内容。
 function push(kind: ToastKind, message: string) {
   const existing = items.find((item) => item.kind === kind && item.message === message);
   if (existing) {
@@ -52,7 +51,9 @@ function push(kind: ToastKind, message: string) {
 
 function subscribe(listener: () => void) {
   listeners.add(listener);
-  return () => { listeners.delete(listener); };
+  return () => {
+    listeners.delete(listener);
+  };
 }
 
 const getSnapshot = () => items;
@@ -67,14 +68,28 @@ export function Toaster() {
   useEffect(() => () => {
     for (const id of [...timers.keys()]) clearTimer(id);
   }, []);
-  return <div className="toast-region" role="status" aria-live="polite">
-    {current.map((item) => <div className={`toast toast-${item.kind}`} key={item.id}>
-      {item.kind === 'success'
-        ? <CheckCircle2 size={15} aria-hidden="true" />
-        : <AlertCircle size={15} aria-hidden="true" />}
-      <p>{item.message}</p>
-      <button type="button" className="toast-close" aria-label="关闭提示" title="关闭提示"
-        onClick={() => remove(item.id)}><X size={14} aria-hidden="true" /></button>
-    </div>)}
-  </div>;
+
+  return (
+    <div className="toast-host" role="status" aria-live="polite">
+      {current.map((item) => (
+        <div className={`toast ${item.kind}`} key={item.id}>
+          {item.kind === 'success' ? (
+            <CheckCircle2 size={15} aria-hidden="true" />
+          ) : (
+            <AlertCircle size={15} aria-hidden="true" />
+          )}
+          <p>{item.message}</p>
+          <button
+            type="button"
+            className="toast-close"
+            aria-label="关闭提示"
+            title="关闭提示"
+            onClick={() => remove(item.id)}
+          >
+            <X size={14} aria-hidden="true" />
+          </button>
+        </div>
+      ))}
+    </div>
+  );
 }
