@@ -45,3 +45,10 @@ test("Pi 反查使用会话文件，RPC 保留原生会话 ID；空的 Orca 标�
   });
   assert.deepEqual(await bindOrca("codex", native, { locator, lookup, inherited: raw }), {});
 });
+
+test("terminal places are accepted only for Pi and Antigravity", async () => {
+  const terminal = { agent: "antigravity", kind: "terminal", orcaSessionId: raw, title: null, hostId: "local", paneKey: "tab:leaf" };
+  const lookup = async id => id === native ? refusal([raw]) : { ok: true, result: { orcaSessionId: raw, places: [terminal] } };
+  assert.ok((await bindOrca("antigravity", native, { lookup, inherited: raw })).orcaSessionId);
+  assert.deepEqual(await bindOrca("codex", native, { lookup, inherited: raw }), {});
+});

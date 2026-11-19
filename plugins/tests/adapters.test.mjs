@@ -389,7 +389,7 @@ test("回执短暂失败时只重试相同 ID 的 title.ack", async () => {
 });
 
 test("四个发布包都有独立 manifest 和运行入口", async () => {
-  for (const [id, host] of [["codex", "codex"], ["claude", "claude"], ["pi", "pi"], ["example", "external"]]) {
+  for (const [id, host] of [["codex", "codex"], ["claude", "claude"], ["pi", "pi"], ["antigravity", "antigravity"], ["example", "external"]]) {
     const root = new URL("../" + id + "/", import.meta.url);
     const manifest = JSON.parse(await readFile(new URL("agent-title-plugin.json", root), "utf8"));
     assert.equal(manifest.schemaVersion, 1);

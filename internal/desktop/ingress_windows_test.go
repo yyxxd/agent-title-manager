@@ -99,6 +99,12 @@ func TestCommunitySubmissionCannotSupplyOrcaBinding(t *testing.T) {
 	}
 }
 
+func TestAntigravityIsBuiltinAgent(t *testing.T) {
+	if !isBuiltinAgent("antigravity") {
+		t.Fatal("antigravity must use binding verification")
+	}
+}
+
 func assertBinding(t *testing.T, received <-chan json.RawMessage) {
 	t.Helper()
 	select {
