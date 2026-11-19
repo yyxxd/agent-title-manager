@@ -1,4 +1,4 @@
-import { X } from 'lucide-react';
+import { AlertCircle, Check, Copy, X } from 'lucide-react';
 import { useEffect, useRef, useState, useSyncExternalStore } from 'react';
 import { rpc } from './rpc';
 import { toast } from './toast';
@@ -12,6 +12,7 @@ type UpdateState = {
   available?: Available;
   notice?: Notice;
   error?: string;
+  logPath?: string;
   busy: boolean;
 };
 type Progress = { done: boolean; downloaded: number; total: number };
@@ -31,6 +32,11 @@ function subscribe(listener: () => void) {
 }
 function setState(next: UpdateState) {
   state = next;
+  emit();
+}
+function clearStateError() {
+  if (!state?.error) return;
+  state = { ...state, error: undefined };
   emit();
 }
 function setProgress(next?: Progress) {
@@ -55,6 +61,35 @@ function rememberDismissedVersion(version: string) {
     localStorage.setItem(dismissedKey, version);
   } catch {
     // 忽略本地存储限制，不阻断更新流程。
+  }
+}
+
+async function copyTextToClipboard(text: string): Promise<boolean> {
+  if (navigator.clipboard?.writeText) {
+    try {
+      await navigator.clipboard.writeText(text);
+      return true;
+    } catch {
+      // 剪贴板 API 不可用时使用兜底方案。
+    }
+  }
+  const textarea = document.createElement('textarea');
+  textarea.value = text;
+  textarea.setAttribute('readonly', '');
+  textarea.style.position = 'fixed';
+  textarea.style.top = '-9999px';
+  textarea.style.left = '-9999px';
+  textarea.style.opacity = '0';
+  textarea.style.pointerEvents = 'none';
+  document.body.appendChild(textarea);
+  textarea.focus();
+  textarea.select();
+  try {
+    return document.execCommand('copy');
+  } catch {
+    return false;
+  } finally {
+    document.body.removeChild(textarea);
   }
 }
 
@@ -90,9 +125,17 @@ export function UpdateSection() {
   const [loaded, setLoaded] = useState(false);
   const [confirm, setConfirm] = useState(false);
   const [notesOpen, setNotesOpen] = useState(false);
+  const [copied, setCopied] = useState(false);
+  const copyTimerRef = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
   const dismissedVersion = useRef(readDismissedVersion());
   const checking = useAction();
   const installing = useAction();
+
+  useEffect(() => {
+    return () => {
+      if (copyTimerRef.current !== undefined) clearTimeout(copyTimerRef.current);
+    };
+  }, []);
 
   useEffect(() => {
     if (loaded) return;
@@ -107,14 +150,20 @@ export function UpdateSection() {
   }, [loaded]);
 
   function check() {
+    installing.reset();
+    clearStateError();
+    setCopied(false);
     void checking.run(async () => {
       const next = await rpc<UpdateState>('desktop.update.check');
       setState(next);
       return next.available ? `发现新版本 ${next.available.version}` : '当前已是最新稳定版本';
-    }, { success: 'toast', failure: 'toast' });
+    }, { success: 'toast', failure: 'inline' });
   }
 
   function install() {
+    checking.reset();
+    clearStateError();
+    setCopied(false);
     setConfirm(false);
     setProgress({ done: false, downloaded: 0, total: view?.available?.size ?? 0 });
     void installing.run(async () => {
@@ -127,7 +176,7 @@ export function UpdateSection() {
         setProgress(undefined);
         throw error;
       }
-    }, { success: 'silent', failure: 'toast' });
+    }, { success: 'silent', failure: 'inline' });
   }
 
   const available = view?.available;
@@ -149,7 +198,30 @@ export function UpdateSection() {
     setNotesOpen(false);
   }
 
-  const errText = view?.error ?? checking.error ?? installing.error;
+  const errText = view?.error || checking.error || installing.error || undefined;
+
+  useEffect(() => {
+    setCopied(false);
+  }, [errText, view?.logPath]);
+
+  async function copyError() {
+    if (!errText) return;
+    const lines = [
+      view?.current ? `当前版本：v${view.current}` : undefined,
+      available?.version ? `目标版本：v${available.version}` : undefined,
+      `错误信息：${errText}`,
+      view?.logPath ? `日志位置：${view.logPath}` : undefined,
+    ].filter(Boolean);
+    const ok = await copyTextToClipboard(lines.join('\n'));
+    if (ok) {
+      setCopied(true);
+      if (copyTimerRef.current !== undefined) clearTimeout(copyTimerRef.current);
+      copyTimerRef.current = setTimeout(() => setCopied(false), 2000);
+      toast.success('已复制错误信息');
+    } else {
+      toast.error('复制失败，请手动选中复制');
+    }
+  }
 
   return (
     <section className="card">
@@ -221,7 +293,23 @@ export function UpdateSection() {
 
       {errText && (
         <div style={{ padding: '0 18px 16px' }}>
-          <StatusNotice error={errText} />
+          <div className="notice-banner error notice-banner-rich" role="alert">
+            <div className="notice-banner-head">
+              <div className="notice-banner-title">
+                <AlertCircle size={15} aria-hidden="true" />
+                <span className="update-error-text">{errText}</span>
+              </div>
+            </div>
+            <div className="notice-banner-body">
+              {view?.logPath && <div className="update-error-log mono">日志位置：{view.logPath}</div>}
+              <div className="notice-banner-actions">
+                <button type="button" className="btn btn-sm" onClick={() => void copyError()}>
+                  {copied ? <Check size={13} aria-hidden="true" /> : <Copy size={13} aria-hidden="true" />}
+                  <span>{copied ? '已复制' : '复制错误信息'}</span>
+                </button>
+              </div>
+            </div>
+          </div>
         </div>
       )}
 
@@ -241,7 +329,6 @@ export function UpdateSection() {
           title={`下载并安装 v${available?.version ?? ''}？`}
           confirmLabel="确认安装"
           busy={installing.busy}
-          error={installing.error}
           onCancel={() => setConfirm(false)}
           onConfirm={install}
         >

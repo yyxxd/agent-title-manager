@@ -93,7 +93,8 @@ func TestListAndSyncDefaultDisabled(t *testing.T) {
 		t.Fatal(err)
 	}
 	got := out.(struct {
-		Items []Item `json:"items"`
+		Items      []Item            `json:"items"`
+		AutoUpdate *AutoUpdateResult `json:"autoUpdate,omitempty"`
 	}).Items
 	for i, expected := range []string{"codex", "claude", "pi", "orca"} {
 		if got[i].ID != expected || got[i].Enabled || got[i].Status != "disabled" {

@@ -6,8 +6,15 @@ import { useAppearance } from './Appearance';
 import { ZheerLogo } from './icons';
 import { Models } from './Models';
 import { Overview } from './Overview';
+import { syncPluginAutoUpdate, usePluginAutoUpdateEvents } from './pluginAutoUpdate';
 import { Records, type RecordFilter } from './Records';
-import { rpc, type Plugin, type RecordItem, type Settings as SettingsData } from './rpc';
+import {
+  rpc,
+  type Plugin,
+  type PluginListResponse,
+  type RecordItem,
+  type Settings as SettingsData,
+} from './rpc';
 import { Settings } from './Settings';
 import { Toaster } from './toast';
 import { ConfirmDialog } from './ui';
@@ -46,10 +53,13 @@ function App() {
 
   const refreshShell = useCallback(() => {
     void Promise.allSettled([
-      rpc<{ items: Plugin[] }>('plugins.list'),
+      rpc<PluginListResponse>('plugins.list'),
       rpc<SettingsData>('settings.get'),
       rpc<{ items: RecordItem[] }>('records.list', { limit: 50 }),
     ]).then(([pluginsRes, settingsRes, recordsRes]) => {
+      if (pluginsRes.status === 'fulfilled') {
+        syncPluginAutoUpdate(pluginsRes.value.autoUpdate);
+      }
       setShell((prev) => {
         const plugins = pluginsRes.status === 'fulfilled' ? pluginsRes.value.items ?? [] : prev.plugins;
         const settings = settingsRes.status === 'fulfilled' ? settingsRes.value : prev.settings;
@@ -60,6 +70,8 @@ function App() {
       });
     });
   }, []);
+
+  usePluginAutoUpdateEvents(refreshShell);
 
   useEffect(() => {
     refreshShell();

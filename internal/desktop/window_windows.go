@@ -83,7 +83,7 @@ func Run(dir string, assets fs.FS, service *Service) error {
 		window.Hide()
 	})
 	service.quit = app.Quit
-	service.emit = func(name string, data any) { app.Event.Emit(name, data) }
+	service.bindEmitter(func(name string, data any) { app.Event.Emit(name, data) })
 	service.updater.bind(service.emit)
 	reportUpdateStatus(app, service)
 	connectAppearance(app, window, service)

@@ -126,7 +126,7 @@ func verifyRegistryVersion(installDir, want string) error {
 }
 
 func restartApp(path string) error {
-	cmd := exec.Command(path, "--background")
+	cmd := exec.Command(path)
 	cmd.SysProcAttr = &windows.SysProcAttr{CreationFlags: windows.DETACHED_PROCESS}
 	return cmd.Start()
 }

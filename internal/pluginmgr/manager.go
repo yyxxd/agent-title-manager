@@ -9,6 +9,7 @@ import (
 	"os"
 	"path/filepath"
 	"sort"
+	"sync"
 	"sync/atomic"
 
 	"github.com/yyxxd/agent-title-manager/internal/orcasync"
@@ -17,6 +18,27 @@ import (
 type Manager struct {
 	root, bundled string
 	gate          atomic.Pointer[enabledFlags]
+	autoUpdate    AutoUpdateResult
+	autoMu        sync.RWMutex
+}
+
+type AutoUpdateResult struct {
+	Upgraded []AutoUpdated      `json:"upgraded,omitempty"`
+	Failed   []AutoUpdateFailed `json:"failed,omitempty"`
+}
+type AutoUpdated struct {
+	ID          string `json:"id"`
+	Name        string `json:"name"`
+	FromVersion string `json:"fromVersion"`
+	ToVersion   string `json:"toVersion"`
+	Enabled     bool   `json:"enabled"`
+}
+type AutoUpdateFailed struct {
+	ID             string `json:"id"`
+	Name           string `json:"name"`
+	CurrentVersion string `json:"currentVersion"`
+	TargetVersion  string `json:"targetVersion"`
+	Error          string `json:"error"`
 }
 
 type Item struct {
@@ -136,9 +158,17 @@ func (m *Manager) Handle(ctx context.Context, method string, params json.RawMess
 		if err != nil {
 			return nil, err
 		}
+		m.autoMu.RLock()
+		summary := m.autoUpdate
+		m.autoMu.RUnlock()
+		var auto *AutoUpdateResult
+		if len(summary.Upgraded) != 0 || len(summary.Failed) != 0 {
+			auto = &summary
+		}
 		return struct {
-			Items []Item `json:"items"`
-		}{m.list(state)}, nil
+			Items      []Item            `json:"items"`
+			AutoUpdate *AutoUpdateResult `json:"autoUpdate,omitempty"`
+		}{m.list(state), auto}, nil
 	}
 	var req request
 	if len(params) == 0 || json.Unmarshal(params, &req) != nil ||

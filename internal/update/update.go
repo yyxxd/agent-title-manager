@@ -12,10 +12,12 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"net"
 	"net/http"
 	"path/filepath"
 	"strconv"
 	"strings"
+	"sync/atomic"
 	"time"
 )
 
@@ -167,9 +169,28 @@ func ParsePublicKey(text string) (ed25519.PublicKey, error) {
 
 // Source is the release source; the default is GitHub, tests use an HTTP fixture.
 type Source struct {
-	client     *http.Client
-	releaseURL string
-	publicKey  ed25519.PublicKey
+	metadata     *http.Client
+	download     *http.Client
+	releaseURL   string
+	publicKey    ed25519.PublicKey
+	stallTimeout time.Duration
+}
+
+var ErrDownloadStalled = errors.New("download stalled")
+
+type httpStatusError struct{ status int }
+
+func (e *httpStatusError) Error() string { return fmt.Sprintf("下载失败: HTTP %d", e.status) }
+func RetryableDownload(err error) bool {
+	if err == nil || errors.Is(err, ErrHashMismatch) || errors.Is(err, ErrUntrusted) || errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
+		return false
+	}
+	var status *httpStatusError
+	if errors.As(err, &status) {
+		return status.status == http.StatusTooManyRequests || status.status >= 500
+	}
+	var network net.Error
+	return errors.Is(err, ErrDownloadStalled) || errors.Is(err, io.ErrUnexpectedEOF) || errors.Is(err, io.EOF) || errors.As(err, &network)
 }
 
 func NewSource(releaseURL, publicKeyHex string) (*Source, error) {
@@ -178,9 +199,17 @@ func NewSource(releaseURL, publicKeyHex string) (*Source, error) {
 		return nil, err
 	}
 	return &Source{
-		client:     &http.Client{Timeout: 20 * time.Second},
-		releaseURL: releaseURL,
-		publicKey:  public,
+		metadata: &http.Client{Timeout: 20 * time.Second},
+		download: func() *http.Client {
+			transport := http.DefaultTransport.(*http.Transport).Clone()
+			transport.DialContext = (&net.Dialer{Timeout: 10 * time.Second}).DialContext
+			transport.ResponseHeaderTimeout = 20 * time.Second
+			transport.IdleConnTimeout = 60 * time.Second
+			return &http.Client{Transport: transport}
+		}(),
+		stallTimeout: 30 * time.Second,
+		releaseURL:   releaseURL,
+		publicKey:    public,
 	}, nil
 }
 
@@ -238,13 +267,13 @@ func (s *Source) Download(ctx context.Context, check Check, dst io.Writer, progr
 	if err != nil {
 		return err
 	}
-	response, err := s.client.Do(request)
+	response, err := s.download.Do(request)
 	if err != nil {
 		return err
 	}
 	defer response.Body.Close()
 	if response.StatusCode != http.StatusOK {
-		return fmt.Errorf("下载失败: HTTP %d", response.StatusCode)
+		return &httpStatusError{response.StatusCode}
 	}
 	if response.ContentLength >= 0 && response.ContentLength != check.Size {
 		return fmt.Errorf("%w: 下载大小不符", ErrHashMismatch)
@@ -254,7 +283,7 @@ func (s *Source) Download(ctx context.Context, check Check, dst io.Writer, progr
 	buf := make([]byte, 64*1024)
 	var written int64
 	for {
-		n, readErr := limit.Read(buf)
+		n, readErr := readWithStall(ctx, response.Body, limit, buf, s.stallTimeout)
 		if n > 0 {
 			written += int64(n)
 			if written > check.Size {
@@ -303,7 +332,32 @@ func (s *Source) fetch(ctx context.Context, url string, limit int64) ([]byte, er
 		return nil, err
 	}
 	request.Header.Set("Accept", "application/vnd.github+json")
-	response, err := s.client.Do(request)
+	var response *http.Response
+	for attempt := 0; attempt < 3; attempt++ {
+		response, err = s.metadata.Do(request)
+		if err == nil && response.StatusCode < 500 {
+			break
+		}
+		if response != nil {
+			response.Body.Close()
+		}
+		if err := ctx.Err(); err != nil {
+			return nil, err
+		}
+		if attempt == 2 {
+			if err != nil {
+				return nil, err
+			}
+			return nil, &httpStatusError{response.StatusCode}
+		}
+		timer := time.NewTimer(time.Duration(attempt+1) * 150 * time.Millisecond)
+		select {
+		case <-timer.C:
+		case <-ctx.Done():
+			timer.Stop()
+			return nil, ctx.Err()
+		}
+	}
 	if err != nil {
 		return nil, err
 	}
@@ -312,6 +366,21 @@ func (s *Source) fetch(ctx context.Context, url string, limit int64) ([]byte, er
 		return nil, fmt.Errorf("检查更新失败: HTTP %d", response.StatusCode)
 	}
 	return io.ReadAll(io.LimitReader(response.Body, limit))
+}
+
+func readWithStall(ctx context.Context, body io.ReadCloser, r io.Reader, buf []byte, timeout time.Duration) (int, error) {
+	stalled := atomic.Bool{}
+	watchdog := time.AfterFunc(timeout, func() { stalled.Store(true); _ = body.Close() })
+	n, err := r.Read(buf)
+	if !watchdog.Stop() && stalled.Load() {
+		return n, ErrDownloadStalled
+	}
+	select {
+	case <-ctx.Done():
+		return n, ctx.Err()
+	default:
+	}
+	return n, err
 }
 
 func findAsset(assets []Asset, name string) *Asset {

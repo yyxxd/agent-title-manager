@@ -98,13 +98,13 @@ func (e *Engine) submit(ctx context.Context, p submission) (accepted, error) {
 		err := tx.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM events
 			WHERE agent=? AND session_id=? AND revision=? AND native_only=?)`, p.Agent, p.SessionID, p.Revision, p.NativeOnly).Scan(&exists)
 		if err != nil || exists {
-			return accepted{exists}, err
+			return accepted{Accepted: exists}, err
 		}
 		s, err := observeSubmission(ctx, tx, p, e.now().UnixMilli())
 		if err != nil {
 			return accepted{}, err
 		}
-		return accepted{true}, e.insertSubmission(ctx, tx, p, s, payload)
+		return accepted{Accepted: true}, e.insertSubmission(ctx, tx, p, s, payload)
 	})
 	if err == nil {
 		signal(e.modelWake)

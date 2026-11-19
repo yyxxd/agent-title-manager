@@ -1,8 +1,15 @@
-import { Plus } from 'lucide-react';
-import { useState } from 'react';
+import { AlertCircle, CheckCircle2, Plus, X } from 'lucide-react';
+import { useEffect, useState } from 'react';
 import { AgentIcon } from './icons';
+import {
+  dismissFailedBanner,
+  dismissUpgradedBanner,
+  formatPluginVersionRange,
+  syncPluginAutoUpdate,
+  usePluginAutoUpdate,
+} from './pluginAutoUpdate';
 import { PluginModal, type PluginModalState } from './PluginModal';
-import { rpc, type Plugin } from './rpc';
+import { rpc, type Plugin, type PluginListResponse } from './rpc';
 import { toast } from './toast';
 import { StatusNotice, Switch, useAction, useLoad } from './ui';
 
@@ -24,12 +31,29 @@ const statusPillMeta: Record<string, { className: string; dot: string; label: st
 export function Agents({ onChanged }: { onChanged: () => void }) {
   const [refresh, setRefresh] = useState(0);
   const [modal, setModal] = useState<PluginModalState | null>(null);
-  const { value, error, loading } = useLoad(() => rpc<{ items: Plugin[] }>('plugins.list'), refresh);
+  const { value, error, loading } = useLoad(() => rpc<PluginListResponse>('plugins.list'), refresh);
   const action = useAction();
+  const { result: autoUpdate, upgradedDismissed, failedDismissed } = usePluginAutoUpdate();
+
+  useEffect(() => {
+    if (value?.autoUpdate) syncPluginAutoUpdate(value.autoUpdate);
+  }, [value?.autoUpdate]);
 
   const items = value?.items ?? [];
   const builtin = items.filter((item) => item.kind === 'builtin');
   const community = items.filter((item) => item.kind !== 'builtin');
+
+  const unresolvedFailed = (autoUpdate?.failed ?? []).filter((item) => {
+    if (!item.id) return true;
+    const plugin = items.find((p) => p.id === item.id);
+    if (!plugin) return true;
+    const resolvedByNoAvailable = !plugin.availableVersion;
+    const resolvedByVersion = Boolean(item.targetVersion && plugin.version === item.targetVersion);
+    return !(resolvedByNoAvailable || resolvedByVersion);
+  });
+  const upgradedItems = autoUpdate?.upgraded ?? [];
+  const showFailedBanner = unresolvedFailed.length > 0 && !failedDismissed;
+  const showUpgradedBanner = upgradedItems.length > 0 && !upgradedDismissed;
 
   function reload(successMessage?: string) {
     setRefresh((n) => n + 1);
@@ -72,6 +96,84 @@ export function Agents({ onChanged }: { onChanged: () => void }) {
       {error && (
         <div style={{ marginBottom: 16 }}>
           <StatusNotice error={error} />
+        </div>
+      )}
+
+      {(showFailedBanner || showUpgradedBanner) && (
+        <div className="section-stack" style={{ marginBottom: 16, gap: 12 }}>
+          {showFailedBanner && (
+            <div className="notice-banner error notice-banner-rich" role="alert">
+              <div className="notice-banner-head">
+                <div className="notice-banner-title">
+                  <AlertCircle size={15} aria-hidden="true" />
+                  <span>内置插件启动自动更新失败</span>
+                </div>
+                <button
+                  type="button"
+                  className="notice-banner-dismiss"
+                  aria-label="关闭提示"
+                  title="关闭提示"
+                  onClick={dismissFailedBanner}
+                >
+                  <X size={14} aria-hidden="true" />
+                </button>
+              </div>
+              <div className="notice-banner-body">
+                <ul className="notice-banner-list">
+                  {unresolvedFailed.map((item, index) => {
+                    const label = item.name || item.id || '内置插件';
+                    const ver = formatPluginVersionRange(item.currentVersion, item.targetVersion);
+                    return (
+                      <li key={`${item.id}:${item.name}:${index}`}>
+                        <strong>{label}</strong>
+                        {ver ? <span className="mono"> {ver}</span> : null}
+                        {item.error ? `：${item.error}` : ''}
+                      </li>
+                    );
+                  })}
+                </ul>
+                <p className="notice-banner-hint">
+                  {unresolvedFailed.some((item) => Boolean(item.id))
+                    ? '旧版本仍可继续使用，可点击下方对应插件的「更新至 v...」手动重试。'
+                    : '旧版本仍可继续使用，请检查内置插件状态后重试。'}
+                </p>
+              </div>
+            </div>
+          )}
+
+          {showUpgradedBanner && (
+            <div className="notice-banner ok notice-banner-rich" role="status">
+              <div className="notice-banner-head">
+                <div className="notice-banner-title">
+                  <CheckCircle2 size={15} aria-hidden="true" />
+                  <span>
+                    已自动更新内置插件：
+                    {upgradedItems
+                      .map((item) => {
+                        const label = item.name || item.id || '内置插件';
+                        const ver = formatPluginVersionRange(item.fromVersion, item.toVersion);
+                        return ver ? `${label} ${ver}` : label;
+                      })
+                      .join('、')}
+                  </span>
+                </div>
+                <button
+                  type="button"
+                  className="notice-banner-dismiss"
+                  aria-label="关闭提示"
+                  title="关闭提示"
+                  onClick={dismissUpgradedBanner}
+                >
+                  <X size={14} aria-hidden="true" />
+                </button>
+              </div>
+              {upgradedItems.some((item) => item.enabled) && (
+                <div className="notice-banner-body">
+                  <p className="notice-banner-hint">已打开的 Agent 会话将在下次重启后应用新版本。</p>
+                </div>
+              )}
+            </div>
+          )}
         </div>
       )}
 

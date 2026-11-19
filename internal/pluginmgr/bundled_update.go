@@ -2,10 +2,45 @@ package pluginmgr
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
+	"fmt"
 	"os"
 	"strings"
 )
+
+func (m *Manager) AutoUpdateBuiltins(ctx context.Context) (AutoUpdateResult, error) {
+	result := AutoUpdateResult{}
+	state, loadErr := m.load()
+	if loadErr != nil {
+		result.Failed = append(result.Failed, AutoUpdateFailed{ID: "", Name: "内置插件", Error: loadErr.Error()})
+		m.autoMu.Lock()
+		m.autoUpdate = result
+		m.autoMu.Unlock()
+		return result, nil
+	}
+	for _, id := range []string{"codex", "claude", "pi"} {
+		old, ok := state.Items[id]
+		if !ok || old.Dir == "" {
+			continue
+		}
+		manifest, err := m.bundledManifest(id)
+		if err != nil || !newerVersion(manifest.Version, old.Manifest.Version) {
+			continue
+		}
+		item, err := m.Handle(ctx, "plugins.update", json.RawMessage(fmt.Sprintf(`{"id":%q,"source":"bundled"}`, id)))
+		if err != nil {
+			result.Failed = append(result.Failed, AutoUpdateFailed{ID: id, Name: builtins[id], CurrentVersion: old.Manifest.Version, TargetVersion: manifest.Version, Error: err.Error()})
+			continue
+		}
+		updated := item.(Item)
+		result.Upgraded = append(result.Upgraded, AutoUpdated{ID: id, Name: builtins[id], FromVersion: old.Manifest.Version, ToVersion: updated.Version, Enabled: updated.Enabled})
+	}
+	m.autoMu.Lock()
+	m.autoUpdate = result
+	m.autoMu.Unlock()
+	return result, nil
+}
 
 func (m *Manager) updateBuiltin(ctx context.Context, state registry, id string) (any, error) {
 	if state.Pending != nil {

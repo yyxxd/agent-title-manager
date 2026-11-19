@@ -34,6 +34,7 @@ type updateController struct {
 	latest     update.Check
 	enabled    bool
 	busy       bool
+	lastError  string
 	emit       func(string, any)
 	quit       func()
 	launch     func(string, string) error
@@ -53,6 +54,9 @@ func NewUpdateController(appDir, dataDir, current, publicKey, releaseURL string)
 	if err != nil {
 		return nil, err
 	}
+	c.mu.Lock()
+	c.lastError = ""
+	c.mu.Unlock()
 	c.source, c.enabled = source, true
 	return c, nil
 }
@@ -63,6 +67,7 @@ type updateView struct {
 	Available *update.Check  `json:"available,omitempty"`
 	Notice    *update.Status `json:"notice,omitempty"`
 	Error     string         `json:"error,omitempty"`
+	LogPath   string         `json:"logPath,omitempty"`
 	Busy      bool           `json:"busy"`
 }
 
@@ -95,22 +100,28 @@ func (c *updateController) snapshot() (updateView, error) {
 		return updateView{}, errors.New("更新组件未初始化")
 	}
 	c.mu.Lock()
-	defer c.mu.Unlock()
-	view := updateView{Current: c.current, Enabled: c.enabled, Busy: c.busy}
-	if c.enabled && c.latest.Version != "" {
-		available := c.latest
-		view.Available = &available
-	}
+	view := c.viewLocked()
+	c.mu.Unlock()
 	if notice, err := update.ConsumeStatus(c.dataDir); err == nil && notice.Message != "" {
 		view.Notice = &notice
 	}
 	return view, nil
 }
 
+func (c *updateController) viewLocked() updateView {
+	view := updateView{Current: c.current, Enabled: c.enabled, Busy: c.busy, LogPath: filepath.Join(c.dataDir, "updates", "update.log"), Error: c.lastError}
+	if c.enabled && c.latest.Version != "" {
+		available := c.latest
+		view.Available = &available
+	}
+	return view
+}
+
 func (c *updateController) start(ctx context.Context) {
 	if c == nil || !c.enabled {
 		return
 	}
+	_ = cleanupInstallers(filepath.Join(c.dataDir, "updates"))
 	go func() {
 		// A short delay keeps startup work off the UI's critical path.
 		timer := time.NewTimer(3 * time.Second)
@@ -142,15 +153,21 @@ func (c *updateController) refresh(ctx context.Context) (updateView, error) {
 
 func (c *updateController) checkNow(ctx context.Context) (update.Check, error) {
 	check, err := c.source.CheckLatest(ctx, c.current)
+	c.logResult("check", err)
 	c.mu.Lock()
 	c.latest = update.Check{}
+	if err == nil || errors.Is(err, update.ErrNoUpdate) {
+		c.lastError = ""
+	} else {
+		c.lastError = err.Error()
+	}
 	if err == nil {
 		c.latest = check
 	}
 	c.mu.Unlock()
 	if c.emit != nil {
 		c.mu.Lock()
-		view := updateView{Current: c.current, Enabled: c.enabled, Busy: c.busy}
+		view := updateView{Current: c.current, Enabled: c.enabled, Busy: c.busy, Error: c.lastError, LogPath: filepath.Join(c.dataDir, "updates", "update.log")}
 		if c.enabled && c.latest.Version != "" {
 			available := c.latest
 			view.Available = &available
@@ -194,11 +211,15 @@ func (c *updateController) install(ctx context.Context, raw json.RawMessage) (ma
 
 	installer, err := c.download(ctx, check)
 	if err != nil {
+		c.setError("download", err)
 		if c.emit != nil {
 			c.emit("desktop:update-progress", map[string]any{"done": false, "downloaded": 0, "total": 0})
 		}
 		return nil, err
 	}
+	c.mu.Lock()
+	c.lastError = ""
+	c.mu.Unlock()
 	installDir := request.InstallDir
 	if installDir == "" {
 		installDir, err = detectInstallDir()
@@ -207,9 +228,23 @@ func (c *updateController) install(ctx context.Context, raw json.RawMessage) (ma
 		}
 	}
 	if err := c.handoff(check, installer, installDir); err != nil {
+		c.setError("handoff", err)
 		return nil, err
 	}
 	return map[string]any{"started": true}, nil
+}
+
+func (c *updateController) setError(operation string, err error) {
+	c.mu.Lock()
+	c.lastError = err.Error()
+	c.mu.Unlock()
+	c.logResult(operation, err)
+	if c.emit != nil {
+		c.mu.Lock()
+		view := c.viewLocked()
+		c.mu.Unlock()
+		c.emit("desktop:update-state", view)
+	}
 }
 
 func (c *updateController) download(ctx context.Context, check update.Check) (string, error) {
@@ -217,26 +252,49 @@ func (c *updateController) download(ctx context.Context, check update.Check) (st
 	if err := os.MkdirAll(dir, 0700); err != nil {
 		return "", err
 	}
-	file, err := os.CreateTemp(dir, ".installer-*")
-	if err != nil {
-		return "", err
-	}
-	defer file.Close()
+	_ = cleanupInstallers(dir)
 	progress := func(done, total int64) {
 		if c.emit != nil {
 			c.emit("desktop:update-progress", map[string]any{"done": false, "downloaded": done, "total": total})
 		}
 	}
-	if err := c.source.Download(ctx, check, file, progress); err != nil {
-		os.Remove(file.Name())
+	var file *os.File
+	var err error
+	for attempt := 0; attempt < 3; attempt++ {
+		file, err = os.CreateTemp(dir, ".installer-*")
+		if err != nil {
+			return "", err
+		}
+		err = c.source.Download(ctx, check, file, progress)
+		closeErr := file.Close()
+		if err == nil {
+			err = closeErr
+		}
+		if err == nil {
+			break
+		}
+		if removeErr := os.Remove(file.Name()); removeErr != nil {
+			c.logResult("cleanup", removeErr)
+		}
+		c.logResult(fmt.Sprintf("download retry %d", attempt+1), err)
+		if !update.RetryableDownload(err) {
+			return "", err
+		}
+		if attempt < 2 {
+			timer := time.NewTimer(time.Duration(attempt+1) * 200 * time.Millisecond)
+			select {
+			case <-timer.C:
+			case <-ctx.Done():
+				timer.Stop()
+				return "", ctx.Err()
+			}
+		}
+	}
+	if err != nil {
 		return "", err
 	}
 	if c.emit != nil {
 		c.emit("desktop:update-progress", map[string]any{"done": true, "downloaded": check.Size, "total": check.Size})
-	}
-	if err := file.Close(); err != nil {
-		os.Remove(file.Name())
-		return "", err
 	}
 	// Verify the final filename is the signed one before handoff.
 	final := filepath.Join(dir, check.Installer)
@@ -251,6 +309,41 @@ func (c *updateController) download(ctx context.Context, check update.Check) (st
 		return "", err
 	}
 	return final, nil
+}
+
+func cleanupInstallers(dir string) error {
+	entries, err := os.ReadDir(dir)
+	if err != nil {
+		return err
+	}
+	var joined error
+	for _, entry := range entries {
+		if len(entry.Name()) > 11 && entry.Name()[:11] == ".installer-" {
+			joined = errors.Join(joined, os.Remove(filepath.Join(dir, entry.Name())))
+		}
+	}
+	return joined
+}
+
+func (c *updateController) logResult(operation string, err error) {
+	dir := filepath.Join(c.dataDir, "updates")
+	_ = os.MkdirAll(dir, 0700)
+	path := filepath.Join(dir, "update.log")
+	line := fmt.Sprintf("%s %s %v\n", time.Now().Format(time.RFC3339), operation, err)
+	if err == nil {
+		line = fmt.Sprintf("%s %s ok\n", time.Now().Format(time.RFC3339), operation)
+	}
+	f, openErr := os.OpenFile(path, os.O_CREATE|os.O_APPEND|os.O_WRONLY, 0600)
+	if openErr == nil {
+		_, _ = f.WriteString(line)
+		_ = f.Close()
+	}
+	if info, statErr := os.Stat(path); statErr == nil && info.Size() > 1<<20 {
+		data, readErr := os.ReadFile(path)
+		if readErr == nil {
+			_ = os.WriteFile(path, data[len(data)/2:], 0600)
+		}
+	}
 }
 
 func (c *updateController) handoff(check update.Check, installer, installDir string) error {

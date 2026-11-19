@@ -89,6 +89,32 @@ export type Plugin = {
   entryPath?: string;
 };
 
+export type AutoUpdatedPlugin = {
+  id: string;
+  name: string;
+  fromVersion: string;
+  toVersion: string;
+  enabled: boolean;
+};
+
+export type AutoUpdateFailedPlugin = {
+  id: string;
+  name: string;
+  currentVersion: string;
+  targetVersion: string;
+  error: string;
+};
+
+export type PluginAutoUpdateResult = {
+  upgraded?: AutoUpdatedPlugin[];
+  failed?: AutoUpdateFailedPlugin[];
+};
+
+export type PluginListResponse = {
+  items: Plugin[];
+  autoUpdate?: PluginAutoUpdateResult;
+};
+
 export type Attempt = TokenUsage & {
   provider: string;
   model: string;

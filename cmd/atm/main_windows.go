@@ -54,6 +54,7 @@ func run() error {
 		}
 		return desktop.Backend{
 			Engine: core.Handle, Plugins: plugins.Handle, Enabled: plugins.Enabled,
+			AutoUpdateBuiltins: func(ctx context.Context) (any, error) { return plugins.AutoUpdateBuiltins(ctx) },
 			ResolveTitleOrigin: orcasync.ResolveTitleOrigin, Close: core.Close,
 		}, nil
 	})

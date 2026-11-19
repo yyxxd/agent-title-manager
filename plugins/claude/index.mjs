@@ -36,13 +36,25 @@ async function submitStop(input, identified, rpc, binding) {
   } while (true);
 }
 
-async function confirm(input, identified, rpc) {
+async function confirm(input, identified, rpc, binding) {
   if (typeof input.id !== "string" || typeof input.title !== "string") return;
   const deadline = Date.now() + 12_000;
   do {
     const title = readObservedTitle(identified);
     if (title === input.title) {
-      try { await ack(rpc, { agent: "claude", sessionId: identified.sessionId }, input, title); return; }
+      try {
+        const ackResult = await ack(rpc, { agent: "claude", sessionId: identified.sessionId }, input, title);
+        if (ackResult?.accepted && ackResult.syncStatus && ackResult.syncStatus !== "unbound") return;
+        const native = snapshot(identified, input);
+        if (!native?.currentTitle) return;
+        try {
+          const orca = await binding(native.agent, native.sessionId);
+          if (native.currentTitle === title && orca?.orcaSessionId) {
+            await submitNative(rpc, { ...native, revision: native.revision ?? "session-confirm" }, orca);
+          }
+        } catch { /* ack 已完成，补发失败不应再次确认 */ }
+        return;
+      }
       catch (error) { if (Date.now() >= deadline) throw error; }
     } else if (title !== undefined && title !== input.baseTitle) {
       return;
@@ -56,7 +68,7 @@ export async function handleClaude(mode, input, rpc, runBackground = background,
   const identified = identify(input, configDir);
   if (!identified) return {};
   if (mode === "confirm") {
-    await confirm(input, identified, rpc);
+    await confirm(input, identified, rpc, binding);
     return {};
   }
   if (mode === "native") {
