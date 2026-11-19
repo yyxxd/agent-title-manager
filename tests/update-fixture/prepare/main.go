@@ -64,13 +64,18 @@ func run() error {
 	if err := file.Close(); err != nil {
 		return err
 	}
+	manifestPath := filepath.Join(updates, "update-manifest.json")
+	if err := os.WriteFile(manifestPath, check.Manifest, 0600); err != nil {
+		return err
+	}
 	copyPath := filepath.Join(updates, "atm-update.exe")
 	if err := copyFile(*helper, copyPath); err != nil {
 		return err
 	}
 	handoff := update.Handoff{AppPID: uint32(os.Getpid()), Installer: installerPath,
 		InstallDir: *installDir, DataDir: *dataDir, Version: check.Version,
-		Restart: filepath.Join(*installDir, "AgentTitleManager.exe"), Isolated: true}
+		PreviousVersion: *current, Restart: filepath.Join(*installDir, "AgentTitleManager.exe"),
+		Manifest: manifestPath, Isolated: true}
 	data, err := json.Marshal(handoff)
 	if err != nil {
 		return err

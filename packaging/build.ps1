@@ -40,7 +40,8 @@ try {
     $desktopLinkFlags = "-s -w -H windowsgui -X github.com/yyxxd/agent-title-manager/internal/desktop.buildVersion=$Version -X github.com/yyxxd/agent-title-manager/internal/desktop.updatePublicKey=$UpdatePublicKey"
     Invoke-Checked 'go' @('build', '-trimpath', '-tags', 'production', '-ldflags', $desktopLinkFlags, '-o', (Join-Path $stage 'AgentTitleManager.exe'), './cmd/atm')
     Invoke-Checked 'go' @('build', '-trimpath', '-ldflags', '-s -w', '-o', (Join-Path $stage 'atm-bridge.exe'), './cmd/atm-bridge')
-    Invoke-Checked 'go' @('build', '-trimpath', '-ldflags', '-s -w', '-o', (Join-Path $stage 'atm-update.exe'), './cmd/atm-update')
+    $helperLinkFlags = "-s -w -X github.com/yyxxd/agent-title-manager/internal/update.updatePublicKey=$UpdatePublicKey"
+    Invoke-Checked 'go' @('build', '-trimpath', '-ldflags', $helperLinkFlags, '-o', (Join-Path $stage 'atm-update.exe'), './cmd/atm-update')
     foreach ($id in @('codex', 'claude', 'pi', 'example')) {
         Copy-Item -LiteralPath "plugins\$id" -Destination "$stage\plugins\$id" -Recurse
     }

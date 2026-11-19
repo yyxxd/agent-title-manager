@@ -1,58 +1,101 @@
-import { useEffect, useState } from 'react';
-import { errorText, rpc } from './rpc';
+import { useEffect, useSyncExternalStore, useState } from 'react';
+import { rpc } from './rpc';
 import { toast } from './toast';
-import { ConfirmDialog, Section, Status, useAction, useLoad } from './ui';
+import { ConfirmDialog, Section, Status, useAction } from './ui';
 import './update.css';
 
 type Available = { version: string; notes: string; size: number; sha256: string };
-type UpdateState = { current: string; enabled: boolean; available?: Available; error?: string; busy: boolean };
+type Notice = { ok: boolean; version: string; message: string };
+type UpdateState = {
+  current: string; enabled: boolean; available?: Available; notice?: Notice;
+  error?: string; busy: boolean;
+};
+type Progress = { done: boolean; downloaded: number; total: number };
+
+// Module store lets the App subscribe once, so background checks and restart
+// results reach the UI from any page, not only while settings is mounted.
+const listeners = new Set<() => void>();
+let state: UpdateState | undefined;
+let progress: Progress | undefined;
+
+function emit() { for (const listener of listeners) listener(); }
+function subscribe(listener: () => void) { listeners.add(listener); return () => { listeners.delete(listener); }; }
+function setState(next: UpdateState) { state = next; emit(); }
+function setProgress(next?: Progress) { progress = next; emit(); }
+const getState = () => state;
+const getProgress = () => progress;
+
+// Called once at app root. Keeps subscriptions alive regardless of page.
+export function useUpdateEvents() {
+  useEffect(() => {
+    const events = window.wails?.Events;
+    if (!events) return;
+    const stops = [
+      events.On('desktop:update-state', ({ data }) => setState(data as UpdateState)),
+      events.On('desktop:update-progress', ({ data }) => {
+        const event = data as Progress;
+        setProgress(event.done ? undefined : event);
+      }),
+      events.On('desktop:update-status', () => {
+        // Fetch consumes the helper result and returns it as notice.
+        void rpc<UpdateState>('desktop.update.get').then((next) => {
+          setState(next);
+          if (next.notice) {
+            if (next.notice.ok) toast.success(next.notice.message);
+            else toast.error(next.notice.message);
+          }
+        }, () => undefined);
+      }),
+    ];
+    return () => {
+      for (const stop of stops) stop?.();
+    };
+  }, []);
+}
 
 export function UpdateSection() {
-  const { value, error } = useLoad(() => rpc<UpdateState>('desktop.update.get'), 'update');
-  const [state, setState] = useState<UpdateState>();
+  const view = useSyncExternalStore(subscribe, getState);
+  const downloading = useSyncExternalStore(subscribe, getProgress);
+  const [loaded, setLoaded] = useState(false);
   const [confirm, setConfirm] = useState(false);
-  const [progress, setProgress] = useState<{ done: number; total: number }>();
   const checking = useAction();
   const installing = useAction();
-  const view = state ?? value;
 
+  // Initial fetch also collects a pending helper result if the event was missed.
   useEffect(() => {
-    const stop = window.wails?.Events?.On('desktop:update-progress', ({ data }) => {
-      const event = data as { downloaded: number; total: number };
-      setProgress({ done: event.downloaded, total: event.total });
-    });
-    return stop;
-  }, []);
-  useEffect(() => {
-    const stop = window.wails?.Events?.On('desktop:update-status', ({ data }) => {
-      const status = data as { ok: boolean; version: string; message: string };
-      if (status.ok) toast.success(status.message);
-      else toast.error(status.message);
-    });
-    return stop;
-  }, []);
+    if (loaded) return;
+    setLoaded(true);
+    void rpc<UpdateState>('desktop.update.get').then((next) => {
+      setState(next);
+      if (next.notice) {
+        if (next.notice.ok) toast.success(next.notice.message);
+        else toast.error(next.notice.message);
+      }
+    }, () => undefined);
+  }, [loaded]);
 
   function check() {
     void checking.run(async () => {
       const next = await rpc<UpdateState>('desktop.update.check');
       setState(next);
-      return next.available
-        ? `发现新版本 ${next.available.version}`
-        : '当前已是最新版本';
+      return next.available ? `发现新版本 ${next.available.version}` : '当前已是最新版本';
     }, { success: 'toast', failure: 'toast' });
   }
 
   function install() {
     setConfirm(false);
-    setProgress({ done: 0, total: view?.available?.size ?? 0 });
+    setProgress({ done: false, downloaded: 0, total: view?.available?.size ?? 0 });
     void installing.run(async () => {
-      const result = await rpc<{ started: boolean }>('desktop.update.install', {
-        installDir: '',
-      });
-      if (!result.started) throw new Error('更新未能启动，请重试。');
-      // The helper waits for this process to exit before installing.
-      await rpc<void>('desktop.quit');
-      return '';
+      try {
+        const result = await rpc<{ started: boolean }>('desktop.update.install', { installDir: '' });
+        if (!result.started) throw new Error('更新未能启动，请重试。');
+        // The helper waits for this process to exit before installing.
+        await rpc<void>('desktop.quit');
+        return '';
+      } catch (error) {
+        setProgress(undefined);
+        throw error;
+      }
     }, { success: 'silent', failure: 'toast' });
   }
 
@@ -68,7 +111,7 @@ export function UpdateSection() {
       <div className="setting-row">
         <span>{available ? `发现新版本 ${available.version}` : '更新状态'}</span>
         <div className="update-actions">
-          <button type="button" disabled={busy || !view?.enabled} onClick={check}>
+          <button type="button" disabled={busy || view?.enabled === false} onClick={check}>
             {checking.busy ? '检查中…' : '检查更新'}
           </button>
           {available && <button type="button" className="primary" disabled={installing.busy}
@@ -81,16 +124,16 @@ export function UpdateSection() {
           <span>更新说明</span>
           <pre className="update-notes">{available.notes || '本次更新未提供说明。'}</pre>
         </div>
-        {progress && <div className="update-progress" role="status" aria-live="polite">
-          <div className="update-progress-track">
-            <div className="update-progress-fill" style={{
-              width: progress.total > 0 ? `${Math.min(100, progress.done / progress.total * 100)}%` : '0%',
-            }} />
-          </div>
-          <span>正在下载安装包{progress.total > 0 ? ` ${Math.round(progress.done / progress.total * 100)}%` : '…'}</span>
-        </div>}
       </>}
-      <Status error={error ?? checking.error ?? installing.error ?? view?.error} />
+      {downloading && <div className="update-progress" role="status" aria-live="polite">
+        <div className="update-progress-track">
+          <div className="update-progress-fill" style={{
+            width: downloading.total > 0 ? `${Math.min(100, downloading.downloaded / downloading.total * 100)}%` : '0%',
+          }} />
+        </div>
+        <span>正在下载安装包{downloading.total > 0 ? ` ${Math.round(downloading.downloaded / downloading.total * 100)}%` : '…'}</span>
+      </div>}
+      <Status error={view?.error ?? checking.error ?? installing.error} />
     </div>
     {confirm && <ConfirmDialog title="下载并安装更新" confirmLabel="确认安装" busy={installing.busy}
       error={installing.error} onCancel={() => setConfirm(false)} onConfirm={install}>

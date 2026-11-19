@@ -6,6 +6,7 @@ import { Models } from './Models';
 import { Plugins } from './Plugins';
 import { Records } from './Records';
 import { Toaster } from './toast';
+import { useUpdateEvents } from './Update';
 import './style.css';
 import './refinement.css';
 import './controls.css';
@@ -19,6 +20,7 @@ const pages = [
 ] as const;
 
 function App() {
+  useUpdateEvents();
   const [page, setPage] = useState<(typeof pages)[number][0]>('overview');
   const [revision, setRevision] = useState(0);
   const appearance = useAppearance();

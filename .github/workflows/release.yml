@@ -13,6 +13,8 @@ jobs:
     runs-on: windows-latest
     steps:
       - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
 
       - uses: actions/setup-go@v5
         with:
@@ -35,7 +37,6 @@ jobs:
           if (-not $env:SEED -or -not $env:PUBLIC) {
             throw '发布签名密钥或公钥未配置：请设置 Secret UPDATE_SIGNING_SEED 与变量 UPDATE_PUBLIC_KEY。'
           }
-          # Derive the public key from the seed and require it to match the configured value.
           $env:ATM_SIGNING_SEED = $env:SEED
           $derived = go run ./internal/releasekey
           if ($derived -ne $env:PUBLIC.Trim().ToLowerInvariant()) {
@@ -63,15 +64,19 @@ jobs:
           UPDATE_PUBLIC_KEY: ${{ vars.UPDATE_PUBLIC_KEY }}
         run: |
           $version = $env:GITHUB_REF_NAME.TrimStart('v')
-          .\packaging\build.ps1 -NodeDistribution (Join-Path $pwd 'node-dist') -Version $version -UpdatePublicKey $env:UPDATE_PUBLIC_KEY
+          # The archive expands to node-vX.Y.Z-win-x64; build.ps1 needs that inner directory.
+          $node = Join-Path $pwd 'node-dist/node-v22.14.0-win-x64'
+          if (-not (Test-Path (Join-Path $node 'node.exe'))) { throw 'Node.js 解压目录缺少 node.exe。' }
+          .\packaging\build.ps1 -NodeDistribution $node -Version $version -UpdatePublicKey $env:UPDATE_PUBLIC_KEY
 
       - name: Sign update manifest
         shell: pwsh
         env:
           ATM_SIGNING_KEY: ${{ secrets.UPDATE_SIGNING_SEED }}
-          ATM_RELEASE_NOTES: ${{ github.event.release.body }}
         run: |
           $version = $env:GITHUB_REF_NAME.TrimStart('v')
+          # A tag push has no release body; the signed tag commit message is the release note.
+          $env:ATM_RELEASE_NOTES = (git log -1 --format=%B $env:GITHUB_REF_NAME).Trim()
           $installer = "out\AgentTitleManager-$version-windows-x64-setup.exe"
           $hash = (Get-FileHash -Algorithm SHA256 -LiteralPath $installer).Hash.ToLowerInvariant()
           $size = (Get-Item -LiteralPath $installer).Length
@@ -84,6 +89,7 @@ jobs:
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
+          $notes = (git log -1 --format=%B $env:GITHUB_REF_NAME).Trim()
           gh release create $env:GITHUB_REF_NAME `
             $env:INSTALLER out\update-manifest.json `
-            --title $env:GITHUB_REF_NAME --generate-notes
+            --title $env:GITHUB_REF_NAME --notes $notes
