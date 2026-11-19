@@ -24,7 +24,8 @@ func TestEnabledBuiltinDiscoversAndAppliesBundledUpdate(t *testing.T) {
 		t.Fatal(err)
 	}
 	items := listed.(struct {
-		Items []Item `json:"items"`
+		Items      []Item            `json:"items"`
+		AutoUpdate *AutoUpdateResult `json:"autoUpdate,omitempty"`
 	}).Items
 	if list := items[0]; !list.Enabled || list.Version != "0.1.0" || list.AvailableVersion != "0.1.1" {
 		t.Fatalf("upgrade is not visible: %+v", list)

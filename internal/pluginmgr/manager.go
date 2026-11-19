@@ -9,6 +9,7 @@ import (
 	"os"
 	"path/filepath"
 	"sort"
+	"sync"
 	"sync/atomic"
 
 	"github.com/yyxxd/agent-title-manager/internal/orcasync"
@@ -18,6 +19,7 @@ type Manager struct {
 	root, bundled string
 	gate          atomic.Pointer[enabledFlags]
 	autoUpdate    AutoUpdateResult
+	autoMu        sync.RWMutex
 }
 
 type AutoUpdateResult struct {
@@ -167,12 +169,17 @@ func (m *Manager) Handle(ctx context.Context, method string, params json.RawMess
 		if err != nil {
 			return nil, err
 		}
+		m.autoMu.RLock()
+		summary := m.autoUpdate
+		m.autoMu.RUnlock()
+		var auto *AutoUpdateResult
+		if len(summary.Upgraded) != 0 || len(summary.Failed) != 0 {
+			auto = &summary
+		}
 		return struct {
-			Items []Item `json:"items"`
-		}{m.list(state)}, nil
-	}
-	if method == "plugins.auto-update" {
-		return m.AutoUpdateBuiltins(ctx)
+			Items      []Item            `json:"items"`
+			AutoUpdate *AutoUpdateResult `json:"autoUpdate,omitempty"`
+		}{m.list(state), auto}, nil
 	}
 	var req request
 	if len(params) == 0 || json.Unmarshal(params, &req) != nil ||

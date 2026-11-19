@@ -11,11 +11,13 @@ import (
 
 	"github.com/wailsapp/wails/v3/pkg/application"
 	"github.com/yyxxd/agent-title-manager/internal/ipc"
+	"github.com/yyxxd/agent-title-manager/internal/pluginmgr"
 )
 
 type Backend struct {
 	Engine             ipc.Handler
 	Plugins            ipc.Handler
+	AutoUpdateBuiltins func(context.Context) (any, error)
 	Enabled            func(context.Context, string) (bool, error)
 	ResolveTitleOrigin func(context.Context, string, string, string, string) (string, string, bool)
 	Close              func() error
@@ -32,7 +34,16 @@ type Service struct {
 	appearance        *appearance
 	appearanceChanged func()
 	emit              func(string, any)
+	pendingAutoUpdate any
 	updater           *updateController
+}
+
+func (s *Service) bindEmitter(emit func(string, any)) {
+	s.emit = emit
+	if s.pendingAutoUpdate != nil {
+		emit("plugins:auto-update", s.pendingAutoUpdate)
+		s.pendingAutoUpdate = nil
+	}
 }
 
 func NewService(scope string, open func() (Backend, error)) *Service {
@@ -62,9 +73,15 @@ func (s *Service) ServiceStartup(ctx context.Context, _ application.ServiceOptio
 		return errors.Join(err, listener.Close())
 	}
 	s.backend, s.listener, s.done = backend, listener, make(chan struct{})
-	if backend.Plugins != nil {
-		if result, err := backend.Plugins(ctx, "plugins.auto-update", nil); err == nil && s.emit != nil {
-			s.emit("plugins:auto-update", result)
+	if backend.AutoUpdateBuiltins != nil {
+		if result, err := backend.AutoUpdateBuiltins(ctx); err == nil && s.emit != nil {
+			if summary, ok := result.(pluginmgr.AutoUpdateResult); ok && (len(summary.Upgraded) > 0 || len(summary.Failed) > 0) {
+				s.emit("plugins:auto-update", result)
+			}
+		} else if err == nil {
+			if summary, ok := result.(pluginmgr.AutoUpdateResult); ok && (len(summary.Upgraded) > 0 || len(summary.Failed) > 0) {
+				s.pendingAutoUpdate = result
+			}
 		} else if err != nil {
 			log.Printf("plugin auto-update: %v", err)
 		}
@@ -93,7 +110,7 @@ func (s *Service) ServiceShutdown() error {
 }
 
 var engineMethods = []string{"providers.test", "providers.models", "providers.subscriptionModels", "providers.endpoints", "stats.daily", "stats.range", "records.list", "sync.retry", "sync.adopt"}
-var pluginMethods = []string{"plugins.list", "plugins.install", "plugins.update", "plugins.enable", "plugins.disable", "plugins.restore", "plugins.auto-update"}
+var pluginMethods = []string{"plugins.list", "plugins.install", "plugins.update", "plugins.enable", "plugins.disable", "plugins.restore"}
 
 func (s *Service) Call(ctx context.Context, method string, body string) (any, error) {
 	if len(body) > 256*1024 || !json.Valid([]byte(body)) || !strings.HasPrefix(strings.TrimSpace(body), "{") {

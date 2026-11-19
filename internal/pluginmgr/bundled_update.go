@@ -11,12 +11,15 @@ import (
 
 func (m *Manager) AutoUpdateBuiltins(ctx context.Context) (AutoUpdateResult, error) {
 	result := AutoUpdateResult{}
+	state, loadErr := m.load()
+	if loadErr != nil {
+		result.Failed = append(result.Failed, AutoUpdateFailed{ID: "", Name: "内置插件", Error: loadErr.Error()})
+		m.autoMu.Lock()
+		m.autoUpdate = result
+		m.autoMu.Unlock()
+		return result, nil
+	}
 	for _, id := range []string{"codex", "claude", "pi"} {
-		state, err := m.load()
-		if err != nil {
-			result.Failed = append(result.Failed, AutoUpdateFailed{ID: id, Name: builtins[id], Error: err.Error()})
-			continue
-		}
 		old, ok := state.Items[id]
 		if !ok || old.Dir == "" {
 			continue
@@ -33,7 +36,9 @@ func (m *Manager) AutoUpdateBuiltins(ctx context.Context) (AutoUpdateResult, err
 		updated := item.(Item)
 		result.Upgraded = append(result.Upgraded, AutoUpdated{ID: id, Name: builtins[id], FromVersion: old.Manifest.Version, ToVersion: updated.Version, Enabled: updated.Enabled})
 	}
+	m.autoMu.Lock()
 	m.autoUpdate = result
+	m.autoMu.Unlock()
 	return result, nil
 }
 
