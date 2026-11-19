@@ -137,6 +137,8 @@ function scanTail(identified) {
 }
 
 const scanChunkBytes = 1024 * 1024;
+// Stop 与确认轮询会在同一进程内反复调用；记录只追加写入，大小不变即可复用结果。
+let scanCache = { path: "", size: -1, title: undefined };
 
 // 尾部窗口可能落在标题记录之后；sidecar 缺失时完整扫描一次，取最后一条标题记录。
 function scanRecordedTitle({ path, sessionId }) {
@@ -144,6 +146,7 @@ function scanRecordedTitle({ path, sessionId }) {
   try {
     const info = fstatSync(descriptor);
     if (!info.isFile()) return undefined;
+    if (scanCache.path === path && scanCache.size === info.size) return scanCache.title;
     const decoder = new StringDecoder("utf8");
     const buffer = Buffer.allocUnsafe(scanChunkBytes);
     let carry = "";
@@ -160,7 +163,9 @@ function scanRecordedTitle({ path, sessionId }) {
       }
     }
     const found = recordedTitle(carry + decoder.end(), sessionId);
-    return found === undefined ? title : found;
+    const result = found === undefined ? title : found;
+    scanCache = { path, size: info.size, title: result };
+    return result;
   } finally { closeSync(descriptor); }
 }
 
