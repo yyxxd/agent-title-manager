@@ -8,8 +8,8 @@ import (
 	"testing"
 )
 
-func TestUninstallRequiresDisablingAndRecoveringManagedHosts(t *testing.T) {
-	m, host := testManager(t)
+func TestUninstallRequiresDisablingManagedHostsAndRollingBackPending(t *testing.T) {
+	m, _ := testManager(t)
 	ctx := context.Background()
 	if err := m.UninstallReady(ctx); err != nil {
 		t.Fatal(err)
@@ -17,16 +17,11 @@ func TestUninstallRequiresDisablingAndRecoveringManagedHosts(t *testing.T) {
 	if _, err := os.Stat(m.root); !errors.Is(err, os.ErrNotExist) {
 		t.Fatalf("uninstall check wrote state: %v", err)
 	}
-	writeFixture(t, filepath.Join(host["codex"], "config.toml"), "[plugins.\"oil-codex-title@oil-codex-title-local\"]\nenabled = true\n")
-	mustInvoke(t, m, "enable", request{ID: "codex", Takeover: true})
+	mustInvoke(t, m, "enable", request{ID: "codex"})
 	if err := m.UninstallReady(ctx); err == nil {
 		t.Fatal("active plugin did not block uninstall")
 	}
 	mustInvoke(t, m, "disable", request{ID: "codex"})
-	if err := m.UninstallReady(ctx); err == nil {
-		t.Fatal("unrestored legacy plugin did not block uninstall")
-	}
-	mustInvoke(t, m, "restore", request{ID: "codex"})
 	if err := m.UninstallReady(ctx); err != nil {
 		t.Fatal(err)
 	}
@@ -57,8 +52,9 @@ func TestChangeTransactionRollsBackEarlierWriteOnConflict(t *testing.T) {
 	}
 }
 
-func TestInterruptedManagementRestoresOnlyAttemptedActions(t *testing.T) {
+func TestInterruptedManagementRollsBackOnlyAttemptedActionsOnDisable(t *testing.T) {
 	m, _ := testManager(t)
+	ctx := context.Background()
 	first, second := filepath.Join(m.root, "first.json"), filepath.Join(m.root, "second.json")
 	writeFixture(t, second, "untouched edit")
 	c := change{File: first, After: snapshot{true, []byte("half applied")}}
@@ -73,8 +69,20 @@ func TestInterruptedManagementRestoresOnlyAttemptedActions(t *testing.T) {
 	if err != nil || m.item(state, "pi").Status != "recovery_required" {
 		t.Fatalf("unfinished changes were not reported: %v", err)
 	}
-	mustInvoke(t, m, "restore", request{ID: "pi"})
+	if err := m.UninstallReady(ctx); err == nil {
+		t.Fatal("pending transaction did not block uninstall")
+	}
+	if _, err := invoke(t, m, "enable", request{ID: "codex"}); err == nil {
+		t.Fatal("unrelated enable should be blocked while pending transaction exists")
+	}
+	got := mustInvoke(t, m, "disable", request{ID: "pi"})
+	if got.Status != "disabled" || got.Enabled {
+		t.Fatalf("unexpected status after pending rollback: %+v", got)
+	}
 	if _, err := os.Stat(first); !errors.Is(err, os.ErrNotExist) || readFixture(t, second) != "untouched edit" {
 		t.Fatal("recovery changed an unattempted host action")
+	}
+	if err := m.UninstallReady(ctx); err != nil {
+		t.Fatalf("uninstall should succeed after pending rollback: %v", err)
 	}
 }

@@ -9,7 +9,7 @@ import (
 
 func (m *Manager) updateBuiltin(ctx context.Context, state registry, id string) (any, error) {
 	if state.Pending != nil {
-		return nil, errors.New("请先恢复有未完成变更的插件")
+		return nil, errors.New("请先停用以回滚有未完成变更的插件")
 	}
 	old := state.Items[id]
 	if id == "orca" || builtins[id] == "" || old.Dir == "" {

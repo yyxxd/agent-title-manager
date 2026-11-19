@@ -10,12 +10,9 @@ import (
 func TestEnabledBuiltinDiscoversAndAppliesBundledUpdate(t *testing.T) {
 	m, host := testManager(t)
 	home := host["codex"]
-	config := filepath.Join(home, "config.toml")
-	const original = "[plugins.\"oil-codex-title@oil-codex-title-local\"]\nenabled = true\n"
-	writeFixture(t, config, original)
 	hooks := filepath.Join(home, "hooks.json")
 	packageFixture(t, filepath.Join(m.bundled, "codex"), "codex", "codex", "0.1.0")
-	mustInvoke(t, m, "enable", request{ID: "codex", Takeover: true})
+	mustInvoke(t, m, "enable", request{ID: "codex"})
 	v1Dir := useOldCodexRegistration(t, m, hooks)
 	writeFixture(t, hooks, strings.Replace(readFixture(t, hooks), "{", `{"userEdit":true,`, 1))
 	packageFixture(t, filepath.Join(m.bundled, "codex"), "codex", "codex", "0.1.1")
@@ -30,18 +27,15 @@ func TestEnabledBuiltinDiscoversAndAppliesBundledUpdate(t *testing.T) {
 		t.Fatalf("upgrade is not visible: %+v", list)
 	}
 	got := mustInvoke(t, m, "update", request{ID: "codex", Source: "bundled"})
-	if !got.Enabled || !got.CanRestore || got.Version != "0.1.1" || got.AvailableVersion != "" || got.Status != "action_required" {
+	if !got.Enabled || got.Version != "0.1.1" || got.AvailableVersion != "" || got.Status != "action_required" {
 		t.Fatalf("unexpected upgraded state: %+v", got)
 	}
 	if content := readFixture(t, hooks); strings.Contains(content, v1Dir) || strings.Count(content, "test-entry.mjs") != 2 {
 		t.Fatal("upgrade did not replace both old hook registrations")
 	}
-	mustInvoke(t, m, "restore", request{ID: "codex"})
-	if readFixture(t, config) != original {
-		t.Fatal("upgrade lost legacy takeover information")
-	}
+	mustInvoke(t, m, "disable", request{ID: "codex"})
 	if content := readFixture(t, hooks); strings.Contains(content, "test-entry.mjs") || !strings.Contains(content, `"userEdit": true`) {
-		t.Fatal("recovery did not preserve the user edit and remove manager-owned hooks")
+		t.Fatal("disable did not preserve the user edit and remove manager-owned hooks")
 	}
 }
 
