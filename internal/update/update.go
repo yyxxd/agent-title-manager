@@ -186,7 +186,11 @@ func RetryableDownload(err error) bool {
 		return false
 	}
 	var status *httpStatusError
-	return errors.Is(err, ErrDownloadStalled) || errors.As(err, &status) && (status.status == http.StatusTooManyRequests || status.status >= 500)
+	if errors.As(err, &status) {
+		return status.status == http.StatusTooManyRequests || status.status >= 500
+	}
+	var network net.Error
+	return errors.Is(err, ErrDownloadStalled) || errors.Is(err, io.ErrUnexpectedEOF) || errors.Is(err, io.EOF) || errors.As(err, &network)
 }
 
 func NewSource(releaseURL, publicKeyHex string) (*Source, error) {

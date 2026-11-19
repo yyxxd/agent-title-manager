@@ -9,6 +9,8 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"errors"
+	"io"
+	"net"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -281,5 +283,32 @@ func TestPublicKeyReturnsBuildInjectedValue(t *testing.T) {
 	defer func() { updatePublicKey = previous }()
 	if got := PublicKey(); got != updatePublicKey {
 		t.Fatalf("injected public key was not exposed to the helper: %q", got)
+	}
+}
+
+func TestRetryableDownloadClassification(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		err  error
+		want bool
+	}{
+		{"stall", ErrDownloadStalled, true}, {"eof", io.EOF, true}, {"unexpected", io.ErrUnexpectedEOF, true},
+		{"network", &net.DNSError{Err: "reset"}, true}, {"500", &httpStatusError{500}, true}, {"429", &httpStatusError{429}, true},
+		{"404", &httpStatusError{404}, false}, {"403", &httpStatusError{403}, false}, {"hash", ErrHashMismatch, false}, {"trust", ErrUntrusted, false}, {"cancel", context.Canceled, false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := RetryableDownload(tc.err); got != tc.want {
+				t.Fatalf("got %v", got)
+			}
+		})
+	}
+}
+
+func TestNewSourceDownloadTransportDefaults(t *testing.T) {
+	f := newFixture(t, "0.1.7", []byte("installer"))
+	source := f.source(t)
+	transport, ok := source.download.Transport.(*http.Transport)
+	if !ok || transport.Proxy == nil || source.download.Timeout != 0 {
+		t.Fatalf("transport lost defaults: %#v", source.download)
 	}
 }

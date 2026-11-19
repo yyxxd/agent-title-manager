@@ -100,8 +100,8 @@ func (c *updateController) snapshot() (updateView, error) {
 		return updateView{}, errors.New("更新组件未初始化")
 	}
 	c.mu.Lock()
-	defer c.mu.Unlock()
-	view := updateView{Current: c.current, Enabled: c.enabled, Busy: c.busy, LogPath: filepath.Join(c.dataDir, "updates", "update.log"), Error: c.lastError}
+	view := c.viewLocked()
+	c.mu.Unlock()
 	if c.enabled && c.latest.Version != "" {
 		available := c.latest
 		view.Available = &available
@@ -110,6 +110,15 @@ func (c *updateController) snapshot() (updateView, error) {
 		view.Notice = &notice
 	}
 	return view, nil
+}
+
+func (c *updateController) viewLocked() updateView {
+	view := updateView{Current: c.current, Enabled: c.enabled, Busy: c.busy, LogPath: filepath.Join(c.dataDir, "updates", "update.log"), Error: c.lastError}
+	if c.enabled && c.latest.Version != "" {
+		available := c.latest
+		view.Available = &available
+	}
+	return view
 }
 
 func (c *updateController) start(ctx context.Context) {
@@ -235,7 +244,9 @@ func (c *updateController) setError(operation string, err error) {
 	c.mu.Unlock()
 	c.logResult(operation, err)
 	if c.emit != nil {
-		view, _ := c.snapshot()
+		c.mu.Lock()
+		view := c.viewLocked()
+		c.mu.Unlock()
 		c.emit("desktop:update-state", view)
 	}
 }
@@ -273,7 +284,15 @@ func (c *updateController) download(ctx context.Context, check update.Check) (st
 		if !update.RetryableDownload(err) {
 			return "", err
 		}
-		time.Sleep(time.Duration(attempt+1) * 200 * time.Millisecond)
+		if attempt < 2 {
+			timer := time.NewTimer(time.Duration(attempt+1) * 200 * time.Millisecond)
+			select {
+			case <-timer.C:
+			case <-ctx.Done():
+				timer.Stop()
+				return "", ctx.Err()
+			}
+		}
 	}
 	if err != nil {
 		return "", err
