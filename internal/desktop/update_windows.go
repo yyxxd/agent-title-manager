@@ -301,4 +301,3 @@ func copyFile(source, target string) error {
 	_, err = io.Copy(out, in)
 	return errors.Join(err, out.Close())
 }
-
