@@ -42,26 +42,31 @@ func generate(root string, check bool) error {
 	}
 	for _, arch := range []winres.Arch{winres.ArchAMD64, winres.ArchARM64} {
 		path := filepath.Join(root, "cmd", "atm", fmt.Sprintf("icon_windows_%s.syso", arch))
-		if err := saveResource(path, &resources, arch, check); err != nil {
+		var object bytes.Buffer
+		if err := resources.WriteObject(&object, arch); err != nil {
+			return err
+		}
+		if err := save(path, object.Bytes(), check); err != nil {
 			return err
 		}
 	}
-	return nil
-}
-
-func saveResource(path string, resources *winres.ResourceSet, arch winres.Arch, check bool) error {
-	var object bytes.Buffer
-	if err := resources.WriteObject(&object, arch); err != nil {
+	// The NSIS installer and uninstaller use the same icon.
+	var ico bytes.Buffer
+	if err := icon.SaveICO(&ico); err != nil {
 		return err
 	}
+	return save(filepath.Join(root, "packaging", "app.ico"), ico.Bytes(), check)
+}
+
+func save(path string, content []byte, check bool) error {
 	if !check {
-		return os.WriteFile(path, object.Bytes(), 0644)
+		return os.WriteFile(path, content, 0644)
 	}
 	committed, err := os.ReadFile(path)
 	if err != nil {
 		return err
 	}
-	if !bytes.Equal(committed, object.Bytes()) {
+	if !bytes.Equal(committed, content) {
 		return fmt.Errorf("%s is out of date. Run go generate ./cmd/atm", path)
 	}
 	return nil
