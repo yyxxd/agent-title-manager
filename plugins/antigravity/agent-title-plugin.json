@@ -1,0 +1,9 @@
+{
+  "schemaVersion": 1,
+  "id": "antigravity",
+  "name": "Antigravity",
+  "version": "0.1.0",
+  "kind": "agent",
+  "host": "antigravity",
+  "entry": "index.mjs"
+}

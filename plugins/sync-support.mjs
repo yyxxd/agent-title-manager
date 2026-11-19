@@ -3,8 +3,8 @@ import { readFileSync, writeFileSync } from "node:fs";
 // 每个发布目录都可以独立安装。共享源码只在 shared/ 维护。
 const check = process.argv.includes("--check");
 const sets = [
-  ["client.mjs", ["codex", "claude", "pi", "example"]],
-  ["orca.mjs", ["codex", "claude", "pi"]],
+  ["client.mjs", ["codex", "claude", "pi", "antigravity", "example"]],
+  ["orca.mjs", ["codex", "claude", "pi", "antigravity"]],
 ];
 for (const [file, agents] of sets) {
   const canonical = readFileSync(new URL("./shared/" + file, import.meta.url), "utf8");
