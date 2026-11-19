@@ -54,6 +54,9 @@ func NewUpdateController(appDir, dataDir, current, publicKey, releaseURL string)
 	if err != nil {
 		return nil, err
 	}
+	c.mu.Lock()
+	c.lastError = ""
+	c.mu.Unlock()
 	c.source, c.enabled = source, true
 	return c, nil
 }
@@ -113,6 +116,7 @@ func (c *updateController) start(ctx context.Context) {
 	if c == nil || !c.enabled {
 		return
 	}
+	_ = cleanupInstallers(filepath.Join(c.dataDir, "updates"))
 	go func() {
 		// A short delay keeps startup work off the UI's critical path.
 		timer := time.NewTimer(3 * time.Second)
@@ -208,6 +212,9 @@ func (c *updateController) install(ctx context.Context, raw json.RawMessage) (ma
 		}
 		return nil, err
 	}
+	c.mu.Lock()
+	c.lastError = ""
+	c.mu.Unlock()
 	installDir := request.InstallDir
 	if installDir == "" {
 		installDir, err = detectInstallDir()
@@ -227,6 +234,10 @@ func (c *updateController) setError(operation string, err error) {
 	c.lastError = err.Error()
 	c.mu.Unlock()
 	c.logResult(operation, err)
+	if c.emit != nil {
+		view, _ := c.snapshot()
+		c.emit("desktop:update-state", view)
+	}
 }
 
 func (c *updateController) download(ctx context.Context, check update.Check) (string, error) {
@@ -255,9 +266,11 @@ func (c *updateController) download(ctx context.Context, check update.Check) (st
 		if err == nil {
 			break
 		}
-		_ = os.Remove(file.Name())
+		if removeErr := os.Remove(file.Name()); removeErr != nil {
+			c.logResult("cleanup", removeErr)
+		}
 		c.logResult(fmt.Sprintf("download retry %d", attempt+1), err)
-		if ctx.Err() != nil || errors.Is(err, update.ErrHashMismatch) {
+		if !update.RetryableDownload(err) {
 			return "", err
 		}
 		time.Sleep(time.Duration(attempt+1) * 200 * time.Millisecond)
