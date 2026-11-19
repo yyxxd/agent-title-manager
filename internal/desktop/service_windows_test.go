@@ -27,3 +27,19 @@ func TestServiceProviderRPCs(t *testing.T) {
 		}
 	}
 }
+
+func TestServicePluginRPCs(t *testing.T) {
+	var method string
+	s := Service{backend: Backend{Plugins: func(_ context.Context, name string, _ json.RawMessage) (any, error) {
+		method = name
+		return map[string]string{"ok": name}, nil
+	}}}
+	for _, name := range []string{"plugins.list", "plugins.install", "plugins.update", "plugins.enable", "plugins.disable"} {
+		if _, err := s.Call(context.Background(), name, `{"id":"codex"}`); err != nil || method != name {
+			t.Fatalf("expected %s to route, got method=%s err=%v", name, method, err)
+		}
+	}
+	if _, err := s.Call(context.Background(), "plugins.restore", `{"id":"codex"}`); err == nil {
+		t.Fatal("expected plugins.restore to be unsupported")
+	}
+}

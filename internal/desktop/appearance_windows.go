@@ -122,9 +122,9 @@ func (state appearanceState) nativeTheme() application.Theme {
 
 func (state appearanceState) colours() (application.RGBA, application.RGBA) {
 	if state.Theme == "dark" {
-		return application.NewRGB(28, 28, 32), application.NewRGB(240, 240, 243)
+		return application.NewRGB(17, 19, 24), application.NewRGB(243, 244, 246)
 	}
-	return application.NewRGB(245, 245, 247), application.NewRGB(36, 36, 41)
+	return application.NewRGB(245, 246, 248), application.NewRGB(17, 24, 39)
 }
 
 func (state appearanceState) apply(window *application.WebviewWindow) {

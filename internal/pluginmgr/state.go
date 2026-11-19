@@ -22,11 +22,9 @@ type release struct {
 
 type record struct {
 	release
-	Previous     *release `json:"previous,omitempty"`
 	Enabled      bool     `json:"enabled"`
 	Entry        string   `json:"entry,omitempty"`
 	Registration []change `json:"registration,omitempty"`
-	Takeover     []change `json:"takeover,omitempty"`
 }
 
 type snapshot struct {
@@ -42,15 +40,10 @@ type change struct {
 	File   string   `json:"file"`
 	Before snapshot `json:"before,omitempty"`
 	After  snapshot `json:"after,omitempty"`
-	MoveTo string   `json:"moveTo,omitempty"`
 }
 
 func (c change) reverse() change {
-	if c.MoveTo != "" {
-		c.File, c.MoveTo = c.MoveTo, c.File
-	} else {
-		c.Before, c.After = c.After, c.Before
-	}
+	c.Before, c.After = c.After, c.Before
 	return c
 }
 
@@ -166,7 +159,7 @@ func (m *Manager) execute(state registry, tx transaction) error {
 func (m *Manager) rollback(state registry, applied int) error {
 	for i := applied - 1; i >= 0; i-- {
 		if err := state.Pending.Changes[i].reverse().apply(); err != nil {
-			return fmt.Errorf("回滚待恢复：%w", err)
+			return fmt.Errorf("回滚未完成变更失败：%w", err)
 		}
 	}
 	state.Pending = nil
@@ -174,9 +167,6 @@ func (m *Manager) rollback(state registry, applied int) error {
 }
 
 func (c change) apply() error {
-	if c.MoveTo != "" {
-		return moveExtension(c.File, c.MoveTo)
-	}
 	actual, err := readSettings(c.File)
 	if err != nil {
 		return err
@@ -252,7 +242,7 @@ func writeChecked(file string, content []byte, mode os.FileMode, check func() er
 
 func (m *Manager) recoverPending(state registry, id string) error {
 	if state.Pending.ID != id {
-		return errors.New("请先恢复有未完成变更的插件")
+		return errors.New("请先停用以回滚有未完成变更的插件")
 	}
 	return m.rollback(state, state.Pending.Attempted)
 }

@@ -110,7 +110,7 @@ func (s *Service) ServiceShutdown() error {
 }
 
 var engineMethods = []string{"providers.test", "providers.models", "providers.subscriptionModels", "providers.endpoints", "stats.daily", "stats.range", "records.list", "sync.retry", "sync.adopt"}
-var pluginMethods = []string{"plugins.list", "plugins.install", "plugins.update", "plugins.enable", "plugins.disable", "plugins.restore"}
+var pluginMethods = []string{"plugins.list", "plugins.install", "plugins.update", "plugins.enable", "plugins.disable"}
 
 func (s *Service) Call(ctx context.Context, method string, body string) (any, error) {
 	if len(body) > 256*1024 || !json.Valid([]byte(body)) || !strings.HasPrefix(strings.TrimSpace(body), "{") {

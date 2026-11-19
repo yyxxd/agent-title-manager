@@ -9,8 +9,8 @@ import (
 
 func (m *Manager) modify(ctx context.Context, state registry, method string, req request) (any, error) {
 	if state.Pending != nil {
-		if method != "plugins.restore" {
-			return nil, errors.New("请先恢复有未完成变更的插件")
+		if method != "plugins.disable" {
+			return nil, errors.New("请先停用以回滚有未完成变更的插件")
 		}
 		if err := m.recoverPending(state, req.ID); err != nil {
 			return nil, err
@@ -25,8 +25,8 @@ func (m *Manager) modify(ctx context.Context, state registry, method string, req
 	switch method {
 	case "plugins.enable":
 		return m.enable(ctx, state, req, old)
-	case "plugins.disable", "plugins.restore":
-		return m.stop(state, req.ID, old, method == "plugins.restore")
+	case "plugins.disable":
+		return m.stop(state, req.ID, old)
 	default:
 		return nil, errors.New("未知插件操作")
 	}
@@ -68,18 +68,11 @@ func (m *Manager) enableBuiltin(ctx context.Context, state registry, req request
 	if err != nil {
 		return nil, err
 	}
-	legacy, err := legacyChanges(h, base)
-	if err != nil {
-		return nil, err
-	}
-	if len(legacy) > 0 && (!req.Takeover || len(next.Takeover) > 0) {
-		return nil, errors.New("检测到运行中的旧插件，需明确接管或先恢复上一次接管")
-	}
 	rel, staged, err := m.installedRelease(ctx, req.ID, next.release)
 	if err != nil {
 		return nil, err
 	}
-	result, err := m.registerBuiltin(state, h, base, legacy, next, rel)
+	result, err := m.registerBuiltin(state, h, base, next, rel)
 	if err != nil && staged {
 		err = errors.Join(err, os.RemoveAll(m.packageDir(rel)))
 	}
@@ -130,16 +123,12 @@ func (m *Manager) bundledRelease(ctx context.Context, id string, manifest Manife
 	return release{manifest, filepath.Base(stage)}, nil
 }
 
-func (m *Manager) registerBuiltin(state registry, h host, base snapshot, legacy []change, next record, rel release) (any, error) {
+func (m *Manager) registerBuiltin(state registry, h host, base snapshot, next record, rel release) (any, error) {
 	entry, err := m.hostEntry(h.id, rel)
 	if err != nil {
 		return nil, err
 	}
-	if len(legacy) > 0 {
-		next.Takeover = legacy
-	}
-	start := withChanges(base, h.settings, legacy)
-	owned, err := registration(h, start, entry, true)
+	owned, err := registration(h, base, entry, true)
 	if err != nil {
 		return nil, err
 	}
@@ -147,14 +136,10 @@ func (m *Manager) registerBuiltin(state registry, h host, base snapshot, legacy 
 		return nil, errors.New("适配器注册已存在，请先检查宿主设置")
 	}
 	next.release, next.Entry, next.Registration = rel, entry, []change{owned}
-	changes := combine(legacy, owned)
-	return m.commitItem(state, h.id, next, changes)
+	return m.commitItem(state, h.id, next, []change{owned})
 }
 
-func (m *Manager) stop(state registry, id string, old record, restore bool) (any, error) {
-	if restore && len(old.Takeover) == 0 && old.Previous == nil {
-		return nil, errors.New("该插件没有可恢复的旧版本或接管记录")
-	}
+func (m *Manager) stop(state registry, id string, old record) (any, error) {
 	next := old
 	next.Enabled = false
 	changes, err := unregister(id, old)
@@ -162,19 +147,6 @@ func (m *Manager) stop(state registry, id string, old record, restore bool) (any
 		return nil, err
 	}
 	next.Registration, next.Entry = nil, ""
-	if restore && old.Previous != nil {
-		if manifest, err := readManifest(m.packageDir(*old.Previous)); err != nil || manifest != old.Previous.Manifest {
-			return nil, errors.New("旧版本文件缺失或已改变")
-		}
-		next.release, next.Previous = *old.Previous, nil
-	}
-	if restore && len(old.Takeover) > 0 {
-		changes, err = restoreLegacy(changes, old.Takeover)
-		if err != nil {
-			return nil, err
-		}
-		next.Takeover = nil
-	}
 	return m.commitItem(state, id, next, changes)
 }
 
@@ -200,33 +172,16 @@ func unregisterFrom(id string, old record, actual snapshot) ([]change, error) {
 	return appendChanged(nil, ret), err
 }
 
-func restoreLegacy(planned, legacy []change) ([]change, error) {
-	for i := len(legacy) - 1; i >= 0; i-- {
-		undo := legacy[i].reverse()
-		if undo.MoveTo == "" {
-			current, err := readSettings(undo.File)
-			if err != nil {
-				return nil, err
-			}
-			current = withChanges(current, undo.File, planned)
-			if current.equal(undo.After) {
-				continue
-			}
-			if !current.equal(undo.Before) {
-				undo, err = mergeLegacy(undo, current)
-				if err != nil {
-					return nil, err
-				}
-			}
-		}
-		planned = combine(planned, undo)
+func appendChanged(changes []change, c change) []change {
+	if c.Before.equal(c.After) {
+		return changes
 	}
-	return planned, nil
+	return append(changes, c)
 }
 
 func withChanges(base snapshot, file string, planned []change) snapshot {
 	for _, action := range planned {
-		if action.File == file && action.MoveTo == "" {
+		if action.File == file {
 			return action.After
 		}
 	}
@@ -236,7 +191,7 @@ func withChanges(base snapshot, file string, planned []change) snapshot {
 func combine(changes []change, next change) []change {
 	out := append([]change(nil), changes...)
 	for i, original := range out {
-		if original.File != next.File || original.MoveTo != "" || next.MoveTo != "" {
+		if original.File != next.File {
 			continue
 		}
 		next.Before = original.Before

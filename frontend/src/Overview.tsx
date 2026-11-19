@@ -1,146 +1,385 @@
-import { RefreshCw } from 'lucide-react';
-import { useState } from 'react';
-import { agentName, formatTime, localDate, num, providerName, rpc, type Counts, type Daily, type ModelUsage, type UsageSummary } from './rpc';
-import { Empty, Section, Status, useLoad } from './ui';
-import './overview.css';
-import { DateFilter } from './DateFilter';
-import { datePresets, type DateRange } from './dates';
+import { AlertCircle, Calendar, RefreshCw } from 'lucide-react';
+import { useEffect, useRef, useState } from 'react';
+import { DatePopover } from './DatePopover';
+import { ALL_TIME_START, formatRangeLabel, rangeDays, type DateRange } from './dates';
+import { AgentIcon } from './icons';
+import {
+  computeScopeTokens,
+  KpiGrid,
+  ModelUsageSection,
+  TokenFieldText,
+  type AgentUsage,
+} from './OverviewSections';
+import {
+  agentName,
+  localDate,
+  num,
+  rpc,
+  type Daily,
+  type Plugin,
+  type Settings,
+} from './rpc';
+import { toast } from './toast';
+import { StatusNotice, useLoad } from './ui';
 
-const tokenFields = [['input', '输入'], ['output', '输出'], ['cached', '缓存（计入输入）']] as const;
-type TokenKind = typeof tokenFields[number][0];
-type AgentUsage = Counts & { agent: string };
+type DatePreset = 'today' | '7d' | 'all' | 'custom';
 
-const usageAgentName = (agent: string) => agent === 'test' ? '连接测试' : agentName(agent);
-const missingHint = '至少一项 Token 用量未记录的请求次数';
+const agentColors: Record<string, string> = {
+  codex: '#2563eb',
+  claude: '#d97706',
+  pi: '#10b981',
+  orca: '#6366f1',
+};
 
-export function Overview({ revision }: { revision: number }) {
-  const presets = datePresets(localDate());
-  const [selection, setSelection] = useState<{ range: DateRange; preset?: string }>(() => {
-    const today = presets[0];
-    return { range: today.range, preset: today.label };
-  });
-  const { preset } = selection;
-  const range = presets.find(({ label }) => label === preset)?.range ?? selection.range;
+const agentDescriptions: Record<string, string> = {
+  codex: 'Codex',
+  claude: 'Claude Code',
+  pi: 'Pi',
+};
+
+export function Overview({
+  revision,
+  plugins,
+  settings,
+  failedCount,
+  protectedCount,
+  onNavigate,
+  onRefreshShell,
+}: {
+  revision: number;
+  plugins: Plugin[];
+  settings?: Settings;
+  failedCount: number;
+  protectedCount: number;
+  onNavigate: (page: 'agents' | 'models' | 'records', recordFilter?: 'attention') => void;
+  onRefreshShell: () => void;
+}) {
+  const today = localDate();
+  const [preset, setPreset] = useState<DatePreset>('today');
+  const [customRange, setCustomRange] = useState<DateRange>({ start: today, end: today });
+  const [popoverOpen, setPopoverOpen] = useState(false);
   const [refresh, setRefresh] = useState(0);
-  const [agent, setAgent] = useState('');
-  const { value, error } = useLoad(() => rpc<Daily>('stats.range', range), `${range.start}:${range.end}:${refresh}:${revision}`);
+  const [agentFilter, setAgentFilter] = useState<string>('all');
+  const popoverAnchorRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    if (!popoverOpen) return;
+    const onPointerDown = (event: MouseEvent) => {
+      if (popoverAnchorRef.current && !popoverAnchorRef.current.contains(event.target as Node)) {
+        setPopoverOpen(false);
+      }
+    };
+    document.addEventListener('mousedown', onPointerDown);
+    return () => document.removeEventListener('mousedown', onPointerDown);
+  }, [popoverOpen]);
+
+  const activeRange: DateRange =
+    preset === 'today'
+      ? { start: today, end: today }
+      : preset === '7d'
+        ? rangeDays(today, 7)
+        : preset === 'all'
+          ? { start: ALL_TIME_START, end: today }
+          : customRange;
+
+  const { value, error, loading } = useLoad(
+    () =>
+      activeRange.start === activeRange.end
+        ? rpc<Daily>('stats.daily', { date: activeRange.start })
+        : rpc<Daily>('stats.range', activeRange),
+    `${activeRange.start}:${activeRange.end}:${refresh}:${revision}`,
+  );
+
   const rows = value?.byAgent ?? [];
-  const agents = rows.filter((row) => row.agent !== 'test');
-  const selected = rows.find((row) => row.agent === agent);
-  const tokenScope = selected ?? value;
-  return <div className="daily-overview" data-refreshed={refresh || undefined}>
-    <header className="page-head">
-      <h1>概览</h1>
-      <div className="actions">
-        <DateFilter range={range} preset={preset} onChange={(next, label) => setSelection({ range: next, preset: label })} />
-        <button type="button" className="icon-button" aria-label="刷新统计" title="刷新统计" onClick={() => setRefresh((previous) => previous + 1)}><RefreshCw size={16} /></button>
+  const agents: AgentUsage[] = [...rows.filter((row) => row.agent !== 'test')].sort(
+    (a, b) => b.renames - a.renames || b.attempts - a.attempts || a.agent.localeCompare(b.agent),
+  );
+  const selectedAgent = agentFilter === 'all' ? undefined : agents.find((row) => row.agent === agentFilter);
+  const models = value?.byModel ?? [];
+
+  const enabledPlugins = plugins.filter((p) => p.enabled);
+  const enabledNames = enabledPlugins.map((p) => agentDescriptions[p.id] ?? p.name);
+  const sourceLabel = settings
+    ? settings.provider === 'codex'
+      ? `Codex · ${settings.codexModel || '未选模型'}`
+      : settings.provider === 'claude'
+        ? `Claude · ${settings.claudeModel || '未选模型'}`
+        : `自定义 API · ${settings.apiModel || '未填模型'}`
+    : '读取中…';
+
+  const attnParts: string[] = [];
+  if (failedCount > 0) attnParts.push(`${failedCount} 条同步至 Orca 失败`);
+  if (protectedCount > 0) attnParts.push(`${protectedCount} 条受保护标题待确认`);
+
+  const scope = selectedAgent ?? value;
+  const usageMetrics = computeScopeTokens(scope, agents, value);
+  const maxRenamed = Math.max(...agents.map((a) => a.renames), 1);
+
+  return (
+    <main className="main">
+      {attnParts.length > 0 && (
+        <div className="alert-strip" role="status">
+          <span className="alert-strip-left">
+            <AlertCircle size={15} aria-hidden="true" />
+            <span>待处理：{attnParts.join('，')}</span>
+          </span>
+          <button type="button" className="alert-link" onClick={() => onNavigate('records', 'attention')}>
+            前往处理 →
+          </button>
+        </div>
+      )}
+
+      <div className="view-bar">
+        <div className="view-actions">
+          <div className="segmented" role="group" aria-label="统计周期">
+            <button
+              type="button"
+              className={`seg-btn ${preset === 'today' ? 'active' : ''}`}
+              onClick={() => {
+                setPreset('today');
+                setPopoverOpen(false);
+              }}
+            >
+              今日
+            </button>
+            <button
+              type="button"
+              className={`seg-btn ${preset === '7d' ? 'active' : ''}`}
+              onClick={() => {
+                setPreset('7d');
+                setPopoverOpen(false);
+              }}
+            >
+              近 7 天
+            </button>
+            <button
+              type="button"
+              className={`seg-btn ${preset === 'all' ? 'active' : ''}`}
+              onClick={() => {
+                setPreset('all');
+                setPopoverOpen(false);
+              }}
+            >
+              全部
+            </button>
+            <div className="popover-anchor" ref={popoverAnchorRef}>
+              <button
+                type="button"
+                className={`seg-btn ${preset === 'custom' ? 'active' : ''}`}
+                aria-expanded={popoverOpen}
+                onClick={() => setPopoverOpen((open) => !open)}
+              >
+                <Calendar size={13} aria-hidden="true" />
+                <span className="tabular">
+                  {preset === 'custom'
+                    ? customRange.start === customRange.end
+                      ? customRange.start
+                      : `${customRange.start} ~ ${customRange.end}`
+                    : '自定义'}
+                </span>
+              </button>
+              {popoverOpen && (
+                <DatePopover
+                  today={today}
+                  value={activeRange}
+                  onSelect={(next) => {
+                    setCustomRange(next);
+                    setPreset('custom');
+                  }}
+                  onSelectToday={() => setPreset('today')}
+                  onClose={() => setPopoverOpen(false)}
+                />
+              )}
+            </div>
+          </div>
+          <span className="card-sub tabular">{formatRangeLabel(activeRange)}</span>
+        </div>
+
+        <div className="view-actions">
+          <button type="button" className="btn btn-sm" onClick={() => onNavigate('models')} title="当前生效的命名来源">
+            <span style={{ color: 'var(--text-muted)' }}>当前来源</span>
+            <span className="mono" style={{ fontSize: 12 }}>
+              {sourceLabel}
+            </span>
+          </button>
+          <button
+            type="button"
+            className="icon-btn bordered"
+            title="刷新统计"
+            aria-label="刷新统计"
+            onClick={() => {
+              setRefresh((v) => v + 1);
+              onRefreshShell();
+              toast.success('统计数据已刷新');
+            }}
+          >
+            <RefreshCw size={14} aria-hidden="true" />
+          </button>
+        </div>
       </div>
-    </header>
-    <Status error={error} />
-    {value ? <>
-      <DailySummary value={value} agents={agents} />
-      <div className="daily-overview-detail">
-        <Section title="Agent 贡献">
-          {agents.length ? <Activity key={refresh} rows={agents} /> : <Empty>所选日期无 Agent 活动</Empty>}
-        </Section>
-        <Section title="Token 明细" action={rows.length > 0 && <select aria-label="Token 明细的 Agent" value={selected?.agent ?? ''} onChange={(event) => setAgent(event.target.value)}>
-          <option value="">{value?.testAttempts ? '全部请求' : '全部 Agent'}</option>
-          {rows.map((row) => <option key={row.agent} value={row.agent}>{usageAgentName(row.agent)}</option>)}
-        </select>}>
-          {tokenScope && tokenScope.attempts > 0
-            ? <TokenRows value={tokenScope} scoped={!!selected} />
-            : <Empty>此范围无模型请求</Empty>}
-        </Section>
-      </div>
-      <Section title="模型明细" action={!!value?.testAttempts && <span className="daily-overview-note">全部请求</span>}>
-        {value?.byModel?.length ? <ModelTable rows={value.byModel} /> : <Empty>所选日期无模型调用明细</Empty>}
-      </Section>
-      {value.since && <footer className="daily-overview-note">统计自 {formatTime(value.since)} 起</footer>}
-    </> : !error && <div className="daily-overview-frame" role="status"><Empty>正在读取统计…</Empty></div>}
-  </div>;
-}
 
-function DailySummary({ value, agents }: { value: Daily; agents: AgentUsage[] }) {
-  const attempts = value.attempts - (value.testAttempts ?? 0);
-  const usageRows = (value.testAttempts ? agents : [value]).filter((row) => row.attempts > 0);
-  const usage = usageRows.flatMap((row) => [tokenField(row, 'input'), tokenField(row, 'output')]);
-  const known = usage.filter((field) => field.value !== null);
-  const total = known.reduce((sum, field) => sum + (field.value ?? 0), 0);
-  const partial = usageRows.reduce((sum, row) => sum + row.attempts, 0) !== attempts
-    || usage.some(({ value, known, complete }) => value === null || (known !== undefined && !complete));
-  const coverage = partial ? ' · 部分回报' : usage.some((field) => !field.complete) ? ' · 覆盖未知' : '';
-  const detail = !attempts ? '无命名请求' : !known.length ? '用量未知' : `输入 + 输出${coverage}`;
+      {error && (
+        <div style={{ marginBottom: 16 }}>
+          <StatusNotice error={error} />
+        </div>
+      )}
 
-  return <section className="daily-overview-frame" aria-label="所选日期汇总">
-    <dl className="daily-overview-lead">
-      <div><dt>已改名</dt><dd>{num(value.renames)} <small>次</small></dd></div>
-      <div>
-        <dt>命名用量</dt>
-        <dd>{!attempts || known.length ? <>{num(total)} <small>Token</small></> : <span className="daily-overview-note">—</span>}</dd>
-        <dd className="daily-overview-note">{detail}</dd>
-      </div>
-    </dl>
-    <dl className="daily-overview-secondary">
-      <div><dt>保留原标题</dt><dd>{num(value.kept)} 次</dd></div>
-      <div><dt>模型请求</dt><dd>{num(value.attempts)} 次{!!value.testAttempts && <small>含 {num(value.testAttempts)} 次测试</small>}</dd></div>
-      <div><dt title={missingHint}>用量缺报</dt><dd>{num(value.unknownUsage)} 次</dd></div>
-    </dl>
-  </section>;
-}
+      {value ? (
+        <>
+          <KpiGrid
+            value={value}
+            agents={agents}
+            enabledCount={enabledPlugins.length}
+            totalCount={plugins.length}
+            enabledNames={enabledNames}
+            onOpenAgents={() => onNavigate('agents')}
+          />
 
-function Activity({ rows }: { rows: AgentUsage[] }) {
-  const ranked = [...rows].sort((a, b) => b.renames - a.renames || b.attempts - a.attempts || a.agent.localeCompare(b.agent));
-  const max = ranked[0].renames;
-  return <table className="daily-overview-agents">
-    <thead><tr><th scope="col">Agent</th><th scope="col" colSpan={2} className="number">改名</th><th scope="col" className="number">请求</th><th scope="col" className="number" title={missingHint}>缺报</th></tr></thead>
-    <tbody>{ranked.map((row) => <tr key={row.agent}>
-      <th scope="row">{agentName(row.agent)}</th>
-      <td className="daily-overview-bar-cell">
-        {max > 0 && <div className="daily-overview-bar" aria-hidden="true"><span style={{ width: `${row.renames / max * 100}%` }} /></div>}
-      </td>
-      <td className="number daily-overview-count">{num(row.renames)}</td>
-      <td className="number">{num(row.attempts)}</td>
-      <td className="number">{num(row.unknownUsage)}</td>
-    </tr>)}</tbody>
-  </table>;
-}
+          <section className="overview-split">
+            <div className="card">
+              <div className="card-header">
+                <h2 className="card-title">Agent 分布</h2>
+                <span className="card-sub">
+                  {selectedAgent ? '点击所选行恢复全部' : '点击某行可筛选右侧明细'}
+                </span>
+              </div>
+              {agents.length > 0 ? (
+                <div className="agent-dist-list">
+                  <div className="agent-dist-head">
+                    <span>Agent</span>
+                    <span>改名占比</span>
+                    <span className="num">改名</span>
+                    <span className="num">请求</span>
+                  </div>
+                  {agents.map((a) => {
+                    const pct =
+                      maxRenamed > 0 && a.renames > 0 ? Math.max(6, Math.round((a.renames / maxRenamed) * 100)) : 0;
+                    const isSelected = selectedAgent?.agent === a.agent;
+                    const color = agentColors[a.agent] ?? '#6366f1';
+                    return (
+                      <button
+                        key={a.agent}
+                        type="button"
+                        className={`agent-dist-row ${isSelected ? 'selected' : ''}`}
+                        onClick={() => setAgentFilter((cur) => (cur === a.agent ? 'all' : a.agent))}
+                      >
+                        <span className="agent-name-cell">
+                          <span className="agent-icon-inline">
+                            <AgentIcon id={a.agent} size={15} />
+                          </span>
+                          <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                            {agentName(a.agent)}
+                          </span>
+                        </span>
+                        <span className="bar-track">
+                          <span className="bar-fill" style={{ width: `${pct}%`, background: color }} />
+                        </span>
+                        <span className="num tabular" style={{ fontWeight: 600 }}>
+                          {num(a.renames)}
+                        </span>
+                        <span className="num tabular" style={{ color: 'var(--text-muted)' }}>
+                          {num(a.attempts)}
+                        </span>
+                      </button>
+                    );
+                  })}
+                </div>
+              ) : (
+                <div className="empty-inline">
+                  <span>所选日期范围无 Agent 活动</span>
+                </div>
+              )}
+            </div>
 
-function TokenRows({ value, scoped }: { value: UsageSummary; scoped: boolean }) {
-  return <dl className="daily-overview-token-rows">
-    {tokenFields.map(([kind, label]) => <div key={kind}><dt>{label}</dt><dd><TokenValue row={value} kind={kind} /></dd></div>)}
-    {scoped && <div><dt title={missingHint}>用量缺报</dt><dd>{num(value.unknownUsage)} 次</dd></div>}
-  </dl>;
-}
+            <div className="card">
+              <div className="card-header">
+                <h2 className="card-title">Token 构成</h2>
+                {selectedAgent ? (
+                  <button
+                    type="button"
+                    className="pill pill-accent"
+                    style={{ border: 0, cursor: 'pointer' }}
+                    onClick={() => setAgentFilter('all')}
+                    title="点击恢复全部"
+                  >
+                    {agentName(selectedAgent.agent)} ×
+                  </button>
+                ) : (
+                  <span className="pill pill-neutral">
+                    {value.testAttempts ? '全部请求' : '全部 Agent'}
+                  </span>
+                )}
+              </div>
+              <div className="card-body">
+                {scope && scope.attempts > 0 ? (
+                  <>
+                    <div className="token-bar" aria-label="Token 占比条">
+                      <div className="token-seg-in" style={{ width: `${usageMetrics.pUncached}%` }} title="常规输入" />
+                      {usageMetrics.pCache > 0 && (
+                        <div className="token-seg-cache" style={{ width: `${usageMetrics.pCache}%` }} title="缓存命中" />
+                      )}
+                      <div className="token-seg-out" style={{ width: `${usageMetrics.pOut}%` }} title="输出" />
+                    </div>
+                    <div className="kv-list">
+                      <div className="kv-row">
+                        <span className="kv-label">
+                          <span className="swatch token-seg-in" />
+                          输入（含缓存）
+                        </span>
+                        <span className="kv-val tabular">
+                          <TokenFieldText row={scope} kind="input" />
+                        </span>
+                      </div>
+                      <div className="kv-row">
+                        <span className="kv-label">
+                          <span className="swatch token-seg-cache" />
+                          其中缓存命中
+                        </span>
+                        <span className="kv-val tabular">
+                          <TokenFieldText row={scope} kind="cached" />
+                          {usageMetrics.cacheRatio !== null && (
+                            <span className="card-sub">({usageMetrics.cacheRatio}%)</span>
+                          )}
+                        </span>
+                      </div>
+                      <div className="kv-row">
+                        <span className="kv-label">
+                          <span className="swatch token-seg-out" />
+                          输出
+                        </span>
+                        <span className="kv-val tabular">
+                          <TokenFieldText row={scope} kind="output" />
+                        </span>
+                      </div>
+                      <div className="kv-row">
+                        <span className="kv-label">未回报用量次数</span>
+                        <span
+                          className="kv-val tabular"
+                          style={{ color: scope.unknownUsage > 0 ? 'var(--text-secondary)' : 'var(--text-muted)' }}
+                        >
+                          {num(scope.unknownUsage)} 次
+                        </span>
+                      </div>
+                    </div>
+                  </>
+                ) : (
+                  <div className="empty-inline" style={{ padding: '18px 0' }}>
+                    <span>此范围无模型请求</span>
+                  </div>
+                )}
+              </div>
+            </div>
+          </section>
 
-function ModelTable({ rows }: { rows: ModelUsage[] }) {
-  return <table className="daily-overview-models" role="table" aria-label="模型调用与用量">
-    <thead role="rowgroup"><tr role="row">
-      <th scope="col" role="columnheader">模型</th><th scope="col" role="columnheader" className="number">调用</th>
-      <th scope="col" role="columnheader" className="number">输入</th><th scope="col" role="columnheader" className="number">输出</th>
-      <th scope="col" role="columnheader" className="number">缓存</th><th scope="col" role="columnheader" className="number" title={missingHint}>用量缺报</th>
-    </tr></thead>
-    <tbody role="rowgroup">{rows.map((row) => <tr role="row" key={JSON.stringify([row.provider, row.model])}>
-      <th scope="row" role="rowheader">{row.model || '未知模型'}<span className="daily-overview-note">{row.provider ? providerName(row.provider) : '未知提供方'}</span></th>
-      <td role="cell" className="number"><span className="daily-overview-cell-label">调用</span>{num(row.attempts)}
-        {!!row.testAttempts && <span className="daily-overview-note">含 {num(row.testAttempts)} 次测试</span>}
-      </td>
-      {tokenFields.map(([kind, label]) => <td role="cell" className="number" key={kind}>
-        <span className="daily-overview-cell-label">{kind === 'cached' ? '缓存' : label}</span><TokenValue row={row} kind={kind} />
-      </td>)}
-      <td role="cell" className="number"><span className="daily-overview-cell-label">用量缺报</span>{num(row.unknownUsage)}</td>
-    </tr>)}</tbody>
-  </table>;
-}
-
-function tokenField(row: UsageSummary, kind: TokenKind) {
-  const tokens = row[`${kind}Tokens`];
-  const known = row[`${kind}Known`];
-  const value = typeof tokens === 'number' && known !== 0 ? tokens : null;
-  return { value, known, complete: value !== null && (known === row.attempts || (known === undefined && row.unknownUsage === 0)) };
-}
-
-function TokenValue({ row, kind }: { row: UsageSummary; kind: TokenKind }) {
-  const { value, known, complete } = tokenField(row, kind);
-  if (value === null) return <span className="daily-overview-note">未回报</span>;
-  return <>{num(value)}{!complete && <span className="daily-overview-note" title={known === undefined ? undefined : `已回报 ${num(known)} / ${num(row.attempts)} 次`}>{known === undefined ? '（覆盖未知）' : '（部分）'}</span>}</>;
+          <ModelUsageSection models={models} since={value.since} unknownUsage={value.unknownUsage} />
+        </>
+      ) : (
+        !error && (
+          <div className="card">
+            <div className="empty-inline">{loading ? '正在读取统计…' : '暂无统计数据'}</div>
+          </div>
+        )
+      )}
+    </main>
+  );
 }

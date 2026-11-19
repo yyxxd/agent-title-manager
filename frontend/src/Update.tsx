@@ -1,27 +1,48 @@
-import { useEffect, useRef, useSyncExternalStore, useState } from 'react';
+import { AlertCircle, Check, Copy, X } from 'lucide-react';
+import { useEffect, useRef, useState, useSyncExternalStore } from 'react';
 import { rpc } from './rpc';
 import { toast } from './toast';
-import { ConfirmDialog, Section, Status, useAction } from './ui';
-import './update.css';
+import { ConfirmDialog, StatusNotice, useAction } from './ui';
 
 type Available = { version: string; notes: string; size: number; sha256: string };
 type Notice = { ok: boolean; version: string; message: string };
 type UpdateState = {
-  current: string; enabled: boolean; available?: Available; notice?: Notice;
-  error?: string; busy: boolean;
+  current: string;
+  enabled: boolean;
+  available?: Available;
+  notice?: Notice;
+  error?: string;
+  logPath?: string;
+  busy: boolean;
 };
 type Progress = { done: boolean; downloaded: number; total: number };
 
-// Module store lets the App subscribe once, so background checks and restart
-// results reach the UI from any page, not only while settings is mounted.
 const listeners = new Set<() => void>();
 let state: UpdateState | undefined;
 let progress: Progress | undefined;
 
-function emit() { for (const listener of listeners) listener(); }
-function subscribe(listener: () => void) { listeners.add(listener); return () => { listeners.delete(listener); }; }
-function setState(next: UpdateState) { state = next; emit(); }
-function setProgress(next?: Progress) { progress = next; emit(); }
+function emit() {
+  for (const listener of listeners) listener();
+}
+function subscribe(listener: () => void) {
+  listeners.add(listener);
+  return () => {
+    listeners.delete(listener);
+  };
+}
+function setState(next: UpdateState) {
+  state = next;
+  emit();
+}
+function clearStateError() {
+  if (!state?.error) return;
+  state = { ...state, error: undefined };
+  emit();
+}
+function setProgress(next?: Progress) {
+  progress = next;
+  emit();
+}
 const getState = () => state;
 const getProgress = () => progress;
 
@@ -39,11 +60,39 @@ function rememberDismissedVersion(version: string) {
   try {
     localStorage.setItem(dismissedKey, version);
   } catch {
-    // 存储不可用时只影响本次运行的再次弹出，不阻断更新流程。
+    // 忽略本地存储限制，不阻断更新流程。
   }
 }
 
-// Called once at app root. Keeps subscriptions alive regardless of page.
+async function copyTextToClipboard(text: string): Promise<boolean> {
+  if (navigator.clipboard?.writeText) {
+    try {
+      await navigator.clipboard.writeText(text);
+      return true;
+    } catch {
+      // 剪贴板 API 不可用时使用兜底方案。
+    }
+  }
+  const textarea = document.createElement('textarea');
+  textarea.value = text;
+  textarea.setAttribute('readonly', '');
+  textarea.style.position = 'fixed';
+  textarea.style.top = '-9999px';
+  textarea.style.left = '-9999px';
+  textarea.style.opacity = '0';
+  textarea.style.pointerEvents = 'none';
+  document.body.appendChild(textarea);
+  textarea.focus();
+  textarea.select();
+  try {
+    return document.execCommand('copy');
+  } catch {
+    return false;
+  } finally {
+    document.body.removeChild(textarea);
+  }
+}
+
 export function useUpdateEvents() {
   useEffect(() => {
     const events = window.wails?.Events;
@@ -55,7 +104,6 @@ export function useUpdateEvents() {
         setProgress(event.done ? undefined : event);
       }),
       events.On('desktop:update-status', () => {
-        // Fetch consumes the helper result and returns it as notice.
         void rpc<UpdateState>('desktop.update.get').then((next) => {
           setState(next);
           if (next.notice) {
@@ -77,11 +125,18 @@ export function UpdateSection() {
   const [loaded, setLoaded] = useState(false);
   const [confirm, setConfirm] = useState(false);
   const [notesOpen, setNotesOpen] = useState(false);
+  const [copied, setCopied] = useState(false);
+  const copyTimerRef = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
   const dismissedVersion = useRef(readDismissedVersion());
   const checking = useAction();
   const installing = useAction();
 
-  // Initial fetch also collects a pending helper result if the event was missed.
+  useEffect(() => {
+    return () => {
+      if (copyTimerRef.current !== undefined) clearTimeout(copyTimerRef.current);
+    };
+  }, []);
+
   useEffect(() => {
     if (loaded) return;
     setLoaded(true);
@@ -95,32 +150,41 @@ export function UpdateSection() {
   }, [loaded]);
 
   function check() {
+    installing.reset();
+    clearStateError();
+    setCopied(false);
     void checking.run(async () => {
       const next = await rpc<UpdateState>('desktop.update.check');
       setState(next);
-      return next.available ? `发现新版本 ${next.available.version}` : '当前已是最新版本';
-    }, { success: 'toast', failure: 'toast' });
+      return next.available ? `发现新版本 ${next.available.version}` : '当前已是最新稳定版本';
+    }, { success: 'toast', failure: 'inline' });
   }
 
   function install() {
+    checking.reset();
+    clearStateError();
+    setCopied(false);
     setConfirm(false);
     setProgress({ done: false, downloaded: 0, total: view?.available?.size ?? 0 });
     void installing.run(async () => {
       try {
         const result = await rpc<{ started: boolean }>('desktop.update.install', { installDir: '' });
         if (!result.started) throw new Error('更新未能启动，请重试。');
-        // The helper waits for this process to exit before installing.
         await rpc<void>('desktop.quit');
         return '';
       } catch (error) {
         setProgress(undefined);
         throw error;
       }
-    }, { success: 'silent', failure: 'toast' });
+    }, { success: 'silent', failure: 'inline' });
   }
 
-  const busy = checking.busy || installing.busy;
   const available = view?.available;
+  const busy = checking.busy || installing.busy || !!view?.busy;
+  const percent = downloading && downloading.total > 0
+    ? Math.min(100, Math.round((downloading.downloaded / downloading.total) * 100))
+    : 0;
+  const sizeMB = available?.size ? (available.size / (1024 * 1024)).toFixed(1) : undefined;
 
   useEffect(() => {
     if (available && available.version !== dismissedVersion.current) setNotesOpen(true);
@@ -134,60 +198,194 @@ export function UpdateSection() {
     setNotesOpen(false);
   }
 
-  return <Section title="软件更新">
-    <div className="settings-rows update-rows">
-      <div className="setting-row">
-        <span>当前版本</span>
-        <strong className="update-version">{view?.current ?? '—'}</strong>
+  const errText = view?.error || checking.error || installing.error || undefined;
+
+  useEffect(() => {
+    setCopied(false);
+  }, [errText, view?.logPath]);
+
+  async function copyError() {
+    if (!errText) return;
+    const lines = [
+      view?.current ? `当前版本：v${view.current}` : undefined,
+      available?.version ? `目标版本：v${available.version}` : undefined,
+      `错误信息：${errText}`,
+      view?.logPath ? `日志位置：${view.logPath}` : undefined,
+    ].filter(Boolean);
+    const ok = await copyTextToClipboard(lines.join('\n'));
+    if (ok) {
+      setCopied(true);
+      if (copyTimerRef.current !== undefined) clearTimeout(copyTimerRef.current);
+      copyTimerRef.current = setTimeout(() => setCopied(false), 2000);
+      toast.success('已复制错误信息');
+    } else {
+      toast.error('复制失败，请手动选中复制');
+    }
+  }
+
+  return (
+    <section className="card">
+      <div className="card-header">
+        <h2 className="card-title">软件更新</h2>
+        <span className="card-sub mono">{view?.current ? `v${view.current} · Windows` : 'Windows'}</span>
       </div>
-      <div className="setting-row">
-        <span>{available ? `发现新版本 ${available.version}` : '更新状态'}</span>
-        <div className="update-actions">
-          <button type="button" disabled={busy || view?.enabled === false} onClick={check}>
-            {checking.busy ? '检查中…' : '检查更新'}
-          </button>
-          {available && <button type="button" className="primary" disabled={installing.busy}
-            onClick={() => setConfirm(true)}>下载并安装</button>}
+      <div className="setting-list">
+        <div className="setting-row">
+          <div className="setting-copy">
+            <span className="setting-title">
+              {available ? `发现新版本 v${available.version}` : '当前已是最新稳定版本'}
+            </span>
+            <span className="setting-desc">
+              {available
+                ? `${sizeMB ? `安装包约 ${sizeMB} MB · ` : ''}安装前校验 Ed25519 签名与 SHA-256`
+                : '应用启动时会自动静默检查 GitHub 稳定版发布'}
+            </span>
+          </div>
+          <div className="view-actions">
+            <button
+              type="button"
+              className="btn btn-sm"
+              disabled={busy || view?.enabled === false}
+              onClick={check}
+            >
+              {checking.busy ? '检查中…' : '检查更新'}
+            </button>
+            {available && (
+              <button
+                type="button"
+                className="btn btn-sm btn-primary"
+                disabled={installing.busy || !!downloading}
+                onClick={() => setConfirm(true)}
+              >
+                {downloading ? `下载中 ${percent}%` : '下载并安装'}
+              </button>
+            )}
+          </div>
         </div>
       </div>
-      {view && !view.enabled && <p className="notice">正式签名密钥尚未配置，应用内更新暂不可用。</p>}
-      {downloading && <div className="update-progress" role="status" aria-live="polite">
-        <div className="update-progress-track">
-          <div className="update-progress-fill" style={{
-            width: downloading.total > 0 ? `${Math.min(100, downloading.downloaded / downloading.total * 100)}%` : '0%',
-          }} />
+
+      {view && !view.enabled && (
+        <div style={{ padding: '0 18px 16px' }}>
+          <StatusNotice message="正式签名密钥尚未配置，应用内更新暂不可用。" />
         </div>
-        <span>正在下载安装包{downloading.total > 0 ? ` ${Math.round(downloading.downloaded / downloading.total * 100)}%` : '…'}</span>
-      </div>}
-      <Status error={view?.error ?? checking.error ?? installing.error} />
-    </div>
-    {available && notesOpen && <UpdateNotesDialog available={available}
-      onLater={later} onInstall={() => { setNotesOpen(false); setConfirm(true); }} />}
-    {confirm && <ConfirmDialog title="下载并安装更新" confirmLabel="确认安装" busy={installing.busy}
-      error={installing.error} onCancel={() => setConfirm(false)} onConfirm={install}>
-      <p>将下载并安装 <strong>{available?.version}</strong>。安装会在应用退出后自动进行，完成后重新打开。</p>
-      <p className="muted">下载或校验失败时不会替换当前版本。</p>
-    </ConfirmDialog>}
-  </Section>;
+      )}
+
+      {(available || downloading) && (
+        <div className="update-notes">
+          {available && (
+            <>
+              <strong>v{available.version} 更新说明</strong>
+              <p className="update-notes-body">{available.notes || '本次更新未提供说明。'}</p>
+            </>
+          )}
+          {downloading && (
+            <div role="status" aria-live="polite" style={{ marginTop: available ? 10 : 0 }}>
+              <div style={{ fontSize: 12, color: 'var(--text-muted)' }}>
+                {downloading.total > 0 ? `正在下载安装包 ${percent}%` : '正在下载安装包…'}
+              </div>
+              <div className="progress-bar">
+                <div className="progress-fill" style={{ width: `${percent}%` }} />
+              </div>
+            </div>
+          )}
+        </div>
+      )}
+
+      {errText && (
+        <div style={{ padding: '0 18px 16px' }}>
+          <div className="notice-banner error notice-banner-rich" role="alert">
+            <div className="notice-banner-head">
+              <div className="notice-banner-title">
+                <AlertCircle size={15} aria-hidden="true" />
+                <span className="update-error-text">{errText}</span>
+              </div>
+            </div>
+            <div className="notice-banner-body">
+              {view?.logPath && <div className="update-error-log mono">日志位置：{view.logPath}</div>}
+              <div className="notice-banner-actions">
+                <button type="button" className="btn btn-sm" onClick={() => void copyError()}>
+                  {copied ? <Check size={13} aria-hidden="true" /> : <Copy size={13} aria-hidden="true" />}
+                  <span>{copied ? '已复制' : '复制错误信息'}</span>
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {available && notesOpen && (
+        <UpdateNotesDialog
+          available={available}
+          onLater={later}
+          onInstall={() => {
+            setNotesOpen(false);
+            setConfirm(true);
+          }}
+        />
+      )}
+
+      {confirm && (
+        <ConfirmDialog
+          title={`下载并安装 v${available?.version ?? ''}？`}
+          confirmLabel="确认安装"
+          busy={installing.busy}
+          onCancel={() => setConfirm(false)}
+          onConfirm={install}
+        >
+          <p>下载完成后应用将自动退出并启动更新程序，原有配置与记录会完整保留。</p>
+          <p style={{ color: 'var(--text-muted)', fontSize: 12.5 }}>下载或校验失败时不会替换当前版本。</p>
+        </ConfirmDialog>
+      )}
+    </section>
+  );
 }
 
-function UpdateNotesDialog({ available, onLater, onInstall }: {
-  available: Available; onLater: () => void; onInstall: () => void;
+function UpdateNotesDialog({
+  available,
+  onLater,
+  onInstall,
+}: {
+  available: Available;
+  onLater: () => void;
+  onInstall: () => void;
 }) {
-  const dialog = useRef<HTMLDialogElement>(null);
   useEffect(() => {
-    const element = dialog.current;
-    element?.showModal();
-    return () => element?.close();
-  }, []);
-  return <dialog ref={dialog} className="update-notes-dialog" aria-label={`更新到 v${available.version}`}
-    onCancel={(event) => { event.preventDefault(); onLater(); }}>
-    <h2>更新到 v{available.version}</h2>
-    <p className="muted update-notes-summary">版本 {available.version}</p>
-    <pre className="update-notes">{available.notes || '本次更新未提供说明。'}</pre>
-    <div className="actions">
-      <button autoFocus onClick={onLater}>稍后</button>
-      <button className="primary" onClick={onInstall}>下载并安装</button>
+    const onKey = (event: KeyboardEvent) => {
+      if (event.key === 'Escape') onLater();
+    };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, [onLater]);
+
+  return (
+    <div
+      className="modal-backdrop"
+      onClick={(event) => {
+        if (event.target === event.currentTarget) onLater();
+      }}
+    >
+      <div className="modal" role="dialog" aria-modal="true" aria-labelledby="update-notes-title">
+        <div className="modal-head">
+          <h2 className="modal-title" id="update-notes-title">
+            更新到 v{available.version}
+          </h2>
+          <button type="button" className="icon-btn" onClick={onLater} aria-label="关闭">
+            <X size={15} aria-hidden="true" />
+          </button>
+        </div>
+        <div className="modal-body">
+          <p>发现可用新版本 v{available.version}，建议更新以获取最新修复与改进。</p>
+          <pre className="update-notes-pre">{available.notes || '本次更新未提供说明。'}</pre>
+        </div>
+        <div className="modal-foot">
+          <button type="button" className="btn btn-sm" onClick={onLater}>
+            稍后
+          </button>
+          <button type="button" className="btn btn-sm btn-primary" onClick={onInstall}>
+            下载并安装
+          </button>
+        </div>
+      </div>
     </div>
-  </dialog>;
+  );
 }

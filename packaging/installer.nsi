@@ -125,7 +125,7 @@ Function un.RequireReady
   IfErrors cannotCheck
   StrCmp $0 0 ready
   StrCmp $0 2 running
-  MessageBox MB_ICONEXCLAMATION|MB_OK "请在“Agent 插件”中停用适配器并恢复接管的旧版插件。退出桌面应用后重新卸载。" /SD IDOK
+  MessageBox MB_ICONEXCLAMATION|MB_OK "请在“Agent”中停用适配器并退出桌面应用后重新卸载。" /SD IDOK
   Goto blocked
 running:
   MessageBox MB_ICONEXCLAMATION|MB_OK "Agent Title Manager 正在运行。请在托盘菜单中退出，再重新卸载。" /SD IDOK
