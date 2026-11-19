@@ -25,6 +25,7 @@ type record struct {
 	BaseTitle  string          `json:"baseTitle"`
 	Status     string          `json:"status"`
 	SyncStatus string          `json:"syncStatus"`
+	SyncError  string          `json:"syncError,omitempty"`
 	UpdatedAt  string          `json:"updatedAt"`
 	Attempts   []attemptRecord `json:"attempts"`
 	Failure    *failureReason  `json:"failure,omitempty"`
@@ -77,7 +78,7 @@ func (e *Engine) records(ctx context.Context, p listRequest) (recordList, error)
 }
 
 func listRecords(ctx context.Context, tx *sql.Tx, local *time.Location, limit int) ([]record, error) {
-	rows, err := tx.QueryContext(ctx, `SELECT id,agent,session_id,revision,title,base,status,sync_status,updated,
+	rows, err := tx.QueryContext(ctx, `SELECT id,agent,session_id,revision,title,base,status,sync_status,sync_error,updated,
 		failure_code,failure_length,failure_limit`+newestEvents, limit)
 	if err != nil {
 		return nil, err
@@ -89,7 +90,7 @@ func listRecords(ctx context.Context, tx *sql.Tx, local *time.Location, limit in
 		var updated int64
 		var reason failureReason
 		err = rows.Scan(&item.ID, &item.Agent, &item.SessionID, &item.Revision, &item.Title, &item.BaseTitle, &item.Status,
-			&item.SyncStatus, &updated, &reason.Code, &reason.Length, &reason.Limit)
+			&item.SyncStatus, &item.SyncError, &updated, &reason.Code, &reason.Length, &reason.Limit)
 		if err != nil {
 			return nil, err
 		}

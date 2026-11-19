@@ -69,7 +69,7 @@ func (e *Engine) nextSync() (*syncJob, error) {
 		if err != nil {
 			return nil, err
 		}
-		_, err = tx.ExecContext(ctx, "UPDATE events SET sync_status='writing',updated=? WHERE id=?", now, job.id)
+		_, err = tx.ExecContext(ctx, "UPDATE events SET sync_status='writing',sync_error='',updated=? WHERE id=?", now, job.id)
 		return &job, err
 	})
 }
@@ -98,7 +98,11 @@ func (e *Engine) processSync() (bool, error) {
 		} else if syncErr != nil {
 			status = "failed"
 		}
-		if _, err := tx.ExecContext(ctx, "UPDATE events SET sync_status=?,updated=? WHERE id=?", status, e.now().UnixMilli(), job.id); err != nil {
+		syncMessage := ""
+		if syncErr != nil {
+			syncMessage = syncErr.Error()
+		}
+		if _, err := tx.ExecContext(ctx, "UPDATE events SET sync_status=?,sync_error=?,updated=? WHERE id=?", status, syncMessage, e.now().UnixMilli(), job.id); err != nil {
 			return false, err
 		}
 		if syncErr == nil {
@@ -122,7 +126,7 @@ func (e *Engine) resync(ctx context.Context, p idRequest, adopt bool) (accepted,
 	if adopt {
 		status = "protected"
 	}
-	result, err := e.db.ExecContext(ctx, `UPDATE events SET sync_status='pending', updated=?
+	result, err := e.db.ExecContext(ctx, `UPDATE events SET sync_status='pending', sync_error='', updated=?
 		WHERE id=? AND sync_status=? AND EXISTS(SELECT 1 FROM sessions s WHERE s.agent=events.agent
 		AND s.session_id=events.session_id AND s.title=events.title AND s.orca_id=events.orca_id)`, e.now().UnixMilli(), p.ID, status)
 	if err != nil {

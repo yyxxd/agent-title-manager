@@ -202,6 +202,7 @@ func (c *updateController) install(ctx context.Context, raw json.RawMessage) (ma
 
 	installer, err := c.download(ctx, check)
 	if err != nil {
+		c.setError("download", err)
 		if c.emit != nil {
 			c.emit("desktop:update-progress", map[string]any{"done": false, "downloaded": 0, "total": 0})
 		}
@@ -215,9 +216,17 @@ func (c *updateController) install(ctx context.Context, raw json.RawMessage) (ma
 		}
 	}
 	if err := c.handoff(check, installer, installDir); err != nil {
+		c.setError("handoff", err)
 		return nil, err
 	}
 	return map[string]any{"started": true}, nil
+}
+
+func (c *updateController) setError(operation string, err error) {
+	c.mu.Lock()
+	c.lastError = err.Error()
+	c.mu.Unlock()
+	c.logResult(operation, err)
 }
 
 func (c *updateController) download(ctx context.Context, check update.Check) (string, error) {
