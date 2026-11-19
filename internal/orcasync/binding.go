@@ -44,6 +44,10 @@ func boundChat(ctx context.Context, run runCLI, agent, sessionId, nativeHandle, 
 		if !validPiSession(ctx, sessionId, nativeHandle) {
 			return place{}, false
 		}
+	case "antigravity":
+		if nativeHandle != sessionId {
+			return place{}, false
+		}
 	default:
 		return place{}, false
 	}
@@ -51,6 +55,11 @@ func boundChat(ctx context.Context, run runCLI, agent, sessionId, nativeHandle, 
 		return place{}, false
 	}
 	at, err := showChat(ctx, run, id)
+	if agent == "pi" || agent == "antigravity" {
+		if terminal, terminalErr := showTerminal(ctx, run, id, agent); terminalErr == nil {
+			return terminal, true
+		}
+	}
 	return at, err == nil && at.Agent == agent
 }
 

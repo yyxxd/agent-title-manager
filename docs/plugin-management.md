@@ -63,3 +63,5 @@
 首次识别标题来源时，以 SQLite `mode=ro` 读取 `ORCA_USER_DATA_PATH` 或 `%APPDATA%/Orca` 中已绑定会话的名称元数据。对版本 2 的记录，两个名称字段都缺省且显示确为宿主默认占位名时可判为自动。记录标为 `user` 且名称与实时显示一致时判为手动。未知版本、无记录、库不可读或者来源不明时，应由用户显式接管。
 
 每次写入（包括重试和采用）都比较 Orca 的身份与旧标题，并在最后一步重新核验绑定、读取原生标题。Codex 用 App Server `thread/read`，Claude 使用适配器的标题元数据读回，Pi 读取已绑定会话文件的最近 `session_info`。原生名已改变时，旧任务过期；读不到时保留重试机会。匹配后才执行 `orca chat rename` 并从 CLI 回读。当前宿主读取和 Orca 改名是独立操作，二者之间仍存在竞态窗口。
+
+| Antigravity | \ANTIGRAVITY_CONFIG_DIR\ 下的 \hooks.json\ 命名钩子组 | \SessionStart\、\PreInvocation\、\Stop\，数据目录可由 \ANTIGRAVITY_DATA_DIR\ 覆盖 |

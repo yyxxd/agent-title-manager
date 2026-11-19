@@ -40,6 +40,9 @@ export async function bindOrca(agent, sessionId, options = {}) {
   if (reply?.ok !== true || result?.orcaSessionId !== id || !Array.isArray(result.places) || result.places.length !== 1) return {};
   const [place] = result.places;
   if (place?.agent !== agent || place.orcaSessionId !== id || (place.title !== null && typeof place.title !== "string")) return {};
+  const terminal = place.kind === "terminal";
+  if ((agent === "codex" || agent === "claude") && !(place.kind === undefined || place.kind === "chat")) return {};
+  if ((agent === "pi" || agent === "antigravity") && !(place.kind === undefined || place.kind === "chat" || terminal)) return {};
   return { orcaSessionId: id, orcaTitle: place.title ?? "", orcaTitleOrigin: "unknown", orcaNativeHandle: locator };
 }
 

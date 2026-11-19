@@ -18,7 +18,7 @@ const (
 	titleUnknown = "unknown"
 )
 
-var defaultTitles = map[string]string{"codex": "Codex Chat", "claude": "Claude Chat", "pi": "Pi Chat"}
+var defaultTitles = map[string]string{"codex": "Codex Chat", "claude": "Claude Chat", "pi": "Pi Chat", "antigravity": "Antigravity Chat"}
 
 // ResolveTitleOrigin first binds the claimed native session to the live chat.
 // It then uses the known Orca v2 record shape to distinguish default and manual
@@ -29,7 +29,21 @@ func ResolveTitleOrigin(ctx context.Context, agent, sessionId, nativeHandle, orc
 		return "", titleUnknown, false
 	}
 	title = *at.Title
+	if at.Kind == "terminal" {
+		return title, terminalOrigin(title, agent), true
+	}
 	return title, titleOrigin(ctx, orcaDatabase(), agent, strings.TrimPrefix(at.ID, idPrefix), title), true
+}
+
+func terminalOrigin(title, agent string) string {
+	if strings.TrimSpace(title) == "" {
+		return titleAuto
+	}
+	common := map[string]bool{"Terminal": true, "pwsh": true, "pwsh.exe": true, "powershell": true, "powershell.exe": true, "cmd": true, "cmd.exe": true, "agy": true, "agy.exe": true, "pi": true, "pi.exe": true}
+	if common[title] || title == agent || title == agent+".exe" {
+		return titleAuto
+	}
+	return titleUnknown
 }
 
 func orcaDatabase() string {
