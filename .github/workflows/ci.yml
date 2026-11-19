@@ -29,6 +29,11 @@ jobs:
         with:
           node-version: 22
 
+      - name: Frontend build
+        run: |
+          pnpm --dir frontend install --frozen-lockfile
+          pnpm --dir frontend build
+
       - name: Go tests
         run: go test ./...
 
@@ -37,8 +42,3 @@ jobs:
 
       - name: Shared plugin copies
         run: node plugins/sync-support.mjs --check
-
-      - name: Frontend build
-        run: |
-          pnpm --dir frontend install --frozen-lockfile
-          pnpm --dir frontend build
