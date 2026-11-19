@@ -84,7 +84,8 @@ jobs:
         run: |
           $version = $env:GITHUB_REF_NAME.TrimStart('v')
           # A tag push has no release body; the signed tag commit message is the release note.
-          $env:ATM_RELEASE_NOTES = (git log -1 --format=%B $env:GITHUB_REF_NAME).Trim()
+          # PowerShell 把多行输出当成字符串数组，必须先合并再赋给环境变量。
+          $env:ATM_RELEASE_NOTES = ((git log -1 --format=%B $env:GITHUB_REF_NAME) -join "`n").Trim()
           $installer = "out\AgentTitleManager-$version-windows-x64-setup.exe"
           $hash = (Get-FileHash -Algorithm SHA256 -LiteralPath $installer).Hash.ToLowerInvariant()
           $size = (Get-Item -LiteralPath $installer).Length
@@ -97,7 +98,10 @@ jobs:
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
-          $notes = (git log -1 --format=%B $env:GITHUB_REF_NAME).Trim()
+          # 多行说明通过文件传递，避免 PowerShell 把每一行拆成独立参数。
+          $notes = ((git log -1 --format=%B $env:GITHUB_REF_NAME) -join "`n").Trim()
+          $notesPath = Join-Path $env:RUNNER_TEMP 'release-notes.md'
+          Set-Content -LiteralPath $notesPath -Value $notes -Encoding utf8
           gh release create $env:GITHUB_REF_NAME `
             $env:INSTALLER out\update-manifest.json `
-            --title $env:GITHUB_REF_NAME --notes $notes
+            --title $env:GITHUB_REF_NAME --notes-file $notesPath
