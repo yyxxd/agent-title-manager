@@ -1,0 +1,47 @@
+.update-rows .update-version {
+  justify-self: start;
+  font-size: 16px;
+  font-weight: 650;
+  letter-spacing: -0.01em;
+}
+.update-actions {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+.update-notes-row { align-items: start; }
+.update-notes {
+  margin: 0;
+  padding: 10px 12px;
+  max-height: 190px;
+  overflow: auto;
+  white-space: pre-wrap;
+  font: 13px/1.55 inherit;
+  color: var(--ink);
+  background: var(--raised);
+  border-radius: 7px;
+}
+.update-progress {
+  padding: 8px 14px 14px;
+}
+.update-progress-track {
+  height: 6px;
+  overflow: hidden;
+  background: var(--raised);
+  border-radius: 999px;
+}
+.update-progress-fill {
+  height: 100%;
+  background: var(--accent);
+  border-radius: inherit;
+  transition: width 140ms ease-out;
+}
+.update-progress > span {
+  display: block;
+  margin-top: 6px;
+  color: var(--muted);
+  font-size: 13px;
+  font-variant-numeric: tabular-nums;
+}

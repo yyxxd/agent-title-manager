@@ -4,6 +4,7 @@ import { ApiFields } from './ModelApiFields';
 import { ModelSwitch } from './ModelSwitch';
 import { nativeChoice, SubscriptionFields, useSubscriptionDraft } from './SubscriptionFields';
 import { rpc, type Preferences, type Settings } from './rpc';
+import { UpdateSection } from './Update';
 import { Empty, InlineActionError, Section, Status, useAction, useLoad } from './ui';
 import './models.css';
 
@@ -12,6 +13,7 @@ export function Models({ appearance }: { appearance: AppearanceControl }) {
   return <div className="model-settings">
     <header className="page-head"><h1>模型与规则</h1></header>
     <DesktopPreferences appearance={appearance} />
+    <UpdateSection />
     <Status error={error} />
     {value ? <ModelForm initial={value} /> : !error && <Empty>正在读取模型配置。</Empty>}
   </div>;
