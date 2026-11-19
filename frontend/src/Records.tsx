@@ -116,7 +116,7 @@ export function Records({
     if ((filter === 'codex' || filter === 'claude' || filter === 'pi') && item.agent !== filter) return false;
     if (q) {
       const { model } = attemptSummary(item);
-      const hay = `${item.title} ${model} ${agentName(item.agent)} ${item.sessionId}`.toLowerCase();
+      const hay = `${item.title} ${model} ${agentName(item.agent)} ${item.sessionId} ${item.syncError ?? ''}`.toLowerCase();
       if (!hay.includes(q)) return false;
     }
     return true;
@@ -217,12 +217,20 @@ export function Records({
                 const expanded = expandedId === item.id;
                 const { model, totalTokens } = attemptSummary(item);
                 const reason = failureText(item);
+                const syncError = item.syncError?.trim() || undefined;
                 const syncMeta = item.syncStatus ? syncStates[item.syncStatus] : undefined;
                 const protectedWarn = item.syncStatus === 'protected';
-                const notice =
-                  item.syncError ||
-                  reason ||
-                  (protectedWarn ? 'Orca 中存在手动编辑的标题，已自动保护未覆盖。' : undefined);
+                const reasons: { text: string; warn?: boolean }[] = [];
+                if (reason && syncError && reason !== syncError) {
+                  reasons.push({ text: `生成失败：${reason}` });
+                  reasons.push({ text: `同步错误：${syncError}` });
+                } else if (syncError) {
+                  reasons.push({ text: syncError });
+                } else if (reason) {
+                  reasons.push({ text: reason });
+                } else if (protectedWarn) {
+                  reasons.push({ text: 'Orca 中存在手动编辑的标题，已自动保护未覆盖。', warn: true });
+                }
 
                 return (
                   <article className="record-item" key={item.id}>
@@ -250,9 +258,13 @@ export function Records({
                             </>
                           )}
                         </div>
-                        {notice && (
-                          <div className={`record-reason ${protectedWarn && !item.syncError && !reason ? 'warn' : ''}`}>
-                            {notice}
+                        {reasons.length > 0 && (
+                          <div className="record-reasons">
+                            {reasons.map((entry, index) => (
+                              <div key={index} className={`record-reason ${entry.warn ? 'warn' : ''}`}>
+                                {entry.text}
+                              </div>
+                            ))}
                           </div>
                         )}
                       </div>
