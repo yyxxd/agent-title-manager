@@ -175,7 +175,7 @@ func editPi(root object, entry string, adding bool) (bool, error) {
 
 func editAntigravity(root object, entry string, adding bool) (bool, error) {
 	const groupName = "agent-title-manager"
-	groups, err := get[object](root, groupName)
+	groups, err := nested(root, groupName)
 	if err != nil {
 		return false, err
 	}
@@ -191,12 +191,14 @@ func editAntigravity(root object, entry string, adding bool) (bool, error) {
 		for _, raw := range items {
 			var h map[string]any
 			if json.Unmarshal(raw, &h) != nil {
-				return false, errors.New("Antigravity Hook �����޷�����")
+				return false, errors.New("Antigravity Hook 配置无法解析")
 			}
 			if h["type"] == "command" && h["command"] == command {
 				found = true
-				changed = true
-				continue
+				if !adding {
+					changed = true
+					continue
+				}
 			}
 			kept = append(kept, raw)
 		}

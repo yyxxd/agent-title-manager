@@ -46,7 +46,7 @@ function collect(path, head = false) {
     let row; try { row = JSON.parse(line); } catch { continue; }
     if (!row || !["USER_INPUT", "PLANNER_RESPONSE"].includes(row.type)) continue;
     if (row.type === "USER_INPUT" && row.source === "USER_EXPLICIT") {
-      const text = clean(row.content); if (text && !/^\s*\//.test(text)) rows.push({ role: "user", text, confirmation: isTextConfirmation(row.content), id: String(row.step_index ?? rows.length) });
+      const text = clean(row.content); if (text && !/^\s*\//.test(text)) rows.push({ role: "user", text, confirmation: isTextConfirmation(text), media: Array.isArray(row.media) && row.media.length > 0, toolCalls: Array.isArray(row.tool_calls) && row.tool_calls.length > 0, id: String(row.step_index ?? rows.length) });
     } else if (row.type === "PLANNER_RESPONSE" && row.source === "MODEL") {
       const hasTools = Array.isArray(row.tool_calls) && row.tool_calls.length > 0;
       const text = clean(row.content); if (text && !hasTools) rows.push({ role: "assistant", text, id: String(row.step_index ?? rows.length) });
@@ -62,5 +62,6 @@ export function snapshot(identified, input = {}) {
   const currentTitle = readObservedTitle(identified);
   const turns = recentTurns(rows.map(({ role, text }) => ({ role, text })));
   const users = rows.filter(r => r.role === "user");
-  return { agent: "antigravity", sessionId: identified.sessionId, currentTitle, titleOrigin: users.length <= 1 ? "auto" : "unknown", revision: fingerprint(user.id, answer.id, answer.text), project: typeof input.cwd === "string" && isAbsolute(input.cwd) ? input.cwd : undefined, turns, confirmationOnly: users.length > 0 && users.slice(1).every(r => r.confirmation) };
+  const latestUser = users.at(-1);
+  return { agent: "antigravity", sessionId: identified.sessionId, currentTitle, titleOrigin: users.length <= 1 ? "auto" : "unknown", revision: fingerprint(user.id, answer.id, answer.text), project: typeof input.cwd === "string" && isAbsolute(input.cwd) ? input.cwd : undefined, turns, confirmationOnly: users.length >= 2 && Boolean(latestUser?.confirmation) && !latestUser.media && !latestUser.toolCalls };
 }
