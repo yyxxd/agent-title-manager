@@ -18,6 +18,10 @@ import (
 )
 
 func main() {
+	if len(os.Args) == 2 && os.Args[1] == "--version" {
+		fmt.Println(desktop.BuildVersion())
+		return
+	}
 	if len(os.Args) == 2 && os.Args[1] == "--check-uninstall" {
 		os.Exit(uninstallStatus())
 	}
@@ -53,6 +57,12 @@ func run() error {
 			ResolveTitleOrigin: orcasync.ResolveTitleOrigin, Close: core.Close,
 		}, nil
 	})
+	updater, err := desktop.NewUpdateController(dir, filepath.Dir(exe), desktop.BuildVersion(),
+		desktop.UpdatePublicKey(), os.Getenv("ATM_UPDATE_URL"))
+	if err != nil {
+		return err
+	}
+	service.SetUpdater(updater)
 	return desktop.Run(dir, frontend.Assets(), service)
 }
 
