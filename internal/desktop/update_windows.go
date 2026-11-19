@@ -102,10 +102,6 @@ func (c *updateController) snapshot() (updateView, error) {
 	c.mu.Lock()
 	view := c.viewLocked()
 	c.mu.Unlock()
-	if c.enabled && c.latest.Version != "" {
-		available := c.latest
-		view.Available = &available
-	}
 	if notice, err := update.ConsumeStatus(c.dataDir); err == nil && notice.Message != "" {
 		view.Notice = &notice
 	}

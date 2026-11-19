@@ -14,7 +14,9 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"strings"
+	"strconv"
 	"testing"
+	"time"
 )
 
 func TestNewer(t *testing.T) {
@@ -311,4 +313,21 @@ func TestNewSourceDownloadTransportDefaults(t *testing.T) {
 	if !ok || transport.Proxy == nil || source.download.Timeout != 0 {
 		t.Fatalf("transport lost defaults: %#v", source.download)
 	}
+}
+
+func TestDownloadSlowChunksAndStall(t *testing.T) {
+	payload := []byte("slow payload")
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Length", strconv.Itoa(len(payload)))
+		for _, b := range payload { _, _ = w.Write([]byte{b}); if f, ok := w.(http.Flusher); ok { f.Flush() }; time.Sleep(10 * time.Millisecond) }
+	}))
+	defer srv.Close()
+	s := &Source{download: srv.Client(), stallTimeout: 30 * time.Millisecond}
+	check := Check{DownloadURL: srv.URL, Size: int64(len(payload)), SHA256: hex.EncodeToString(sha256Sum(payload))}
+	var out bytes.Buffer
+	if err := s.Download(context.Background(), check, &out, nil); err != nil || !bytes.Equal(out.Bytes(), payload) { t.Fatalf("slow download: %v %q", err, out.Bytes()) }
+	stall := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { _, _ = w.Write([]byte("x")); if f, ok := w.(http.Flusher); ok { f.Flush() }; time.Sleep(150 * time.Millisecond) }))
+	defer stall.Close()
+	s.download = stall.Client(); check.DownloadURL = stall.URL; check.Size = 2; check.SHA256 = hex.EncodeToString(sha256Sum([]byte("xx")))
+	if err := s.Download(context.Background(), check, io.Discard, nil); !errors.Is(err, ErrDownloadStalled) { t.Fatalf("stall error: %v", err) }
 }

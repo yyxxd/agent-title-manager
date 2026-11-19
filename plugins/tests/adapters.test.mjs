@@ -399,3 +399,15 @@ test("四个发布包都有独立 manifest 和运行入口", async () => {
     assert.match(await readFile(new URL(manifest.entry, root), "utf8"), /from "\.\/client\.mjs"/);
   }
 });
+
+test("Claude ack syncStatus controls native sync fallback", async t => {
+  for (const [syncStatus, accepted, expectedNative] of [["pending", true, false], ["unbound", true, true], [undefined, false, true]]) {
+    const { root, input } = await claudeFixture(t, [{ type: "custom-title", customTitle: "fixture-title" }]);
+    const methods = [];
+    const rpc = async (method, params) => { methods.push([method, params]); if (method === "title.ack") return { accepted, syncStatus }; return { accepted: true }; };
+    const bound = async () => ({ orcaSessionId: "orca", orcaTitle: "", orcaTitleOrigin: "unknown", orcaNativeHandle: input.transcript_path });
+    await handleClaude("confirm", { ...input, id: "claim", title: "fixture-title", baseTitle: "" }, rpc, undefined, bound, root);
+    assert.equal(methods.filter(([method]) => method === "title.ack").length, 1);
+    assert.equal(methods.filter(([method, params]) => method === "event.submit" && params.nativeTitleOnly).length, expectedNative ? 1 : 0);
+  }
+});
