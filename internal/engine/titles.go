@@ -128,7 +128,11 @@ func (e *Engine) ack(ctx context.Context, p ackRequest) (accepted, error) {
 			return accepted{}, nil
 		}
 		if status == "applied" {
-			return accepted{true}, nil
+			var existing string
+			if err := tx.QueryRowContext(ctx, `SELECT sync_status FROM events WHERE id=?`, p.ID).Scan(&existing); err != nil {
+				return accepted{}, err
+			}
+			return accepted{Accepted: true, SyncStatus: existing}, nil
 		}
 		if status != "claimed" {
 			return accepted{}, nil
@@ -140,7 +144,8 @@ func (e *Engine) ack(ctx context.Context, p ackRequest) (accepted, error) {
 		if s.manual || (s.title != title && (s.revision != revision || s.title != base)) {
 			return accepted{}, nil
 		}
-		return accepted{true}, e.applyAck(ctx, tx, p, title, syncPolicy(orcaID, orcaBase, origin, s.orcaManaged, title))
+		syncStatus := syncPolicy(orcaID, orcaBase, origin, s.orcaManaged, title)
+		return accepted{Accepted: true, SyncStatus: syncStatus}, e.applyAck(ctx, tx, p, title, syncStatus)
 	})
 	if err == nil && result.Accepted {
 		signal(e.syncWake)

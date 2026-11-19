@@ -145,7 +145,7 @@ func submitConcurrently(t *testing.T, e *Engine, p submission) {
 	for range 20 {
 		wg.Go(func() {
 			v, err := e.Handle(context.Background(), "event.submit", raw)
-			if err != nil || v != (accepted{true}) {
+			if err != nil || v != (accepted{Accepted: true}) {
 				t.Errorf("submit %v %v", v, err)
 			}
 		})

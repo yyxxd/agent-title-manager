@@ -149,7 +149,7 @@ INSERT INTO attempts(event_id,agent,provider,model,source,requested_tier,status,
 	}
 	e := engineAt(t, dir, nil)
 	var version int
-	if err := e.db.QueryRow("PRAGMA user_version").Scan(&version); err != nil || version != 6 {
+	if err := e.db.QueryRow("PRAGMA user_version").Scan(&version); err != nil || version != 7 {
 		t.Fatal(version, err)
 	}
 	checkLegacyFailureRecords(t, call[recordList](t, e, "records.list", listRequest{}).Items)

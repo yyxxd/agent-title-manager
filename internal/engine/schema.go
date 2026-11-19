@@ -84,7 +84,8 @@ ALTER TABLE attempts ADD COLUMN actual_model TEXT NOT NULL DEFAULT '';
 PRAGMA user_version=6;
 `
 
-const schemaV7 = `ALTER TABLE events ADD COLUMN sync_error TEXT NOT NULL DEFAULT '';`
+const schemaV7 = `ALTER TABLE events ADD COLUMN sync_error TEXT NOT NULL DEFAULT '';
+PRAGMA user_version=7;`
 
 func initialize(db *sql.DB) error {
 	for _, pragmas := range []string{"PRAGMA busy_timeout=2500", "PRAGMA foreign_keys=ON", "PRAGMA journal_mode=WAL", "PRAGMA secure_delete=ON"} {

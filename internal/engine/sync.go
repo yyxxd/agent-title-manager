@@ -136,5 +136,5 @@ func (e *Engine) resync(ctx context.Context, p idRequest, adopt bool) (accepted,
 	if n > 0 {
 		signal(e.syncWake)
 	}
-	return accepted{n > 0}, err
+	return accepted{Accepted: n > 0}, err
 }
