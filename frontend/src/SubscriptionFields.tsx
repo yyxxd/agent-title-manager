@@ -15,10 +15,15 @@ export const effortFor = (model: SubscriptionModel, current: string) =>
 
 function useSubscription(provider: Settings['provider']) {
   const [revision, setRevision] = useState(0);
-  const { value, error } = useLoad(() => provider === 'api'
-    ? Promise.resolve(undefined)
-    : rpc<SubscriptionCatalog>('providers.subscriptionModels', { provider }), `${provider}:${revision}`);
-  return { value, error, refresh: () => setRevision((old) => old + 1) };
+  // 只有刷新按钮触发重新读取；其余情况由后端复用已缓存的目录。
+  const force = useRef(false);
+  const { value, error } = useLoad(() => {
+    if (provider === 'api') return Promise.resolve(undefined);
+    const refresh = force.current;
+    force.current = false;
+    return rpc<SubscriptionCatalog>('providers.subscriptionModels', { provider, refresh });
+  }, `${provider}:${revision}`);
+  return { value, error, refresh: () => { force.current = true; setRevision((old) => old + 1); } };
 }
 
 export function useSubscriptionDraft(settings: Settings, setSettings: Dispatch<SetStateAction<Settings>>) {
@@ -73,7 +78,8 @@ export function SubscriptionFields({ provider, choice, catalog, selected, onRefr
   const items = loggedOut ? undefined : value?.items;
   const missing = !!items?.length && !!choice.model && !selected;
   const busy = !value && !error;
-  const disabled = busy || loggedOut;
+  // 读取失败或未登录时锁定选择，直到手动刷新成功。
+  const disabled = busy || loggedOut || !!error;
   const visibleChoice = disabled ? undefined : choice;
   const emptyMessage = '此 CLI 当前没有可见模型。';
   const normalized = query.trim().toLowerCase();

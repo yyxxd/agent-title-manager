@@ -66,7 +66,8 @@ func Open(dataDir string, syncer func(context.Context, string, string, string) e
 	}
 	ctx, cancel := context.WithCancel(context.Background())
 	e := &Engine{db: db, dir: dataDir, lock: lock, ctx: ctx, cancel: cancel, now: time.Now,
-		modelWake: make(chan struct{}, 1), syncWake: make(chan struct{}, 1), syncer: syncer}
+		modelWake: make(chan struct{}, 1), syncWake: make(chan struct{}, 1), syncer: syncer,
+		catalogSnapshots: loadCatalogCache(dataDir)}
 	e.generate = e.runProvider
 	e.catalog = e.subscriptionModels
 	if len(enabled) == 1 {
@@ -152,7 +153,7 @@ func (e *Engine) Handle(ctx context.Context, method string, params json.RawMessa
 		return dispatch(params, func(p modelsRequest) (modelCatalog, error) { return e.listModels(ctx, p) })
 	case "providers.subscriptionModels":
 		return dispatch(params, func(p subscriptionRequest) (subscriptionCatalog, error) {
-			return e.refreshSubscription(ctx, p.Provider)
+			return e.cachedSubscription(ctx, p.Provider, p.Refresh)
 		})
 	case "providers.endpoints":
 		return dispatch(params, func(p endpointRequest) (apiEndpoints, error) { return e.previewEndpoints(ctx, p) })

@@ -88,7 +88,6 @@ function useModelDraft(initial: Settings) {
 
   const edit: Edit = (field, value) => {
     actions.reset();
-    if (field === 'provider' && value !== settings.provider) catalog.refresh();
     setSettings((old) => ({ ...old, [field]: value }));
   };
   function save(event: FormEvent) {

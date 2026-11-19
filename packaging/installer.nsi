@@ -12,6 +12,9 @@ VIAddVersionKey /LANG=2052 "FileVersion" "${VERSION}"
 VIAddVersionKey /LANG=2052 "ProductVersion" "${VERSION}"
 VIAddVersionKey /LANG=2052 "LegalCopyright" "Agent Title Manager contributors"
 
+; MUI2 applies its own Icon/UninstallIcon from these defines.
+!define MUI_ICON "app.ico"
+!define MUI_UNICON "app.ico"
 !include "MUI2.nsh"
 !include "FileFunc.nsh"
 !include "x64.nsh"

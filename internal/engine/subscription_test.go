@@ -7,7 +7,9 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
 )
@@ -15,12 +17,12 @@ import (
 func TestSubscriptionCatalogs(t *testing.T) {
 	mode := installSubscriptionFixtures(t)
 	e := engineAt(t, t.TempDir(), nil)
-	codex := call[subscriptionCatalog](t, e, "providers.subscriptionModels", subscriptionRequest{"codex"})
+	codex := call[subscriptionCatalog](t, e, "providers.subscriptionModels", subscriptionRequest{Provider: "codex"})
 	if len(codex.Items) != 2 || codex.Items[0].ID != "fixture-codex" || codex.Items[0].DefaultEffort != "high" ||
 		len(codex.Items[1].Efforts) != 0 || codex.Items[1].DefaultEffort != "" {
 		t.Fatal(codex)
 	}
-	claude := call[subscriptionCatalog](t, e, "providers.subscriptionModels", subscriptionRequest{"claude"})
+	claude := call[subscriptionCatalog](t, e, "providers.subscriptionModels", subscriptionRequest{Provider: "claude"})
 	if len(claude.Items) != 2 || claude.Items[0].ResolvedModel != "fixture-resolved" ||
 		len(claude.Items[0].Efforts) != 1 || len(claude.Items[1].Efforts) != 0 || claude.Notice != "" {
 		t.Fatal(claude)
@@ -63,7 +65,9 @@ func TestSubscriptionCatalogRequiresLogin(t *testing.T) {
 		{"codex", "noauth"}, {"claude", "noauth"}, {"claude", "injected-oauth"},
 	} {
 		mode(fixture.auth)
-		catalog := call[subscriptionCatalog](t, e, "providers.subscriptionModels", subscriptionRequest{fixture.provider})
+		// 夹具只改登录模式、不改 CLI 文件，模拟用户切换账号后的手动刷新。
+		catalog := call[subscriptionCatalog](t, e, "providers.subscriptionModels",
+			subscriptionRequest{Provider: fixture.provider, Refresh: true})
 		if !catalog.AuthRequired || catalog.Items == nil || len(catalog.Items) != 0 || !strings.Contains(catalog.Notice, "登录") {
 			t.Fatal(fixture, catalog)
 		}
@@ -83,8 +87,10 @@ func TestSubscriptionCatalogRequiresLogin(t *testing.T) {
 	if settings := call[Settings](t, e, "settings.get", nil); settings != saved {
 		t.Fatal(settings, saved)
 	}
+	// 重新登录属于外部状态变化，按约定需要手动刷新解锁。
 	mode("")
-	catalog := call[subscriptionCatalog](t, e, "providers.subscriptionModels", subscriptionRequest{"claude"})
+	catalog := call[subscriptionCatalog](t, e, "providers.subscriptionModels",
+		subscriptionRequest{Provider: "claude", Refresh: true})
 	if catalog.AuthRequired || len(catalog.Items) != 2 || catalog.Items[0].ID != saved.ClaudeModel ||
 		len(catalog.Items[0].Efforts) != 1 || catalog.Items[0].Efforts[0] != saved.ClaudeEffort {
 		t.Fatal(catalog)
@@ -114,7 +120,8 @@ func TestSubscriptionDraftValidation(t *testing.T) {
 		t.Fatal(err)
 	}
 	mode("empty")
-	call[subscriptionCatalog](t, e, "providers.subscriptionModels", subscriptionRequest{"codex"})
+	// 夹具只改模式、不改 CLI 文件，需要显式刷新才会丢弃已缓存的目录。
+	call[subscriptionCatalog](t, e, "providers.subscriptionModels", subscriptionRequest{Provider: "codex", Refresh: true})
 	assertRPCError(t, e, "providers.test", choice, "重新选择")
 	if s := call[Settings](t, e, "settings.save", map[string]bool{"fast": false}); s.CodexModel != "fixture-no-effort" {
 		t.Fatal("已保存模型丢失", s)
@@ -143,12 +150,12 @@ func TestSubscriptionRefreshKeepsNewestSnapshot(t *testing.T) {
 		}
 	}
 	go func() {
-		value, _ := e.refreshSubscription(e.ctx, "codex")
+		value, _ := e.cachedSubscription(e.ctx, "codex", true)
 		returned <- value
 	}()
 	<-started
-	call[subscriptionCatalog](t, e, "providers.subscriptionModels", subscriptionRequest{"claude"})
-	call[subscriptionCatalog](t, e, "providers.subscriptionModels", subscriptionRequest{"codex"})
+	call[subscriptionCatalog](t, e, "providers.subscriptionModels", subscriptionRequest{Provider: "claude"})
+	call[subscriptionCatalog](t, e, "providers.subscriptionModels", subscriptionRequest{Provider: "codex"})
 	close(release)
 	if items := (<-returned).Items; len(items) != 1 || items[0].ID != "current" {
 		t.Fatal(items)
@@ -158,6 +165,178 @@ func TestSubscriptionRefreshKeepsNewestSnapshot(t *testing.T) {
 	}
 	if err := e.checkSubscription(t.Context(), Settings{Provider: "claude", ClaudeModel: "claude"}); err != nil {
 		t.Fatal(err)
+	}
+}
+
+func TestSubscriptionCatalogCacheFollowsCLI(t *testing.T) {
+	binDir := t.TempDir()
+	name := "codex"
+	if runtime.GOOS == "windows" {
+		name += ".exe"
+	}
+	binary := filepath.Join(binDir, name)
+	if err := os.WriteFile(binary, []byte("v1"), 0700); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("PATH", binDir)
+	dataDir := t.TempDir()
+	var calls atomic.Int64
+	install := func(e *Engine) {
+		e.catalog = func(context.Context, string) (subscriptionCatalog, error) {
+			calls.Add(1)
+			return subscriptionCatalog{Items: []subscriptionModel{{ID: "fixture"}}}, nil
+		}
+	}
+	request := subscriptionRequest{Provider: "codex"}
+	e := engineAt(t, dataDir, nil)
+	install(e)
+	for range 2 {
+		if catalog := call[subscriptionCatalog](t, e, "providers.subscriptionModels", request); len(catalog.Items) != 1 {
+			t.Fatal(catalog)
+		}
+	}
+	if calls.Load() != 1 {
+		t.Fatalf("重复打开读取了 %d 次目录", calls.Load())
+	}
+	if err := e.Close(); err != nil {
+		t.Fatal(err)
+	}
+	// 重启后继续复用磁盘缓存。
+	e = engineAt(t, dataDir, nil)
+	install(e)
+	call[subscriptionCatalog](t, e, "providers.subscriptionModels", request)
+	if calls.Load() != 1 {
+		t.Fatalf("重启后读取了 %d 次目录", calls.Load())
+	}
+	// CLI 升级后自动重新读取。
+	if err := os.WriteFile(binary, []byte("v2-updated"), 0700); err != nil {
+		t.Fatal(err)
+	}
+	call[subscriptionCatalog](t, e, "providers.subscriptionModels", request)
+	if calls.Load() != 2 {
+		t.Fatalf("CLI 升级后读取了 %d 次目录", calls.Load())
+	}
+	// 手动刷新忽略缓存。
+	call[subscriptionCatalog](t, e, "providers.subscriptionModels", subscriptionRequest{Provider: "codex", Refresh: true})
+	if calls.Load() != 3 {
+		t.Fatalf("手动刷新后读取了 %d 次目录", calls.Load())
+	}
+}
+
+func TestSubscriptionCatalogLocksAfterLoginRequired(t *testing.T) {
+	binDir := t.TempDir()
+	name := "codex"
+	if runtime.GOOS == "windows" {
+		name += ".exe"
+	}
+	if err := os.WriteFile(filepath.Join(binDir, name), []byte("v1"), 0700); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("PATH", binDir)
+	dataDir := t.TempDir()
+	var calls atomic.Int64
+	install := func(e *Engine) {
+		e.catalog = func(context.Context, string) (subscriptionCatalog, error) {
+			switch calls.Add(1) {
+			case 1, 3:
+				return subscriptionCatalog{Items: []subscriptionModel{{ID: "fixture"}}}, nil
+			default:
+				return subscriptionCatalog{Items: []subscriptionModel{}, Notice: "请先登录", AuthRequired: true}, nil
+			}
+		}
+	}
+	request := subscriptionRequest{Provider: "codex"}
+	refreshed := subscriptionRequest{Provider: "codex", Refresh: true}
+	e := engineAt(t, dataDir, nil)
+	install(e)
+	if catalog := call[subscriptionCatalog](t, e, "providers.subscriptionModels", request); catalog.AuthRequired {
+		t.Fatal(catalog)
+	}
+	if locked := call[subscriptionCatalog](t, e, "providers.subscriptionModels", refreshed); !locked.AuthRequired || calls.Load() != 2 {
+		t.Fatalf("刷新结果 %v，读取了 %d 次目录", locked, calls.Load())
+	}
+	// 锁定后打开页面直接返回未登录，不再启动 CLI。
+	if locked := call[subscriptionCatalog](t, e, "providers.subscriptionModels", request); !locked.AuthRequired || calls.Load() != 2 {
+		t.Fatalf("锁定后结果 %v，读取了 %d 次目录", locked, calls.Load())
+	}
+	if err := e.Close(); err != nil {
+		t.Fatal(err)
+	}
+	// 锁定状态跨重启保留。
+	e = engineAt(t, dataDir, nil)
+	install(e)
+	if locked := call[subscriptionCatalog](t, e, "providers.subscriptionModels", request); !locked.AuthRequired || calls.Load() != 2 {
+		t.Fatalf("重启后结果 %v，读取了 %d 次目录", locked, calls.Load())
+	}
+	// 手动刷新成功才解除锁定。
+	if ready := call[subscriptionCatalog](t, e, "providers.subscriptionModels", refreshed); ready.AuthRequired ||
+		len(ready.Items) != 1 || calls.Load() != 3 {
+		t.Fatalf("解锁结果 %v，读取了 %d 次目录", ready, calls.Load())
+	}
+	if err := e.Close(); err != nil {
+		t.Fatal(err)
+	}
+	e = engineAt(t, dataDir, nil)
+	install(e)
+	if ready := call[subscriptionCatalog](t, e, "providers.subscriptionModels", request); ready.AuthRequired ||
+		len(ready.Items) != 1 || calls.Load() != 3 {
+		t.Fatalf("重启后结果 %v，读取了 %d 次目录", ready, calls.Load())
+	}
+}
+
+func TestSubscriptionCatalogLocksAfterError(t *testing.T) {
+	binDir := t.TempDir()
+	name := "codex"
+	if runtime.GOOS == "windows" {
+		name += ".exe"
+	}
+	if err := os.WriteFile(filepath.Join(binDir, name), []byte("v1"), 0700); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("PATH", binDir)
+	dataDir := t.TempDir()
+	const failure = "读取模型目录超时，请刷新重试"
+	var calls atomic.Int64
+	install := func(e *Engine) {
+		e.catalog = func(context.Context, string) (subscriptionCatalog, error) {
+			switch calls.Add(1) {
+			case 1, 3:
+				return subscriptionCatalog{Items: []subscriptionModel{{ID: "fixture"}}}, nil
+			default:
+				return subscriptionCatalog{}, errors.New(failure)
+			}
+		}
+	}
+	request := subscriptionRequest{Provider: "codex"}
+	refreshed := subscriptionRequest{Provider: "codex", Refresh: true}
+	lockedRequest, _ := json.Marshal(refreshed)
+	e := engineAt(t, dataDir, nil)
+	install(e)
+	call[subscriptionCatalog](t, e, "providers.subscriptionModels", request)
+	if _, err := e.Handle(t.Context(), "providers.subscriptionModels", lockedRequest); err == nil || !strings.Contains(err.Error(), failure) {
+		t.Fatal(err)
+	}
+	// 锁定后打开页面返回保存的失败原因，不再读取。
+	params, _ := json.Marshal(request)
+	for range 2 {
+		if _, err := e.Handle(t.Context(), "providers.subscriptionModels", params); err == nil || !strings.Contains(err.Error(), failure) {
+			t.Fatal(err)
+		}
+		if calls.Load() != 2 {
+			t.Fatalf("锁定后读取了 %d 次目录", calls.Load())
+		}
+	}
+	if err := e.Close(); err != nil {
+		t.Fatal(err)
+	}
+	// 锁定状态跨重启保留，直到手动刷新成功。
+	e = engineAt(t, dataDir, nil)
+	install(e)
+	if _, err := e.Handle(t.Context(), "providers.subscriptionModels", params); err == nil || !strings.Contains(err.Error(), failure) {
+		t.Fatal(err)
+	}
+	if ready := call[subscriptionCatalog](t, e, "providers.subscriptionModels", refreshed); len(ready.Items) != 1 || calls.Load() != 3 {
+		t.Fatalf("解锁结果 %v，读取了 %d 次目录", ready, calls.Load())
 	}
 }
 
