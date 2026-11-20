@@ -294,7 +294,7 @@ func (m *Manager) describeEnabled(id string, item *Item, r record) {
 	case "claude", "pi":
 		item.Detail = "已写入宿主设置。请重启宿主以加载适配器。"
 	case "antigravity":
-		item.Detail = "Antigravity hooks.json ����������"
+		item.Detail = "已写入 Antigravity hooks.json。请重启 Antigravity 以加载适配器。"
 	}
 }
 
