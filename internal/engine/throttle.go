@@ -41,7 +41,8 @@ func followsTurnWindow(previous, next []string) bool {
 }
 
 func throttleNaming(ctx context.Context, tx *sql.Tx, p submission, s session, now int64, hashes []string, goalHash string) (keep bool, skippedTurn int, err error) {
-	if p.CurrentTitle == "" || p.NativeOnly || s.manual || p.ConfirmationOnly || s.priorRevision == "" || s.priorProject != s.projectKey {
+	if p.CurrentTitle == "" || p.NativeOnly || s.manual || (p.ConfirmationOnly && !p.SubstantiveActivity) ||
+		s.priorRevision == "" || s.priorProject != s.projectKey {
 		return false, 0, nil
 	}
 	var baseline, previousHashes, previousGoal string
@@ -74,24 +75,28 @@ func throttleNaming(ctx context.Context, tx *sql.Tx, p submission, s session, no
 	default:
 		return false, 0, nil
 	}
+	if identical && !p.SubstantiveActivity {
+		return true, 0, nil
+	}
 	var reviewed, when int64
-	err = tx.QueryRowContext(ctx, `SELECT e.rowid,COALESCE(e.finalized,e.updated) FROM events e
+	var validationFailed bool
+	err = tx.QueryRowContext(ctx, `SELECT e.rowid,COALESCE(e.finalized,e.updated),
+		e.status='failed' AND (e.failure_code IN ('title_too_long','title_category','title_separator','title_format')
+			OR (e.failure_code='' AND (SELECT status FROM attempts WHERE event_id=e.id ORDER BY id DESC LIMIT 1)='completed'))
+		FROM events e
 		WHERE e.agent=? AND e.session_id=? AND e.native_only=0
 		  AND (e.base=? OR (e.status='applied' AND e.title=?))
 		  AND e.status IN ('applied','kept','failed','candidate','claimed')
 		  AND EXISTS(SELECT 1 FROM attempts a WHERE a.event_id=e.id AND a.status='completed')
-		ORDER BY e.rowid DESC LIMIT 1`, p.Agent, p.SessionID, p.CurrentTitle, p.CurrentTitle).Scan(&reviewed, &when)
+		ORDER BY e.rowid DESC LIMIT 1`, p.Agent, p.SessionID, p.CurrentTitle, p.CurrentTitle).Scan(&reviewed, &when, &validationFailed)
 	if errors.Is(err, sql.ErrNoRows) {
 		return false, 0, nil
 	}
 	if err != nil {
 		return false, 0, err
 	}
-	if now-when >= recheckCooldown.Milliseconds() {
+	if validationFailed || now-when >= recheckCooldown.Milliseconds() {
 		return false, 0, nil
-	}
-	if identical {
-		return true, 0, nil
 	}
 	var skipped int
 	err = tx.QueryRowContext(ctx, `SELECT COALESCE(SUM(throttle_skips),0) FROM events

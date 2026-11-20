@@ -12,20 +12,21 @@ import (
 )
 
 type submission struct {
-	Agent            string  `json:"agent"`
-	SessionID        string  `json:"sessionId"`
-	Revision         string  `json:"revision"`
-	CurrentTitle     string  `json:"currentTitle"`
-	TitleOrigin      string  `json:"titleOrigin"`
-	Project          string  `json:"project"`
-	OriginalGoal     string  `json:"originalGoal"`
-	ConfirmationOnly bool    `json:"confirmationOnly"`
-	OrcaID           string  `json:"orcaSessionId"`
-	OrcaNativeHandle string  `json:"orcaNativeHandle"`
-	OrcaTitle        *string `json:"orcaTitle"`
-	OrcaOrigin       string  `json:"orcaTitleOrigin"`
-	NativeOnly       bool    `json:"nativeTitleOnly"`
-	Turns            []turn  `json:"turns"`
+	Agent               string  `json:"agent"`
+	SessionID           string  `json:"sessionId"`
+	Revision            string  `json:"revision"`
+	CurrentTitle        string  `json:"currentTitle"`
+	TitleOrigin         string  `json:"titleOrigin"`
+	Project             string  `json:"project"`
+	OriginalGoal        string  `json:"originalGoal"`
+	ConfirmationOnly    bool    `json:"confirmationOnly"`
+	SubstantiveActivity bool    `json:"substantiveActivity"`
+	OrcaID              string  `json:"orcaSessionId"`
+	OrcaNativeHandle    string  `json:"orcaNativeHandle"`
+	OrcaTitle           *string `json:"orcaTitle"`
+	OrcaOrigin          string  `json:"orcaTitleOrigin"`
+	NativeOnly          bool    `json:"nativeTitleOnly"`
+	Turns               []turn  `json:"turns"`
 }
 
 type turn struct {
@@ -36,6 +37,7 @@ type turn struct {
 type session struct {
 	revision, title, orcaID, orcaManaged    string
 	projectKey, priorRevision, priorProject string
+	protectionReason                        string
 	manual                                  bool
 	supersedes, preserveInitial             bool
 }
@@ -81,8 +83,8 @@ func (p submission) validate() error {
 
 func loadSession(ctx context.Context, q queryer, agent, id string) (session, error) {
 	var s session
-	err := q.QueryRowContext(ctx, `SELECT revision,title,manual,orca_id,orca_managed,project_key FROM sessions
-		WHERE agent=? AND session_id=?`, agent, id).Scan(&s.revision, &s.title, &s.manual, &s.orcaID, &s.orcaManaged, &s.projectKey)
+	err := q.QueryRowContext(ctx, `SELECT revision,title,manual,orca_id,orca_managed,project_key,protection_reason FROM sessions
+		WHERE agent=? AND session_id=?`, agent, id).Scan(&s.revision, &s.title, &s.manual, &s.orcaID, &s.orcaManaged, &s.projectKey, &s.protectionReason)
 	return s, err
 }
 
@@ -128,6 +130,7 @@ func observeSubmission(ctx context.Context, tx *sql.Tx, p submission, now int64)
 	}
 	if p.TitleOrigin == "manual" {
 		s.manual = true
+		s.protectionReason = decisionManual
 	}
 	if first {
 		s.manual = s.manual || (p.CurrentTitle != "" && p.TitleOrigin != "auto")
@@ -145,10 +148,10 @@ func observeSubmission(ctx context.Context, tx *sql.Tx, p submission, now int64)
 	s.supersedes = !p.NativeOnly || p.CurrentTitle != s.title || s.manual
 	s.preserveInitial = !p.NativeOnly && !s.manual && s.title == "" && p.CurrentTitle == ""
 	if s.supersedes {
-		_, err = tx.ExecContext(ctx, `UPDATE events SET status='stale',payload=NULL,updated=?
+		_, err = tx.ExecContext(ctx, `UPDATE events SET status='stale',payload=NULL,updated=?,decision_reason=?
 			WHERE agent=? AND session_id=? AND (status='queued' OR
 				(NOT (? AND base='') AND (status IN ('running','candidate') OR (status='claimed' AND (title<>? OR ?)))))`,
-			now, p.Agent, p.SessionID, s.preserveInitial, p.CurrentTitle, s.manual)
+			now, s.protection(), p.Agent, p.SessionID, s.preserveInitial, p.CurrentTitle, s.manual)
 		if err != nil {
 			return s, err
 		}
@@ -163,16 +166,17 @@ func observeSubmission(ctx context.Context, tx *sql.Tx, p submission, now int64)
 		s.orcaManaged = ""
 	}
 	s.title = p.CurrentTitle
-	_, err = tx.ExecContext(ctx, `INSERT INTO sessions(agent,session_id,revision,title,manual,orca_id,orca_managed,project_key)
-		VALUES(?,?,?,?,?,?,?,?) ON CONFLICT(agent,session_id) DO UPDATE SET
+	_, err = tx.ExecContext(ctx, `INSERT INTO sessions(agent,session_id,revision,title,manual,orca_id,orca_managed,project_key,protection_reason)
+		VALUES(?,?,?,?,?,?,?,?,?) ON CONFLICT(agent,session_id) DO UPDATE SET
 		revision=excluded.revision,title=excluded.title,manual=excluded.manual,orca_id=excluded.orca_id,
-		orca_managed=excluded.orca_managed,project_key=excluded.project_key`,
-		p.Agent, p.SessionID, s.revision, s.title, s.manual, s.orcaID, s.orcaManaged, s.projectKey)
+		orca_managed=excluded.orca_managed,project_key=excluded.project_key,protection_reason=excluded.protection_reason`,
+		p.Agent, p.SessionID, s.revision, s.title, s.manual, s.orcaID, s.orcaManaged, s.projectKey, s.protection())
 	return s, err
 }
 
 func (e *Engine) insertSubmission(ctx context.Context, tx *sql.Tx, p submission, s session, payload []byte) error {
 	status, syncStatus := "queued", ""
+	reason := s.protection()
 	var finalized *int64
 	now := e.now().UnixMilli()
 	skips, err := confirmationSkips(ctx, tx, p, s)
@@ -193,6 +197,18 @@ func (e *Engine) insertSubmission(ctx context.Context, tx *sql.Tx, p submission,
 			return err
 		}
 	}
+	if reason == "" && !p.NativeOnly {
+		switch {
+		case payload == nil:
+			reason = decisionNoContent
+		case skips > 0:
+			reason = decisionConfirmation
+		case throttled && throttleSkip == 0:
+			reason = decisionDuplicate
+		case throttled:
+			reason = decisionThrottle
+		}
+	}
 	switch {
 	case p.NativeOnly:
 		status = "native"
@@ -204,15 +220,22 @@ func (e *Engine) insertSubmission(ctx context.Context, tx *sql.Tx, p submission,
 	}
 	_, err = tx.ExecContext(ctx, `INSERT INTO events(id,agent,session_id,revision,native_only,base,title,status,payload,
 		orca_id,orca_base,orca_origin,sync_status,created,updated,finalized,turns_hash,turn_count,confirmation_skips,native_handle,throttle_skips,
-		turn_hashes,goal_hash)
-		VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
+		turn_hashes,goal_hash,decision_reason)
+		VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
 		rand.Text(), p.Agent, p.SessionID, p.Revision, p.NativeOnly, p.CurrentTitle, p.CurrentTitle,
 		status, payload, p.OrcaID, p.OrcaTitle, p.OrcaOrigin, syncStatus, now, now, finalized,
-		turnsHash(p.OriginalGoal, p.Turns), len(p.Turns), skips, p.OrcaNativeHandle, throttleSkip, strings.Join(hashes, ","), goalHash)
+		turnsHash(p.OriginalGoal, p.Turns), len(p.Turns), skips, p.OrcaNativeHandle, throttleSkip, strings.Join(hashes, ","), goalHash, reason)
 	return err
 }
 
 var categories = []string{"🎬", "🧩", "🔎", "📝", "📅", "🎨", "⚙️", "💬"}
+
+func acceptedTitleLength(preset int) int {
+	if preset == shortTitleLength {
+		return 20
+	}
+	return preset
+}
 
 func titleFailure(title string, limit int) failureReason {
 	if length := utf8.RuneCountInString(title); length > limit {

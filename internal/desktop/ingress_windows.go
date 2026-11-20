@@ -240,7 +240,7 @@ func (event pendingEvent) setBinding(binding orcasync.Binding) {
 
 func (event pendingEvent) params(bound bool) (json.RawMessage, error) {
 	fields := []string{"agent", "sessionId", "revision", "currentTitle", "titleOrigin", "nativeTitleOnly",
-		"originalGoal", "confirmationOnly", "project", "turns"}
+		"originalGoal", "confirmationOnly", "substantiveActivity", "project", "turns"}
 	if bound {
 		fields = append(fields, "orcaSessionId", "orcaTitle", "orcaTitleOrigin", "orcaNativeHandle")
 		if event.key.nativeOnly {

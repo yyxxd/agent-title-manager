@@ -26,8 +26,9 @@ type usageTotals struct {
 
 type totals struct {
 	usageTotals
-	Renames int64 `json:"renames"`
-	Kept    int64 `json:"kept"`
+	Renames   int64 `json:"renames"`
+	Kept      int64 `json:"kept"`
+	ModelKept int64 `json:"modelKept"`
 }
 
 type agentTotals struct {
@@ -45,23 +46,25 @@ type dailyStats struct {
 	Date  string `json:"date"`
 	Since string `json:"since"`
 	totals
-	ByAgent []agentTotals `json:"byAgent"`
-	ByModel []modelTotals `json:"byModel"`
+	ByAgent     []agentTotals `json:"byAgent"`
+	ByModel     []modelTotals `json:"byModel"`
+	NamingUsage usageTotals   `json:"namingUsage"`
 }
 
 const statsQuery = `
 WITH outcomes AS (
 	SELECT agent,'' AS provider,'' AS model,0 AS attempts,0 AS tests,(status='applied') AS renames,
-		(status='kept') AS kept,NULL AS input,NULL AS output,NULL AS cached,0 AS unknown
+		(status='kept') AS kept,(status='kept' AND decision_reason='model_keep') AS model_kept,
+		NULL AS input,NULL AS output,NULL AS cached,0 AS unknown
 	FROM events WHERE finalized>=? AND finalized<?
 	UNION ALL
-	SELECT agent,provider,CASE WHEN provider='claude' THEN actual_model ELSE model END,1,event_id IS NULL,0,0,input_tokens,output_tokens,cached_tokens,
+	SELECT agent,provider,CASE WHEN provider='claude' THEN actual_model ELSE model END,1,event_id IS NULL,0,0,0,input_tokens,output_tokens,cached_tokens,
 		(input_tokens IS NULL OR output_tokens IS NULL OR cached_tokens IS NULL)
 	FROM attempts WHERE started>=? AND started<?
 )
-SELECT agent,provider,model,SUM(attempts),SUM(tests),SUM(renames),SUM(kept),SUM(input),SUM(output),SUM(cached),
+SELECT agent,provider,model,SUM(attempts),SUM(tests),SUM(renames),SUM(kept),SUM(model_kept),SUM(input),SUM(output),SUM(cached),
 	COUNT(input),COUNT(output),COUNT(cached),SUM(unknown)
-FROM outcomes GROUP BY agent,provider,model
+FROM outcomes GROUP BY agent,provider,model,tests
 `
 
 func (e *Engine) daily(ctx context.Context, p dateRequest) (dailyStats, error) {
@@ -117,7 +120,7 @@ func collectDaily(rows *sql.Rows, reply dailyStats) (dailyStats, error) {
 	for rows.Next() {
 		var agent, provider, model string
 		var group totals
-		err := rows.Scan(&agent, &provider, &model, &group.Attempts, &group.TestAttempts, &group.Renames, &group.Kept,
+		err := rows.Scan(&agent, &provider, &model, &group.Attempts, &group.TestAttempts, &group.Renames, &group.Kept, &group.ModelKept,
 			&group.InputTokens, &group.OutputTokens, &group.CachedTokens, &group.InputKnown, &group.OutputKnown,
 			&group.CachedKnown, &group.UnknownUsage)
 		if err != nil {
@@ -127,6 +130,9 @@ func collectDaily(rows *sql.Rows, reply dailyStats) (dailyStats, error) {
 		t.add(group)
 		agents[agent] = t
 		reply.totals.add(group)
+		if group.TestAttempts == 0 {
+			reply.NamingUsage.add(group.usageTotals)
+		}
 		if provider != "" {
 			key := [2]string{provider, model}
 			m := models[key]
@@ -154,6 +160,7 @@ func collectDaily(rows *sql.Rows, reply dailyStats) (dailyStats, error) {
 func (s *totals) add(a totals) {
 	s.Renames += a.Renames
 	s.Kept += a.Kept
+	s.ModelKept += a.ModelKept
 	s.usageTotals.add(a.usageTotals)
 }
 

@@ -3,17 +3,48 @@ package engine
 import (
 	"context"
 	"database/sql"
+	"database/sql/driver"
 	"errors"
+	"strings"
 	"time"
+
+	"modernc.org/sqlite"
 )
 
+func init() {
+	sqlite.MustRegisterDeterministicScalarFunction("atm_lower", 1, func(_ *sqlite.FunctionContext, args []driver.Value) (driver.Value, error) {
+		if value, ok := args[0].(string); ok {
+			return strings.ToLower(value), nil
+		}
+		return nil, nil
+	})
+}
+
 type listRequest struct {
-	Limit int `json:"limit"`
+	Limit  int           `json:"limit"`
+	Filter string        `json:"filter"`
+	Query  string        `json:"query"`
+	Before *recordCursor `json:"before"`
+}
+
+type recordCursor struct {
+	Updated int64 `json:"updated"`
+	RowID   int64 `json:"rowId"`
+}
+
+type recordCounts struct {
+	Total      int `json:"total"`
+	Attention  int `json:"attention"`
+	Failed     int `json:"failed"`
+	SyncFailed int `json:"syncFailed"`
+	Protected  int `json:"protected"`
 }
 
 type recordList struct {
 	Items        []record        `json:"items"`
 	TestAttempts []attemptRecord `json:"testAttempts"`
+	Counts       recordCounts    `json:"counts"`
+	Next         *recordCursor   `json:"next,omitempty"`
 }
 
 type record struct {
@@ -26,9 +57,12 @@ type record struct {
 	Status     string          `json:"status"`
 	SyncStatus string          `json:"syncStatus"`
 	SyncError  string          `json:"syncError,omitempty"`
+	OrcaOrigin string          `json:"orcaTitleOrigin,omitempty"`
 	UpdatedAt  string          `json:"updatedAt"`
 	Attempts   []attemptRecord `json:"attempts"`
 	Failure    *failureReason  `json:"failure,omitempty"`
+	Reason     string          `json:"reason,omitempty"`
+	cursor     recordCursor
 }
 
 type attemptRecord struct {
@@ -46,9 +80,21 @@ type attemptRecord struct {
 	UsageKnown    bool   `json:"usageKnown"`
 }
 
-const newestEvents = ` FROM events ORDER BY updated DESC,rowid DESC LIMIT ?`
+const recordProtection = `(e.sync_status='protected' OR e.decision_reason IN ('manual_locked','unknown_protected'))`
+const recordAttention = `(e.status='failed' OR e.sync_status='failed' OR ` + recordProtection + `)`
 const attemptFields = `SELECT event_id,provider,model,source,requested_tier,actual_tier,status,started,
 	input_tokens,output_tokens,cached_tokens,actual_model FROM attempts`
+
+func recordSearch(query string) (string, []any) {
+	query = strings.ToLower(strings.TrimSpace(query))
+	if query == "" {
+		return " WHERE 1", nil
+	}
+	return ` WHERE (instr(atm_lower(e.title || ' ' || e.base || ' ' || e.agent || ' ' || e.session_id || ' ' || e.sync_error),?)>0
+		OR (e.agent='claude' AND instr('claude code',?)>0)
+		OR EXISTS(SELECT 1 FROM attempts a WHERE a.event_id=e.id AND
+			(instr(atm_lower(a.model),?)>0 OR instr(atm_lower(a.actual_model),?)>0)))`, []any{query, query, query, query}
+}
 
 func (e *Engine) records(ctx context.Context, p listRequest) (recordList, error) {
 	limit := p.Limit
@@ -58,28 +104,58 @@ func (e *Engine) records(ctx context.Context, p listRequest) (recordList, error)
 	if limit < 0 || limit > 200 {
 		return recordList{}, errors.New("记录条数必须在 1 到 200 之间")
 	}
+	if len(p.Query) > 2048 || (p.Filter != "" && p.Filter != "all" && p.Filter != "attention" && !validAgent.MatchString(p.Filter)) ||
+		(p.Before != nil && (p.Before.RowID <= 0 || p.Before.Updated < 0)) {
+		return recordList{}, errors.New("记录筛选参数无效")
+	}
 	local := e.now().Location()
 	return transact(ctx, e.db, func(tx *sql.Tx) (recordList, error) {
-		items, err := listRecords(ctx, tx, local, limit)
+		where, args := recordSearch(p.Query)
+		var result recordList
+		err := tx.QueryRowContext(ctx, `SELECT COUNT(*),COUNT(*) FILTER (WHERE `+recordAttention+`),
+			COUNT(*) FILTER (WHERE e.status='failed'),COUNT(*) FILTER (WHERE e.sync_status='failed'),
+			COUNT(*) FILTER (WHERE `+recordProtection+`) FROM events e`+where, args...).
+			Scan(&result.Counts.Total, &result.Counts.Attention, &result.Counts.Failed, &result.Counts.SyncFailed, &result.Counts.Protected)
 		if err != nil {
 			return recordList{}, err
 		}
-		if err := listAttempts(ctx, tx, local, items, limit); err != nil {
+		switch p.Filter {
+		case "", "all":
+		case "attention":
+			where += " AND " + recordAttention
+		default:
+			where += " AND e.agent=?"
+			args = append(args, p.Filter)
+		}
+		if p.Before != nil {
+			where += " AND (e.updated,e.rowid)<(?,?)"
+			args = append(args, p.Before.Updated, p.Before.RowID)
+		}
+		items, err := listRecords(ctx, tx, local, where, append(args, limit+1))
+		if err != nil {
+			return recordList{}, err
+		}
+		if len(items) > limit {
+			items = items[:limit]
+			result.Next = &items[limit-1].cursor
+		}
+		if err := listAttempts(ctx, tx, local, items); err != nil {
 			return recordList{}, err
 		}
 		for i := range items {
 			items[i].addLegacyFailure()
 		}
-		tests := []attemptRecord{}
+		result.Items = items
+		result.TestAttempts = []attemptRecord{}
 		err = readAttempts(ctx, tx, local, attemptFields+` WHERE event_id IS NULL ORDER BY id DESC LIMIT ?`,
-			limit, func(_ string, item attemptRecord) { tests = append(tests, item) })
-		return recordList{items, tests}, err
+			[]any{limit}, func(_ string, item attemptRecord) { result.TestAttempts = append(result.TestAttempts, item) })
+		return result, err
 	})
 }
 
-func listRecords(ctx context.Context, tx *sql.Tx, local *time.Location, limit int) ([]record, error) {
+func listRecords(ctx context.Context, tx *sql.Tx, local *time.Location, where string, args []any) ([]record, error) {
 	rows, err := tx.QueryContext(ctx, `SELECT id,agent,session_id,revision,title,base,status,sync_status,sync_error,updated,
-		failure_code,failure_length,failure_limit`+newestEvents, limit)
+		failure_code,failure_length,failure_limit,decision_reason,rowid,orca_origin FROM events e`+where+` ORDER BY updated DESC,rowid DESC LIMIT ?`, args...)
 	if err != nil {
 		return nil, err
 	}
@@ -87,14 +163,13 @@ func listRecords(ctx context.Context, tx *sql.Tx, local *time.Location, limit in
 	items := []record{}
 	for rows.Next() {
 		var item record
-		var updated int64
 		var reason failureReason
 		err = rows.Scan(&item.ID, &item.Agent, &item.SessionID, &item.Revision, &item.Title, &item.BaseTitle, &item.Status,
-			&item.SyncStatus, &item.SyncError, &updated, &reason.Code, &reason.Length, &reason.Limit)
+			&item.SyncStatus, &item.SyncError, &item.cursor.Updated, &reason.Code, &reason.Length, &reason.Limit, &item.Reason, &item.cursor.RowID, &item.OrcaOrigin)
 		if err != nil {
 			return nil, err
 		}
-		item.UpdatedAt = formatTime(updated, local)
+		item.UpdatedAt = formatTime(item.cursor.Updated, local)
 		item.Attempts = []attemptRecord{}
 		if reason.Code != "" {
 			item.Failure = &reason
@@ -116,20 +191,25 @@ func (item *record) addLegacyFailure() {
 	item.Failure = &failureReason{Code: code}
 }
 
-func listAttempts(ctx context.Context, tx *sql.Tx, local *time.Location, items []record, limit int) error {
+func listAttempts(ctx context.Context, tx *sql.Tx, local *time.Location, items []record) error {
+	if len(items) == 0 {
+		return nil
+	}
 	index := make(map[string]int, len(items))
+	params := make([]any, len(items))
 	for i, item := range items {
 		index[item.ID] = i
+		params[i] = item.ID
 	}
-	return readAttempts(ctx, tx, local, attemptFields+` WHERE event_id IN (SELECT id`+newestEvents+`) ORDER BY id`,
-		limit, func(id string, item attemptRecord) {
+	return readAttempts(ctx, tx, local, attemptFields+` WHERE event_id IN (?`+strings.Repeat(",?", len(params)-1)+`) ORDER BY id`,
+		params, func(id string, item attemptRecord) {
 			i := index[id]
 			items[i].Attempts = append(items[i].Attempts, item)
 		})
 }
 
-func readAttempts(ctx context.Context, tx *sql.Tx, local *time.Location, query string, limit int, add func(string, attemptRecord)) error {
-	rows, err := tx.QueryContext(ctx, query, limit)
+func readAttempts(ctx context.Context, tx *sql.Tx, local *time.Location, query string, args []any, add func(string, attemptRecord)) error {
+	rows, err := tx.QueryContext(ctx, query, args...)
 	if err != nil {
 		return err
 	}

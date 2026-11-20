@@ -12,7 +12,7 @@ import (
 
 func TestNamingCorrectionRetriesOnceWithStructuredFeedback(t *testing.T) {
 	category, _, _ := strings.Cut(goodTitle, " ")
-	longTitle := category + " 修改记录｜" + strings.Repeat("长", 9)
+	longTitle := category + " 修改记录｜" + strings.Repeat("长", 14)
 	for _, tc := range []struct {
 		name, first, second string
 		code                failureCode

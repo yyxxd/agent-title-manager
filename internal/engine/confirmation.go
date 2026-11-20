@@ -17,7 +17,7 @@ func turnsHash(goal string, turns []turn) string {
 }
 
 func confirmationSkips(ctx context.Context, tx *sql.Tx, p submission, s session) (int, error) {
-	if !p.ConfirmationOnly || p.NativeOnly || s.manual || s.priorRevision == "" ||
+	if !p.ConfirmationOnly || p.SubstantiveActivity || p.NativeOnly || s.manual || s.priorRevision == "" ||
 		s.priorProject != s.projectKey || p.CurrentTitle == "" {
 		return 0, nil
 	}

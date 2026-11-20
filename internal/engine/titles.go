@@ -62,7 +62,7 @@ func (e *Engine) claim(ctx context.Context, p claimRequest) (claimResponse, erro
 			status = "none"
 		}
 		if s.title != p.CurrentTitle {
-			status, err = e.observeChangedTitle(ctx, tx, p)
+			status, err = e.observeChangedTitle(ctx, tx, p, s)
 			manual = status == "stale"
 			return claimResponse{Status: status}, err
 		}
@@ -119,14 +119,15 @@ func (e *Engine) issueClaim(ctx context.Context, tx *sql.Tx, c candidate, status
 		return claimResponse{}, err
 	}
 	if conflict {
-		_, err = tx.ExecContext(ctx, `UPDATE events SET status='kept',title=base,updated=?,finalized=? WHERE id=?`, now, now, c.ID)
+		_, err = tx.ExecContext(ctx, `UPDATE events SET status='kept',title=base,updated=?,finalized=?,decision_reason=? WHERE id=?`,
+			now, now, decisionCollision, c.ID)
 		return claimResponse{Status: "kept"}, err
 	}
 	_, err = tx.ExecContext(ctx, `UPDATE events SET status='claimed',updated=? WHERE id=?`, now, c.ID)
 	return claimResponse{Candidate: &c, Status: "claimed"}, err
 }
 
-func (e *Engine) observeChangedTitle(ctx context.Context, tx *sql.Tx, p claimRequest) (string, error) {
+func (e *Engine) observeChangedTitle(ctx context.Context, tx *sql.Tx, p claimRequest, s session) (string, error) {
 	var inFlight bool
 	err := tx.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM events WHERE agent=? AND session_id=?
 		AND status='claimed' AND title=?)`, p.Agent, p.SessionID, p.CurrentTitle).Scan(&inFlight)
@@ -136,12 +137,14 @@ func (e *Engine) observeChangedTitle(ctx context.Context, tx *sql.Tx, p claimReq
 	if inFlight {
 		return "claimed", nil
 	}
+	s.manual = true
 	if _, err := tx.ExecContext(ctx, `UPDATE sessions SET manual=1,title=? WHERE agent=? AND session_id=?`,
 		p.CurrentTitle, p.Agent, p.SessionID); err != nil {
 		return "", err
 	}
-	_, err = tx.ExecContext(ctx, `UPDATE events SET status='stale',payload=NULL,updated=?
-		WHERE agent=? AND session_id=? AND status IN ('queued','running','candidate','claimed')`, e.now().UnixMilli(), p.Agent, p.SessionID)
+	_, err = tx.ExecContext(ctx, `UPDATE events SET status='stale',payload=NULL,updated=?,decision_reason=?
+		WHERE agent=? AND session_id=? AND status IN ('queued','running','candidate','claimed')`,
+		e.now().UnixMilli(), s.protection(), p.Agent, p.SessionID)
 	return "stale", err
 }
 
