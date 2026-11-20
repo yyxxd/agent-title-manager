@@ -11,8 +11,6 @@ import (
 	"sort"
 	"sync"
 	"sync/atomic"
-
-	"github.com/yyxxd/agent-title-manager/internal/orcasync"
 )
 
 type Manager struct {
@@ -20,6 +18,9 @@ type Manager struct {
 	gate          atomic.Pointer[enabledFlags]
 	autoUpdate    AutoUpdateResult
 	autoMu        sync.RWMutex
+	version       string
+	changeMu      sync.Mutex
+	changes       chan struct{}
 }
 
 type AutoUpdateResult struct {
@@ -62,17 +63,21 @@ type request struct {
 }
 
 var builtins = map[string]string{
-	"codex": "Codex", "claude": "Claude Code", "pi": "Pi", "antigravity": "Antigravity", "orca": "Orca",
+	"codex": "Codex", "claude": "Claude Code", "pi": "Pi", "antigravity": "Antigravity",
 }
 
-func New(dataDir string, bundledDir string) *Manager {
-	return &Manager{root: filepath.Join(dataDir, "plugin-manager"), bundled: bundledDir}
+var builtinOrder = []string{"codex", "claude", "pi", "antigravity"}
+
+func New(dataDir, bundledDir string) *Manager {
+	return &Manager{root: filepath.Join(dataDir, "plugin-manager"), bundled: bundledDir, changes: make(chan struct{})}
 }
+
+func (m *Manager) SetBuildVersion(version string) { m.version = version }
 
 // Enabled is a read-only gate for the three bridge methods. It never takes the
 // management lock, so a package download does not delay a native hook.
 func (m *Manager) Enabled(ctx context.Context, id string) (bool, error) {
-	if id == "orca" || !pluginID.MatchString(id) {
+	if isIntegration(id) || !pluginID.MatchString(id) {
 		return false, nil
 	}
 	return m.enabled(ctx, id)
@@ -113,21 +118,6 @@ func (m *Manager) enabled(ctx context.Context, id string) (bool, error) {
 type enabledFlags struct {
 	file  os.FileInfo
 	items map[string]bool
-}
-
-func (m *Manager) SyncVerified(ctx context.Context, id, expectedTitle, newTitle, agent, sessionID, nativeHandle string) error {
-	enabled, err := m.enabled(ctx, "orca")
-	if err != nil {
-		return err
-	}
-	if !enabled {
-		return fmt.Errorf("%w：桌面已关闭 Orca 同步", orcasync.ErrSkipped)
-	}
-	err = orcasync.SyncVerified(ctx, id, expectedTitle, newTitle, agent, sessionID, nativeHandle, m.readNativeTitle)
-	if agent == "antigravity" {
-		m.recordAntigravitySync(err)
-	}
-	return err
 }
 
 // UninstallReady checks recorded registrations without editing
@@ -193,19 +183,22 @@ func (m *Manager) Handle(ctx context.Context, method string, params json.RawMess
 }
 
 func (m *Manager) list(state registry) []Item {
-	items := make([]Item, 0, len(builtins)+len(state.Items))
-	for _, id := range []string{"codex", "claude", "pi", "antigravity", "orca"} {
+	items := make([]Item, 0, len(builtins)+len(integrations)+len(state.Items))
+	for _, id := range builtinOrder {
 		items = append(items, m.item(state, id))
 	}
 	var ids []string
 	for id := range state.Items {
-		if builtins[id] == "" {
+		if !managedID(id) {
 			ids = append(ids, id)
 		}
 	}
 	sort.Strings(ids)
 	for _, id := range ids {
 		items = append(items, m.item(state, id))
+	}
+	for _, integration := range integrations {
+		items = append(items, m.item(state, integration.id))
 	}
 	return items
 }
@@ -219,7 +212,9 @@ func (m *Manager) item(state registry, id string) Item {
 	if r.Enabled {
 		item.Status = "enabled"
 	}
-	if name := builtins[id]; name != "" {
+	if integration, ok := integrations[id]; ok {
+		item.Name, item.Kind, item.Version, item.Detail = integration.name, "integration", m.version, integration.detail
+	} else if name := builtins[id]; name != "" {
 		item.Name, item.Kind = name, "builtin"
 		m.describeBuiltin(id, &item, r)
 	} else {
@@ -245,11 +240,6 @@ func (m *Manager) describeCommunity(item *Item, r record) {
 }
 
 func (m *Manager) describeBuiltin(id string, item *Item, r record) {
-	if id == "orca" {
-		item.Version = "1"
-		item.Detail = "请在 Orca 设置中关闭「Name chats automatically」，避免两个应用同时改名。"
-		return
-	}
 	manifest, bundleErr := m.bundledManifest(id)
 	if item.Version == "" && bundleErr == nil {
 		item.Version = manifest.Version
@@ -298,7 +288,7 @@ func (m *Manager) describeEnabled(id string, item *Item, r record) {
 	case "claude", "pi":
 		item.Detail = "已写入宿主设置。请重启宿主以加载适配器。"
 	case "antigravity":
-		item.Detail = "已登记命令行 Hook。请重启 agy 加载配置。桌面端和 Orca 聊天由后台观察，诊断日志位于插件目录。"
+		item.Detail = "已登记命令行 Hook。请重启 agy 加载配置。桌面端由后台观察，诊断日志位于插件目录。"
 	}
 }
 
@@ -342,7 +332,7 @@ func (m *Manager) installStaged(state registry, method string, req request, stag
 	if err != nil {
 		return nil, err
 	}
-	if builtins[manifest.ID] != "" || manifest.Host != "external" {
+	if managedID(manifest.ID) || manifest.Host != "external" {
 		return nil, errors.New("社区插件须使用唯一 ID 和 external 宿主")
 	}
 	current, found := state.Items[manifest.ID]

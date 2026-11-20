@@ -64,6 +64,20 @@ export async function submitEvent(rpc, snapshot, { signal, fresh = () => true, p
   }
 }
 
+// 宿主提示只作原样透传，绑定由桌面服务验证。
+export function hostSessionHint() {
+  return process.env.ORCA_AGENT_SESSION_ID || undefined;
+}
+
+export async function submitNative(rpc, snapshot, signal) {
+  if (!snapshot.currentTitle || signal?.aborted) return;
+  const { turns, originalGoal, confirmationOnly, ...native } = snapshot;
+  return submitEvent(rpc, {
+    ...native, nativeTitleOnly: true, turns: [],
+    revision: fingerprint("native-title", native.revision, native.currentTitle),
+  }, { signal });
+}
+
 export function textOf(content) {
   const flatten = value => Array.isArray(value)
     ? value.filter(part => part?.type === "text" && typeof part.text === "string").map(part => part.text).join("\n")

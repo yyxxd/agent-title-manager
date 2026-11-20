@@ -139,3 +139,9 @@ func TestAntigravityTerminalSyncRetriesMappingAndRequiresSinglePane(t *testing.T
 		})
 	}
 }
+
+func syncVerified(ctx context.Context, run runCLI, id, expected, title, agent, session, handle string, reader NativeTitleReader) error {
+	return syncWithChecks(ctx, run, id, expected, title, agent, session, handle, syncChecks{
+		read: reader, origin: databaseOrigin,
+	})
+}

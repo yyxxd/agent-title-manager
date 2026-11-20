@@ -8,20 +8,12 @@ export const uuid = value => typeof value === "string" && /^[0-9a-f]{8}(?:-[0-9a
 const normalize = path => process.platform === "win32" ? resolve(path).toLowerCase() : resolve(path);
 export const samePath = (a, b) => normalize(a) === normalize(b);
 
-export function orcaHome() {
-  const dir = process.env.ORCA_USER_DATA_PATH || (process.env.APPDATA && join(process.env.APPDATA, "orca"));
-  return dir && isAbsolute(dir) ? resolve(dir) : undefined;
-}
-
 export function roots() {
   const override = process.env.ANTIGRAVITY_DATA_DIR;
   if (override && !isAbsolute(override)) throw new Error("Invalid Antigravity data root");
-  const orca = orcaHome();
-  const accountHome = orca && join(orca, "antigravity-chat");
   return [
     { dir: override ? resolve(override) : join(homedir(), ".gemini", "antigravity-cli"), kind: "cli" },
     { dir: join(homedir(), ".gemini", "antigravity"), kind: "desktop" },
-    ...(accountHome ? [{ dir: join(accountHome, "antigravity-acp"), kind: "acp", accountHome }] : []),
   ];
 }
 

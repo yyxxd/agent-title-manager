@@ -19,7 +19,7 @@ func (m *Manager) modify(ctx context.Context, state registry, method string, req
 		return m.item(state, req.ID), nil
 	}
 	old, installed := state.Items[req.ID]
-	if !installed && builtins[req.ID] == "" {
+	if !installed && !managedID(req.ID) {
 		return nil, errors.New("插件尚未安装")
 	}
 	switch method {
@@ -47,7 +47,7 @@ func (m *Manager) enable(ctx context.Context, state registry, req request, old r
 	next := old
 	next.Enabled = true
 	switch {
-	case req.ID == "orca":
+	case isIntegration(req.ID):
 		return m.commitItem(state, req.ID, next, nil)
 	case builtins[req.ID] == "":
 		if err := m.writeRuntime(m.packageDir(old.release)); err != nil {

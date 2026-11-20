@@ -122,8 +122,10 @@ func signal(ch chan struct{}) {
 }
 
 type accepted struct {
-	Accepted   bool   `json:"accepted"`
-	SyncStatus string `json:"syncStatus,omitempty"`
+	Accepted        bool   `json:"accepted"`
+	SyncStatus      string `json:"syncStatus,omitempty"`
+	EventRevision   string `json:"-"`
+	SessionRevision string `json:"-"`
 }
 
 // Handle dispatches RPC for the trusted host. Bridge callers must pass a separate allowlist.

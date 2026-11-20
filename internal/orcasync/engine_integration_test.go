@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/yyxxd/agent-title-manager/internal/engine"
+	"github.com/yyxxd/agent-title-manager/internal/pluginmgr"
 )
 
 func TestEngineRetryAndAdoptUseLivePiTitle(t *testing.T) {
@@ -87,9 +88,9 @@ func verifiedPiCallback(ctx context.Context, fixture *cliFixture, path string, w
 		if unreadable.Load() {
 			return "", ErrNativePending
 		}
-		return ReadPiTitle(ctx, id, handle)
+		return pluginmgr.ReadPiTitle(ctx, id, handle)
 	}
-	err := syncVerified(ctx, run, raw, expected, candidate, target.Agent, target.SessionID, target.NativeHandle, reader)
+	err := syncWithChecks(ctx, run, raw, expected, candidate, target.Agent, target.SessionID, target.NativeHandle, syncChecks{read: reader, validate: (&pluginmgr.Manager{}).ValidateNativeHandle, origin: databaseOrigin})
 	if errors.Is(err, ErrNativeStale) {
 		return engine.ErrSyncStale
 	}
@@ -100,7 +101,7 @@ func assertPiSyncTitles(t *testing.T, lock *sync.Mutex, fixture *cliFixture, pat
 	t.Helper()
 	lock.Lock()
 	defer lock.Unlock()
-	current, err := ReadPiTitle(context.Background(), nativeFixture, path)
+	current, err := pluginmgr.ReadPiTitle(context.Background(), nativeFixture, path)
 	if err != nil || current != native || fixture.title != orca || fixture.writes != writes {
 		t.Fatalf("Orca %q, native %q, writes %d, error %v", fixture.title, current, fixture.writes, err)
 	}

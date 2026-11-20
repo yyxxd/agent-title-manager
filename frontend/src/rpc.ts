@@ -84,7 +84,7 @@ export type Plugin = {
   availableVersion?: string;
   enabled: boolean;
   status: string;
-  kind: string;
+  kind: 'builtin' | 'community' | 'integration';
   detail?: string;
   entryPath?: string;
 };

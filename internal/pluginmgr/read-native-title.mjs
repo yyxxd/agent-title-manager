@@ -2,7 +2,7 @@ import { opendirSync, lstatSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import { pathToFileURL } from "node:url";
 
-const [agent, sessionId, pluginDir, hostDir] = process.argv.slice(1);
+const [agent, sessionId, pluginDir, hostDir, explicitRoot] = process.argv.slice(1);
 const importAdapter = (filename) => import(pathToFileURL(join(pluginDir, filename)).href);
 
 async function readCodex() {
@@ -45,8 +45,11 @@ async function readClaude() {
 }
 
 async function readAntigravity() {
-  const { locateNative, readObservedTitle } = await importAdapter("transcript.mjs");
-  const session = locateNative(sessionId);
+  const { identify, locateNative, readObservedTitle } = await importAdapter("transcript.mjs");
+  const { transcriptPath } = await importAdapter("paths.mjs");
+  const session = explicitRoot
+    ? identify({ conversationId: sessionId, transcriptPath: transcriptPath(explicitRoot, sessionId) }, explicitRoot)
+    : locateNative(sessionId);
   return session && readObservedTitle(session);
 }
 

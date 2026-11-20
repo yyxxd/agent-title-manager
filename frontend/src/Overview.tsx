@@ -99,7 +99,7 @@ export function Overview({
   const selectedAgent = agentFilter === 'all' ? undefined : agents.find((row) => row.agent === agentFilter);
   const models = value?.byModel ?? [];
 
-  const enabledPlugins = plugins.filter((p) => p.enabled);
+  const enabledPlugins = plugins.filter((p) => p.enabled && p.kind !== 'integration');
   const enabledNames = enabledPlugins.map((p) => agentDescriptions[p.id] ?? p.name);
   const sourceLabel = settings
     ? settings.provider === 'codex'

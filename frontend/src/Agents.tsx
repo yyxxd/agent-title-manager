@@ -14,11 +14,11 @@ import { toast } from './toast';
 import { StatusNotice, Switch, useAction, useLoad } from './ui';
 
 const builtinDescriptions: Record<string, string> = {
-  codex: '监听 Codex 会话自动生成标题，并同步至 Orca。',
+  codex: '为本地 Codex 会话自动生成标题。',
   claude: '首轮对话后在后台生成候选标题，下次交互时应用。',
-  antigravity: '通过 Antigravity Hook 自动生成会话标题，并同步至 Orca。',
+  antigravity: '为 Antigravity CLI 和桌面端会话自动生成标题。',
   pi: '通过 Pi 扩展协议接入自动会话命名。',
-  orca: '将各 Agent 生成的标题同步写回 Orca 会话列表。',
+  orca: '将已启用 Agent 在 Orca 终端与聊天页中的会话标题同步回 Orca。',
 };
 
 const statusPillMeta: Record<string, { className: string; dot: string; label: string }> = {
@@ -42,7 +42,8 @@ export function Agents({ onChanged }: { onChanged: () => void }) {
 
   const items = value?.items ?? [];
   const builtin = items.filter((item) => item.kind === 'builtin');
-  const community = items.filter((item) => item.kind !== 'builtin');
+  const integrations = items.filter((item) => item.kind === 'integration');
+  const community = items.filter((item) => item.kind === 'community');
 
   const unresolvedFailed = (autoUpdate?.failed ?? []).filter((item) => {
     if (!item.id) return true;
@@ -227,6 +228,24 @@ export function Agents({ onChanged }: { onChanged: () => void }) {
             </div>
           )}
         </section>
+        {integrations.length > 0 && (
+          <section className="card" aria-labelledby="workbench-integrations">
+            <div className="card-header">
+              <h2 className="card-title" id="workbench-integrations">工作台集成</h2>
+            </div>
+            <div className="agent-list">
+              {integrations.map((plugin) => (
+                <PluginRow
+                  key={plugin.id}
+                  plugin={plugin}
+                  busy={action.busy}
+                  onToggle={(next) => togglePlugin(plugin, next)}
+                  onRollback={() => togglePlugin(plugin, false)}
+                />
+              ))}
+            </div>
+          </section>
+        )}
       </div>
 
       {modal && (
@@ -261,7 +280,7 @@ function PluginRow({
   const pill =
     statusPillMeta[plugin.status] ??
     (plugin.enabled ? statusPillMeta.enabled : statusPillMeta.disabled);
-  const desc = builtinDescriptions[plugin.id] ?? (plugin.kind === 'builtin' ? '' : '社区扩展 Agent 适配器');
+  const desc = builtinDescriptions[plugin.id] ?? (plugin.kind === 'community' ? '社区扩展 Agent 适配器' : '');
   const needsRollback = plugin.status === 'recovery_required';
 
   return (
@@ -273,7 +292,11 @@ function PluginRow({
         <div className="agent-copy">
           <div className="agent-title-row">
             <span className="agent-title">{plugin.name}</span>
-            {plugin.version && <span className="agent-ver mono">v{plugin.version}</span>}
+            {plugin.version && (
+              <span className="agent-ver mono">
+                {plugin.kind === 'integration' ? '内置 ' : ''}v{plugin.version.replace(/^v(?=\d)/, '')}
+              </span>
+            )}
             <span className={`pill ${pill.className}`}>
               <span className={`status-dot ${pill.dot}`} />
               {pill.label}
@@ -317,7 +340,7 @@ function PluginRow({
             更新至 v{plugin.availableVersion}
           </button>
         )}
-        {plugin.kind !== 'builtin' && onUpdateCommunity && (
+        {plugin.kind === 'community' && onUpdateCommunity && (
           <button
             type="button"
             className="btn btn-sm"

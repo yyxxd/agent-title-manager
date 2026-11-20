@@ -1,9 +1,7 @@
 import { spawn } from "node:child_process";
 import { fileURLToPath, pathToFileURL } from "node:url";
-import { ack, bridge, readInput, readRuntime, submitEvent, validCandidate, waitCandidate } from "./client.mjs";
+import { ack, bridge, readInput, readRuntime, hostSessionHint, submitEvent, submitNative, validCandidate, waitCandidate } from "./client.mjs";
 import { diagnostic } from "./diagnostics.mjs";
-import { submitNative } from "./orca.mjs";
-import { bindOrca } from "./orca-binding.mjs";
 import { completedTurn, identify, originalGoal, readObservedTitle, snapshot, waitSnapshot } from "./transcript.mjs";
 import { writeTitle } from "./annotations.mjs";
 
@@ -32,38 +30,30 @@ function diagnosedRPC(rpc) {
   };
 }
 
-function bindingOptions(kind, signal) {
-  return kind === "acp"
-    ? { kind: "chat", signal, inherited: "" }
-    : { kind: "terminal", signal, retry: kind === "cli" };
-}
-
-export async function processTurn(input, identified, state, rpc, bindingFn = bindOrca, options = {}) {
-  const { signal, expectedOrca } = options;
+export async function processTurn(input, identified, state, rpc, options = {}) {
+  const { signal } = options;
   rpc = diagnosedRPC(rpc);
-  const config = bindingOptions(identified.kind, signal);
-  const binding = identified.kind === "desktop" ? {} : await bindingFn(state.agent, state.sessionId, config);
-  if (identified.kind === "acp" && binding.orcaSessionId !== expectedOrca) return false;
   const fresh = () => completedTurn(identified)?.revision === state.revision && readObservedTitle(identified) === state.currentTitle;
-  const submitted = await submitEvent(rpc, { ...state, ...binding, originalGoal: originalGoal(identified) }, { fresh, signal });
+  const submitted = await submitEvent(rpc, { ...state, originalGoal: originalGoal(identified) }, { fresh, signal });
   if (!submitted || submitted.accepted === false) return false;
   diagnostic("submit.accepted");
   const result = await waitCandidate(rpc, state, { fresh, signal });
   if (result?.candidate) {
     diagnostic("claim.ready");
-    await confirm(input, identified, state, result.candidate, rpc, bindingFn, options);
+    await confirm(input, identified, state, result.candidate, rpc, options);
   } else {
     diagnostic(result?.status === "pending" ? "claim.pending" : "claim.no_candidate");
   }
   return true;
 }
 
-async function confirm(input, identified, state, candidate, rpc, bindingFn, { signal, expectedOrca, canWrite } = {}) {
+async function confirm(input, identified, state, candidate, rpc, { signal, canWrite } = {}) {
   if (signal?.aborted || !validCandidate(candidate, state)) return;
-  if (canWrite && !canWrite()) {
+  if (canWrite && !await canWrite()) {
     diagnostic("write.settlement_changed");
     return;
   }
+  if (signal?.aborted) return;
   const latest = snapshot(identified, input);
   if (latest?.revision !== state.revision || latest.currentTitle !== state.currentTitle) {
     diagnostic("readback.stale");
@@ -80,21 +70,16 @@ async function confirm(input, identified, state, candidate, rpc, bindingFn, { si
   }
   diagnostic("readback.confirmed");
   const result = await ack(rpc, state, candidate, observed);
-  const status = result?.syncStatus;
   if (!result?.accepted) diagnostic("ack.rejected");
-  else if (status === "protected") diagnostic("orca.title.protected");
-  else if (status === "pending") diagnostic("orca.sync.queued");
-  else if (status === "unbound" && identified.kind !== "desktop") {
-    const binding = await bindingFn(state.agent, state.sessionId, bindingOptions(identified.kind, signal));
-    if (!binding.orcaSessionId || (expectedOrca && binding.orcaSessionId !== expectedOrca)) return;
-    const native = snapshot(identified, input);
-    if (native?.currentTitle === observed && native.revision === state.revision) {
-      await submitNative(rpc, native, binding, signal);
-    }
-  }
 }
 
-export async function handleAntigravity(mode, input, rpc, runBackground = background, binding = bindOrca) {
+function hookSnapshot(identified, state) {
+  return identified.kind === "cli" ? {
+    ...state, nativeHandle: state.sessionId, hostSessionHint: hostSessionHint(),
+  } : state;
+}
+
+export async function handleAntigravity(mode, input, rpc, runBackground = background) {
   if (mode === "stop") {
     const event = input.hookEventName ?? input.hook_event_name;
     const continuation = input.continuationActive ?? input.continuation_active;
@@ -102,11 +87,11 @@ export async function handleAntigravity(mode, input, rpc, runBackground = backgr
     if (event !== "Stop" || continuation === true || ["ERROR", "USER_CANCELED", "USER_CANCELLED"].includes(termination)) return {};
     const ready = await waitSnapshot(identify(input), input);
     if (!ready) diagnostic("snapshot.stop.unavailable");
-    else if (ready.identified.kind !== "acp") await processTurn(input, ready.identified, ready.state, rpc, binding);
+    else await processTurn(input, ready.identified, hookSnapshot(ready.identified, ready.state), rpc);
     return { decision: "" };
   }
   const identified = identify(input);
-  if (!identified || identified.kind === "acp") {
+  if (!identified) {
     diagnostic("snapshot.path.unavailable");
     return {};
   }
@@ -117,12 +102,11 @@ export async function handleAntigravity(mode, input, rpc, runBackground = backgr
   const result = await rpc("title.claim", { agent: state.agent, sessionId: state.sessionId, revision: state.revision, currentTitle: state.currentTitle });
   const candidate = result?.candidate;
   if (mode === "confirm") {
-    if (candidate?.id === input.id && candidate?.revision === input.revision) await confirm(input, identified, state, candidate, rpc, binding);
+    if (candidate?.id === input.id && candidate?.revision === input.revision) await confirm(input, identified, state, candidate, rpc);
   } else if (validCandidate(candidate, state)) {
     runBackground("confirm", { ...input, id: candidate.id, title: candidate.title, revision: candidate.revision });
   } else if (mode === "start" && state.currentTitle && identified.kind === "cli") {
-    const bound = await binding(state.agent, state.sessionId, bindingOptions(identified.kind));
-    if (bound.orcaSessionId) await submitNative(rpc, state, bound);
+    await submitNative(rpc, hookSnapshot(identified, state));
   }
   return {};
 }

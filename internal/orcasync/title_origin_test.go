@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"fmt"
+	"github.com/yyxxd/agent-title-manager/internal/pluginmgr"
 	"os"
 	"path/filepath"
 	"testing"
@@ -78,7 +79,9 @@ func TestInstalledOrcaPiOriginReadOnly(t *testing.T) {
 		if id == "" || native == "" || handle == "" {
 			t.Skip("requires separately supplied Pi test fixture identifiers")
 		}
-		title, source, bound := ResolveTitleOrigin(context.Background(), "pi", native, handle, id)
+		integration := Integration{Enabled: func(context.Context, string) (bool, error) { return true, nil }, Validate: (&pluginmgr.Manager{}).ValidateNativeHandle}
+		binding, bound := integration.ResolveTitleOrigin(context.Background(), "pi", native, handle, id)
+		title, source := binding.Title, binding.Origin
 		if !bound || title != "Pi Chat" || (source == "auto") != (origin == "AUTO") || (source == "manual") != (origin == "MANUAL") {
 			t.Fatalf("could not ascertain the supplied %s Pi binding: bound=%v, origin=%s", origin, bound, source)
 		}

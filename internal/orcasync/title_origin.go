@@ -20,19 +20,11 @@ const (
 
 var defaultTitles = map[string]string{"codex": "Codex Chat", "claude": "Claude Chat", "pi": "Pi Chat", "antigravity": "Antigravity Chat"}
 
-// ResolveTitleOrigin first binds the claimed native session to the live chat.
-// It then uses the known Orca v2 record shape to distinguish default and manual
-// names. Any unsupported or inconsistent record requires explicit adoption.
-func ResolveTitleOrigin(ctx context.Context, agent, sessionId, nativeHandle, orcaID string) (title, origin string, bound bool) {
-	at, ok := boundChat(ctx, localCLI, agent, sessionId, nativeHandle, orcaID)
-	if !ok || at.Title == nil {
-		return "", titleUnknown, false
-	}
-	title = *at.Title
+func resolvePlaceOrigin(ctx context.Context, at place, database func(context.Context, string, string, string) string) string {
 	if at.Kind == "terminal" {
-		return title, terminalOrigin(at, agent), true
+		return terminalOrigin(at, at.Agent)
 	}
-	return title, titleOrigin(ctx, orcaDatabase(), agent, strings.TrimPrefix(at.ID, idPrefix), title), true
+	return database(ctx, at.Agent, strings.TrimPrefix(at.ID, idPrefix), *at.Title)
 }
 
 func terminalOrigin(at place, agent string) string {
@@ -80,11 +72,7 @@ type nameRecord struct {
 }
 
 func titleOrigin(ctx context.Context, path, agent, id, displayed string) string {
-	if info, err := os.Stat(path); err != nil || !info.Mode().IsRegular() {
-		return titleUnknown
-	}
-	query := url.Values{"mode": {"ro"}, "_pragma": {"query_only(1)", "busy_timeout(200)"}}
-	db, err := sql.Open("sqlite", databaseURI(path, query))
+	db, err := openOrcaDatabase(path)
 	if err != nil {
 		return titleUnknown
 	}

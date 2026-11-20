@@ -121,7 +121,7 @@ test("Codex 分页提取原始目标，排队时关闭 App Server，候选到达
     }
     assert.equal(params.observedTitle, candidate.title);
   };
-  await handleCodex("stop", { session_id: state.sessionId, turn_id: state.revision }, rpc, withNative, async () => ({}), time);
+  await handleCodex("stop", { session_id: state.sessionId, turn_id: state.revision }, rpc, withNative, time);
   assert.equal(title, candidate.title);
   const views = nativeReads.filter(([method]) => method === "thread/turns/list").map(([, { itemsView }]) => itemsView);
   assert.deepEqual(views, ["full", "full", "notLoaded", "notLoaded"]);
@@ -143,7 +143,7 @@ test("Codex 重开时按实际最新已完成轮次恢复候选，无需重提�
     }
     assert.equal(params.observedTitle, candidate.title);
   };
-  await handleCodex("start", { session_id: state.sessionId }, rpc, action => action(api), async () => ({}));
+  await handleCodex("start", { session_id: state.sessionId }, rpc, action => action(api));
   assert.deepEqual(methods, ["title.claim", "title.ack"]);
   assert.equal(title, candidate.title);
 });

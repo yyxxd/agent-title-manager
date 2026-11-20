@@ -7,6 +7,7 @@ import (
 	"os"
 	"reflect"
 	"testing"
+	"time"
 )
 
 type cliFixture struct {
@@ -115,7 +116,7 @@ func TestInstalledOrcaReadOnly(t *testing.T) {
 	if id == "" || native == "" {
 		t.Skip("requires explicit read-only Orca identifiers")
 	}
-	if !ApproveBinding(context.Background(), "codex", native, native, id) {
+	if _, bound := discover(context.Background(), localCLI, nil, "codex", native, native, id, "", []time.Duration{0}); !bound {
 		t.Fatal("installed Orca CLI did not validate the supplied binding")
 	}
 	if _, err := observe(context.Background(), localCLI, id); err != nil {

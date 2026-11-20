@@ -1,9 +1,9 @@
 import { closeSync, fstatSync, openSync, readSync } from "node:fs";
-import { isAbsolute, resolve } from "node:path";
+import { isAbsolute } from "node:path";
 import { setTimeout as delay } from "node:timers/promises";
 import { fingerprint, isTextConfirmation, recentTurns, textOf } from "./client.mjs";
 import { readTitle } from "./annotations.mjs";
-import { roots, safeID, safeStat, sameFileIdentity, samePath, transcriptPath, uuid } from "./paths.mjs";
+import { roots, safeID, safeStat, sameFileIdentity, samePath, transcriptPath } from "./paths.mjs";
 
 function clean(value) {
   return textOf(value).replace(/<USER_REQUEST>([\s\S]*?)<\/USER_REQUEST>/i, "$1")
@@ -13,10 +13,10 @@ function clean(value) {
 export function identify(input, dataDir) {
   const id = input?.conversationId ?? input?.conversation_id;
   const file = input?.transcriptPath ?? input?.transcript_path;
+  if (dataDir !== undefined && (typeof dataDir !== "string" || !isAbsolute(dataDir))) return;
   if (!safeID(id) || typeof file !== "string" || !isAbsolute(file) || /(?:^|[\\/])\.\.(?:[\\/]|$)/.test(file)) return;
-  const candidates = dataDir ? [{ dir: resolve(dataDir), kind: "cli" }] : roots();
+  const candidates = dataDir ? [{ dir: dataDir, kind: "explicit" }] : roots();
   for (const root of candidates) {
-    if (root.kind === "acp" && !uuid(id)) continue;
     const path = transcriptPath(root.dir, id);
     if (!samePath(file, path)) continue;
     const info = safeStat(root.dir, path);

@@ -145,7 +145,8 @@ func (e *Engine) ack(ctx context.Context, p ackRequest) (accepted, error) {
 			return accepted{}, nil
 		}
 		syncStatus := syncPolicy(orcaID, orcaBase, origin, s.orcaManaged, title)
-		return accepted{Accepted: true, SyncStatus: syncStatus}, e.applyAck(ctx, tx, p, title, syncStatus)
+		return accepted{Accepted: true, SyncStatus: syncStatus, EventRevision: revision, SessionRevision: s.revision},
+			e.applyAck(ctx, tx, p, title, syncStatus)
 	})
 	if err == nil && result.Accepted {
 		signal(e.syncWake)

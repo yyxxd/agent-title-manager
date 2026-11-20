@@ -10,7 +10,9 @@ import (
 	"strings"
 
 	"github.com/wailsapp/wails/v3/pkg/application"
+	"github.com/yyxxd/agent-title-manager/internal/engine"
 	"github.com/yyxxd/agent-title-manager/internal/ipc"
+	"github.com/yyxxd/agent-title-manager/internal/orcasync"
 	"github.com/yyxxd/agent-title-manager/internal/pluginmgr"
 )
 
@@ -19,8 +21,12 @@ type Backend struct {
 	Plugins            ipc.Handler
 	AutoUpdateBuiltins func(context.Context) (any, error)
 	Enabled            func(context.Context, string) (bool, error)
-	ResolveTitleOrigin func(context.Context, string, string, string, string) (string, string, bool)
-	ObserveAntigravity func(context.Context)
+	OrcaEnabled        func(context.Context, string) bool
+	ResolveTitleOrigin func(context.Context, string, string, string, string) (orcasync.Binding, bool)
+	RetryBinding       func(context.Context, string, string, string, string) (orcasync.Binding, bool)
+	NativeTitleMatches func(context.Context, string, string, string, string) (bool, error)
+	AttachBinding      func(context.Context, engine.ConfirmedBinding) error
+	Observe            func(context.Context)
 	Close              func() error
 }
 
@@ -98,12 +104,12 @@ func (s *Service) ServiceStartup(ctx context.Context, _ application.ServiceOptio
 			log.Printf("bridge: %v", err)
 		}
 	}()
-	if backend.ObserveAntigravity != nil {
+	if backend.Observe != nil {
 		observerCtx, cancel := context.WithCancel(ctx)
 		done := make(chan struct{})
 		go func() {
 			defer close(done)
-			backend.ObserveAntigravity(observerCtx)
+			backend.Observe(observerCtx)
 		}()
 		s.stopObserver = func() { cancel(); <-done }
 	}

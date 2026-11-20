@@ -10,6 +10,7 @@ import (
 
 	"github.com/wailsapp/wails/v3/pkg/application"
 	"github.com/yyxxd/agent-title-manager/internal/ipc"
+	"github.com/yyxxd/agent-title-manager/internal/orcasync"
 )
 
 func TestBridgeChecksEnabledAgentAndQueuesBinding(t *testing.T) {
@@ -25,17 +26,18 @@ func TestBridgeChecksEnabledAgentAndQueuesBinding(t *testing.T) {
 				}
 				return nil, nil
 			},
-			Enabled: func(_ context.Context, id string) (bool, error) { return enabled.Load() && id == "codex", nil },
-			ResolveTitleOrigin: func(ctx context.Context, agent, session, handle, orca string) (string, string, bool) {
+			Enabled:     func(_ context.Context, id string) (bool, error) { return enabled.Load() && id == "codex", nil },
+			OrcaEnabled: func(context.Context, string) bool { return true },
+			ResolveTitleOrigin: func(ctx context.Context, agent, session, handle, orca string) (orcasync.Binding, bool) {
 				if agent != "codex" || session != "session" || handle != "native" || orca != "orca" {
 					t.Error("incorrect binding identity")
 				}
 				close(known)
 				select {
 				case <-release:
-					return "宿主读取的标题", "manual", true
+					return orcasync.Binding{ID: "orca", Handle: "native", Title: "宿主读取的标题", Origin: "manual"}, true
 				case <-ctx.Done():
-					return "", "unknown", false
+					return orcasync.Binding{}, false
 				}
 			},
 			Close: func() error { return nil },
@@ -49,7 +51,7 @@ func TestBridgeChecksEnabledAgentAndQueuesBinding(t *testing.T) {
 			t.Error(err)
 		}
 	})
-	fields := json.RawMessage(`{"agent":"codex","sessionId":"session","revision":"revision","turns":[],"orcaSessionId":"orca","orcaNativeHandle":"native","orcaTitleOrigin":"auto"}`)
+	fields := json.RawMessage(`{"agent":"codex","sessionId":"session","revision":"revision","turns":[],"hostSessionHint":"orca","nativeHandle":"native","orcaTitleOrigin":"auto"}`)
 	if err := callBridge(service, "event.submit", fields); err == nil {
 		t.Fatal("accepted disabled agent")
 	}
@@ -76,10 +78,11 @@ func TestCommunitySubmissionCannotSupplyOrcaBinding(t *testing.T) {
 	ctx := t.Context()
 	var output json.RawMessage
 	backend := Backend{
-		Enabled: func(context.Context, string) (bool, error) { return true, nil },
-		ResolveTitleOrigin: func(context.Context, string, string, string, string) (string, string, bool) {
+		Enabled:     func(context.Context, string) (bool, error) { return true, nil },
+		OrcaEnabled: func(context.Context, string) bool { return true },
+		ResolveTitleOrigin: func(context.Context, string, string, string, string) (orcasync.Binding, bool) {
 			t.Fatal("community plugin was allowed to request binding verification")
-			return "", "unknown", false
+			return orcasync.Binding{}, false
 		},
 		Engine: func(_ context.Context, _ string, params json.RawMessage) (any, error) {
 			output = params
@@ -91,7 +94,9 @@ func TestCommunitySubmissionCannotSupplyOrcaBinding(t *testing.T) {
 		t.Fatal(err)
 	}
 	event := pendingEvent{key: eventKey{agent: "community"}, fields: fields}
-	if err := event.forward(ctx, backend); err != nil {
+	late := startLateBindings(ctx, backend)
+	defer late.stop()
+	if err := event.forward(ctx, backend, late); err != nil {
 		t.Fatal(err)
 	}
 	if string(output) != `{"agent":"community"}` {
@@ -99,9 +104,33 @@ func TestCommunitySubmissionCannotSupplyOrcaBinding(t *testing.T) {
 	}
 }
 
-func TestAntigravityIsBuiltinAgent(t *testing.T) {
-	if !isBuiltinAgent("antigravity") {
-		t.Fatal("antigravity must use binding verification")
+func TestOrcaDisabledDiscardsNativeOnlyAndNeverResolvesBinding(t *testing.T) {
+	ctx := t.Context()
+	calls := 0
+	backend := Backend{
+		Enabled:     func(context.Context, string) (bool, error) { return true, nil },
+		OrcaEnabled: func(context.Context, string) bool { return false },
+		ResolveTitleOrigin: func(context.Context, string, string, string, string) (orcasync.Binding, bool) {
+			t.Error("disabled integration was called from ingress")
+			return orcasync.Binding{}, false
+		},
+		Engine: func(_ context.Context, _ string, params json.RawMessage) (any, error) {
+			calls++
+			if string(params) != `{"agent":"codex","revision":"turn","sessionId":"native","turns":[]}` {
+				t.Errorf("unexpected native submission: %s", params)
+			}
+			return nil, nil
+		},
+	}
+	svc := Service{backend: backend, ingress: startIngress(ctx, backend)}
+	defer svc.ingress.stop()
+	nativeOnly := json.RawMessage(`{"agent":"codex","sessionId":"native","revision":"start","nativeTitleOnly":true,"hostSessionHint":"chat","currentTitle":"existing"}`)
+	if _, err := svc.pluginEvent(ctx, "event.submit", nativeOnly); err != nil || calls != 0 {
+		t.Fatalf("native-only event should be ignored: %v, %d engine calls", err, calls)
+	}
+	submit := json.RawMessage(`{"agent":"codex","sessionId":"native","revision":"turn","turns":[],"hostSessionHint":"chat","orcaSessionId":"untrusted"}`)
+	if _, err := svc.pluginEvent(ctx, "event.submit", submit); err != nil || calls != 1 {
+		t.Fatalf("ordinary native event: %v, %d engine calls", err, calls)
 	}
 }
 

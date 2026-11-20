@@ -1,5 +1,4 @@
-import { ack, bridge, fingerprint, isTextConfirmation, nativeOrigin, readRuntime, recentTurns, safeID, submitEvent, textOf, waitCandidate } from "./client.mjs";
-import { bindOrca, submitNative } from "./orca.mjs";
+import { ack, bridge, fingerprint, isTextConfirmation, nativeOrigin, readRuntime, recentTurns, safeID, hostSessionHint, submitEvent, submitNative, textOf, waitCandidate } from "./client.mjs";
 
 const userMessage = entry => entry.type === "message" && entry.message.role === "user";
 
@@ -19,30 +18,27 @@ function snapshot(pi, ctx, startLeaf) {
   return {
     agent: "pi", sessionId, revision: fingerprint(leaf, turns), currentTitle,
     titleOrigin: nativeOrigin(currentTitle), project: ctx.cwd, turns,
+    nativeHandle: ctx.sessionManager.getSessionFile(), hostSessionHint: hostSessionHint(),
     originalGoal: textOf(branch.find(userMessage)?.message.content) || undefined,
     confirmationOnly: (newUsers.length > 0 && newUsers.every(entry => isTextConfirmation(entry.message.content))) || undefined,
   };
 }
 
-async function syncExisting({ pi, rpc, resolveBinding, ctx, signal }) {
+async function syncExisting({ pi, rpc, ctx, signal }) {
   const state = snapshot(pi, ctx);
   if (!state?.currentTitle) return;
-  const binding = await resolveBinding(state.agent, state.sessionId, { signal, locator: ctx.sessionManager.getSessionFile() });
   if (!signal.aborted && ctx.sessionManager.getSessionId() === state.sessionId && pi.getSessionName() === state.currentTitle) {
-    await submitNative(rpc, state, binding, signal);
+    await submitNative(rpc, state, signal);
   }
 }
 
-async function applySettled({ pi, rpc, resolveBinding, ctx, signal, setName, resume, startLeaf, polling }) {
+async function applySettled({ pi, rpc, ctx, signal, setName, resume, startLeaf, polling }) {
   const state = snapshot(pi, ctx, startLeaf);
   if (!state?.turns.length) return;
   const leaf = ctx.sessionManager.getLeafId();
   const fresh = () => !signal.aborted && ctx.isIdle() && ctx.sessionManager.getSessionId() === state.sessionId &&
     ctx.sessionManager.getLeafId() === leaf && (pi.getSessionName() ?? "") === state.currentTitle;
-  if (!resume) {
-    const binding = await resolveBinding(state.agent, state.sessionId, { signal, locator: ctx.sessionManager.getSessionFile() });
-    if (!(await submitEvent(rpc, { ...state, ...binding }, { signal, fresh }))?.accepted) return;
-  }
+  if (!resume && !(await submitEvent(rpc, state, { signal, fresh }))?.accepted) return;
   const { candidate, status } = await waitCandidate(rpc, state, { ...polling, fresh, signal, resume });
   if (status === "failed" && !resume && fresh()) ctx.ui.notify("自动命名失败，当前标题保留。", "warning");
   if (!candidate || !fresh()) return;
@@ -53,7 +49,7 @@ async function applySettled({ pi, rpc, resolveBinding, ctx, signal, setName, res
   await ack(rpc, state, candidate, observed);
 }
 
-export function register(pi, rpc, resolveBinding = bindOrca, polling) {
+export function register(pi, rpc, polling) {
   let active;
   let writing;
   let startLeaf;
@@ -67,7 +63,7 @@ export function register(pi, rpc, resolveBinding = bindOrca, polling) {
     const controller = new AbortController();
     active = controller;
     const signal = controller.signal;
-    const job = { pi, rpc, resolveBinding, ctx, signal, setName, resume, startLeaf, polling };
+    const job = { pi, rpc, ctx, signal, setName, resume, startLeaf, polling };
     void (async () => {
       if (resume) await syncExisting(job);
       await applySettled(job);
