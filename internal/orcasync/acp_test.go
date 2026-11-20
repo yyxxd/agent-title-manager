@@ -22,6 +22,11 @@ const (
 )
 
 func TestACPObserverSettlesRenamesAndProtectsManualName(t *testing.T) {
+	testACPObserver(t, t.TempDir(), "")
+}
+
+func testACPObserver(t *testing.T, home, account string) {
+	t.Helper()
 	node, err := exec.LookPath("node.exe")
 	if err != nil {
 		node, err = exec.LookPath("node")
@@ -33,10 +38,11 @@ func TestACPObserverSettlesRenamesAndProtectsManualName(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	home := t.TempDir()
 	t.Setenv("ORCA_USER_DATA_PATH", home)
 	t.Setenv("NODE_TEST_CONTEXT", "isolated-acp-fixture")
-	account := filepath.Join(home, "antigravity-chat")
+	if account == "" {
+		account = filepath.Join(home, "antigravity-chat")
+	}
 	data := filepath.Join(account, "antigravity-acp")
 	db := makeACPDatabase(t, home)
 	now := time.Now()

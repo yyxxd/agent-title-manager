@@ -12,7 +12,6 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
-	"runtime"
 	"strings"
 	"time"
 )
@@ -241,18 +240,9 @@ func safeDatabase(path string) bool {
 		if os.IsNotExist(err) && suffix != "" {
 			continue
 		}
-		resolved, resolveErr := filepath.EvalSymlinks(file)
-		if err != nil || !info.Mode().IsRegular() || resolveErr != nil || !samePath(file, resolved) {
+		if err != nil || !info.Mode().IsRegular() || !unredirectedPath(file, info) {
 			return false
 		}
 	}
 	return true
-}
-
-func samePath(left, right string) bool {
-	left, right = filepath.Clean(left), filepath.Clean(right)
-	if runtime.GOOS == "windows" {
-		return strings.EqualFold(left, right)
-	}
-	return left == right
 }

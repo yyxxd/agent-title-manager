@@ -6,7 +6,7 @@ import { DatabaseSync } from "node:sqlite";
 import test from "node:test";
 import { readTitle, writeTitle } from "../antigravity/annotations.mjs";
 import { createObserver, readDesktopSettlements } from "../antigravity/observe.mjs";
-import { roots, transcriptPath } from "../antigravity/paths.mjs";
+import { roots, safeStat, transcriptPath } from "../antigravity/paths.mjs";
 import { identify, locateNative } from "../antigravity/transcript.mjs";
 
 const desktopId = "a68b5391-bfed-45ae-948e-259bb4abf011";
@@ -126,6 +126,11 @@ test("explicit transcript root rejects traversal and junctions without participa
   const nativeDir = join(external.dir, "brain", manualId);
   await symlink(dirname(dirname(dirname(escaped))), nativeDir, process.platform === "win32" ? "junction" : "dir");
   assert.throws(() => identify({ conversationId: manualId, transcriptPath: transcriptPath(external.dir, manualId) }, external.dir), /redirected/);
+  const linkedBase = join(temp, "redirected-base");
+  await symlink(external.dir, linkedBase, process.platform === "win32" ? "junction" : "dir");
+  assert.throws(() => safeStat(linkedBase, join(linkedBase, "missing")), /redirected/);
+  const throughLink = join(linkedBase, "brain", acpId);
+  assert.throws(() => safeStat(throughLink, join(throughLink, "missing")), /redirected/);
 });
 
 test("desktop observer processes only settled native desktop turns", async t => {

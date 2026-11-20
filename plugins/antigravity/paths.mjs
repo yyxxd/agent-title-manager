@@ -1,6 +1,6 @@
-import { lstatSync, realpathSync } from "node:fs";
+import { lstatSync, readdirSync, realpathSync } from "node:fs";
 import { homedir } from "node:os";
-import { isAbsolute, join, relative, resolve } from "node:path";
+import { dirname, isAbsolute, join, parse, relative, resolve } from "node:path";
 import { safeID } from "./client.mjs";
 
 export { safeID };
@@ -22,14 +22,25 @@ export function safeStat(base, file) {
   if (!isAbsolute(base) || !isAbsolute(file)) throw new Error("Invalid Antigravity path");
   const rel = relative(base, file);
   if (isAbsolute(rel) || rel.split(/[\\/]/).includes("..")) throw new Error("Antigravity path escaped");
-  let path = base;
-  for (const part of ["", ...rel.split(/[\\/]/).filter(Boolean)]) {
+  const absolute = resolve(file);
+  let path = parse(absolute).root;
+  let parent = path;
+  for (const part of ["", ...absolute.slice(path.length).split(/[\\/]/).filter(Boolean)]) {
     path = join(path, part);
     const info = lstatSync(path, { throwIfNoEntry: false });
     if (!info) return undefined;
-    if (info.isSymbolicLink() || !samePath(realpathSync(path), path)) throw new Error("Antigravity path redirected");
-    if (samePath(path, file)) return info;
+    if (info.isSymbolicLink()) throw new Error("Antigravity path redirected");
+    const real = realpathSync.native(path);
+    if (!samePath(real, join(parent, part))) {
+      // 8.3 别名不出现在目录项列表中，展开后的名称仍须属于刚核验过的父目录。
+      const shortAlias = process.platform === "win32" && part &&
+        samePath(dirname(real), parent) && sameFileIdentity(info, lstatSync(real)) &&
+        !readdirSync(parent).some(name => name.toLowerCase() === part.toLowerCase());
+      if (!shortAlias) throw new Error("Antigravity path redirected");
+    }
+    if (samePath(path, absolute)) return info;
     if (!info.isDirectory()) throw new Error("Invalid Antigravity directory");
+    parent = real;
   }
 }
 
