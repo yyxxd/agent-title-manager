@@ -37,6 +37,10 @@ jobs:
       - name: Go tests
         run: go test ./...
 
+      - name: Release notes tests
+        shell: pwsh
+        run: ./packaging/read-release-notes.test.ps1
+
       - name: Plugin tests
         run: node --test plugins/tests/*.test.mjs
 

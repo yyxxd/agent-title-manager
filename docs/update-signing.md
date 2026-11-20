@@ -27,7 +27,17 @@
 
 ## 发布产物清单
 
+普通发布前使用 `git tag -a vX.Y.Z --cleanup=verbatim -F release-notes.txt` 创建标签，保留中文说明里的 `#` 标题。签名清单和 GitHub Release 共用已校验的标签正文。
+
 - `AgentTitleManager-<版本>-windows-x64-setup.exe`
 - `update-manifest.json`（含签名字段）
 
 安装包 SHA-256 与大小由发布工作流计算并写入清单，应用端二次校验。当前构建产物未做代码签名；清单签名是应用内更新的信任根，不替代 Windows 代码签名。
+
+## 手动修复 v0.4.1 已发布说明
+
+合并到 `main` 后，在 GitHub Actions 手动运行 **Repair v0.4.1 release notes**，分支选 `main`。也可以执行 `gh workflow run repair-v0.4.1-notes.yml --ref main`。
+
+流程核对 v0.4.1 的远端标签对象、已发行安装包和原清单。原清单通过正式公钥验签后，只替换说明并重新签名。候选清单上传且读回摘要一致后，原资产改名为 `update-manifest.v0.4.1.original.json`，候选资产接替 `update-manifest.json`，随后同步并读回 Release 正文。
+
+失败时可重跑同一工作流。候选上传失败时正式清单仍在。切换资产名的两个请求之间，正式清单可能短暂不可用。切换失败时，工作流尝试把备份恢复为正式清单。如果备份已就位，重跑可从备份继续。正式清单已替换时，重跑可继续同步 Release 正文。

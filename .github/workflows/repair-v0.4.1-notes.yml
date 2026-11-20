@@ -1,0 +1,54 @@
+name: Repair v0.4.1 release notes
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: repair-v0.4.1-notes
+  cancel-in-progress: false
+
+jobs:
+  repair:
+    if: github.ref == 'refs/heads/main'
+    runs-on: windows-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.sha }}
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+
+      - name: Verify tag and download original release assets
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          $dir = Join-Path $env:RUNNER_TEMP 'repair-v0.4.1'
+          ./packaging/repair-v0.4.1-notes.ps1 -Phase Prepare -Directory $dir
+          "REPAIR_DIR=$dir" >> $env:GITHUB_ENV
+
+      - name: Verify original manifest and re-sign notes
+        shell: pwsh
+        env:
+          ATM_SIGNING_KEY: ${{ secrets.UPDATE_SIGNING_SEED }}
+          UPDATE_PUBLIC_KEY: ${{ vars.UPDATE_PUBLIC_KEY }}
+        run: |
+          $PSNativeCommandUseErrorActionPreference = $true
+          go run ./cmd/atm-sign repair-notes -version 0.4.1 `
+            -existing "$env:REPAIR_DIR/original.json" `
+            -installer "$env:REPAIR_DIR/AgentTitleManager-0.4.1-windows-x64-setup.exe" `
+            -notes-file "$env:REPAIR_DIR/notes.md" `
+            -output "$env:REPAIR_DIR/update-manifest.v0.4.1.candidate.json"
+
+      - name: Replace manifest and synchronize release notes
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: ./packaging/repair-v0.4.1-notes.ps1 -Phase Publish -Directory $env:REPAIR_DIR
