@@ -260,6 +260,7 @@ function ModelForm({
                       }))}
                       disabled={actions.busy}
                       dropdownDisabled={subDisabled}
+                      refreshDisabled={false}
                       busy={catalog.loading}
                       error={catalog.error}
                       emptyMessage="此 CLI 当前没有可见模型。"

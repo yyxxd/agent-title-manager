@@ -15,6 +15,7 @@ export function ModelCombobox({
   allowCustomInput,
   disabled,
   dropdownDisabled,
+  refreshDisabled = dropdownDisabled,
   busy,
   error,
   emptyMessage,
@@ -30,6 +31,7 @@ export function ModelCombobox({
   allowCustomInput?: boolean;
   disabled?: boolean;
   dropdownDisabled?: boolean;
+  refreshDisabled?: boolean;
   busy?: boolean;
   error?: string;
   emptyMessage?: string;
@@ -101,8 +103,8 @@ export function ModelCombobox({
           <button
             type="button"
             className="input combo-trigger"
-            disabled={disabled}
-            aria-expanded={open}
+            disabled={disabled || dropdownDisabled}
+            aria-expanded={open && !dropdownDisabled}
             onClick={toggleDropdown}
           >
             <span className="mono combo-trigger-text">{triggerLabel ?? (value || placeholder)}</span>
@@ -110,7 +112,7 @@ export function ModelCombobox({
           </button>
         )}
 
-        {open && (
+        {open && !disabled && !dropdownDisabled && (
           <div className="combo-dropdown" role="listbox" aria-label="模型选项">
             <div className="combo-search-wrap">
               <input
@@ -186,7 +188,7 @@ export function ModelCombobox({
         type="button"
         className="icon-btn bordered"
         style={{ width: 36, height: 36, flexShrink: 0 }}
-        disabled={disabled || dropdownDisabled || busy}
+        disabled={disabled || refreshDisabled || busy}
         title="刷新模型列表"
         aria-label="刷新模型列表"
         onClick={() => {

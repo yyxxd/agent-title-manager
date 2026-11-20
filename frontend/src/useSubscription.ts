@@ -32,6 +32,7 @@ export function useSubscription(provider: Settings['provider']) {
     error,
     loading: provider !== 'api' && loading,
     refresh: () => {
+      if (loading || force.current) return;
       force.current = true;
       setRevision((old) => old + 1);
     },
