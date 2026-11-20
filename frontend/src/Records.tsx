@@ -4,7 +4,7 @@ import { agentName, formatTime, num, providerName, rpc, token, type Attempt, typ
 import { toast } from './toast';
 import { ConfirmDialog, StatusNotice, useAction, useLoad } from './ui';
 
-export type RecordFilter = 'all' | 'attention' | 'codex' | 'claude' | 'pi';
+export type RecordFilter = 'all' | 'attention' | 'codex' | 'claude' | 'antigravity' | 'pi';
 
 const states: Record<string, string> = {
   queued: '待处理',
@@ -113,7 +113,12 @@ export function Records({
 
   const filtered = items.filter((item) => {
     if (filter === 'attention' && item.syncStatus !== 'failed' && item.syncStatus !== 'protected') return false;
-    if ((filter === 'codex' || filter === 'claude' || filter === 'pi') && item.agent !== filter) return false;
+    if (
+      (filter === 'codex' || filter === 'claude' || filter === 'antigravity' || filter === 'pi') &&
+      item.agent !== filter
+    ) {
+      return false;
+    }
     if (q) {
       const { model } = attemptSummary(item);
       const hay = `${item.title} ${model} ${agentName(item.agent)} ${item.sessionId} ${item.syncError ?? ''}`.toLowerCase();
@@ -164,6 +169,13 @@ export function Records({
             onClick={() => setFilter('claude')}
           >
             Claude
+          </button>
+          <button
+            type="button"
+            className={`seg-btn ${filter === 'antigravity' ? 'active' : ''}`}
+            onClick={() => setFilter('antigravity')}
+          >
+            Antigravity
           </button>
           <button
             type="button"

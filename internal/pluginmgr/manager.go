@@ -62,7 +62,7 @@ type request struct {
 }
 
 var builtins = map[string]string{
-	"codex": "Codex", "claude": "Claude Code", "pi": "Pi", "orca": "Orca",
+	"codex": "Codex", "claude": "Claude Code", "pi": "Pi", "antigravity": "Antigravity", "orca": "Orca",
 }
 
 func New(dataDir string, bundledDir string) *Manager {
@@ -190,7 +190,7 @@ func (m *Manager) Handle(ctx context.Context, method string, params json.RawMess
 
 func (m *Manager) list(state registry) []Item {
 	items := make([]Item, 0, len(builtins)+len(state.Items))
-	for _, id := range []string{"codex", "claude", "pi", "orca"} {
+	for _, id := range []string{"codex", "claude", "pi", "antigravity", "orca"} {
 		items = append(items, m.item(state, id))
 	}
 	var ids []string
@@ -293,6 +293,8 @@ func (m *Manager) describeEnabled(id string, item *Item, r record) {
 		item.Status, item.Detail = "action_required", "Hook 已注册。首次使用或脚本更新后，请在 Codex 的 /hooks 中审核并信任；当前信任状态由 Codex 管理。"
 	case "claude", "pi":
 		item.Detail = "已写入宿主设置。请重启宿主以加载适配器。"
+	case "antigravity":
+		item.Detail = "已写入 Antigravity hooks.json。请重启 Antigravity 以加载适配器。"
 	}
 }
 

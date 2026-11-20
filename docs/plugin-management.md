@@ -8,6 +8,7 @@
 | --- | --- | --- |
 | Codex | 在 `CODEX_HOME` 或 `~/.codex` 的 `hooks.json` 添加 `SessionStart` 和 `Stop` | 首次使用或 Hook 变更后，在 Codex CLI 的 `/hooks` 中审核和信任；重启宿主后再次查看。 [Codex Hook 文档](https://developers.openai.com/codex/hooks) |
 | Claude Code | 在 `CLAUDE_CONFIG_DIR` 或 `~/.claude` 的 `settings.json` 添加 `SessionStart`、`UserPromptSubmit` 和 `Stop` | 重启宿主。 [Claude Code Hook 文档](https://code.claude.com/docs/en/hooks) |
+| Antigravity | `ANTIGRAVITY_CONFIG_DIR` 下的 `hooks.json` 命名钩子组 | `SessionStart`、`PreInvocation`、`Stop`，数据目录可由 `ANTIGRAVITY_DATA_DIR` 覆盖 |
 | Pi | 在 `PI_CODING_AGENT_DIR` 或 `~/.pi/agent` 的 `settings.json` 添加适配器入口到 `extensions` | 重启宿主。 [Pi 扩展文档](https://github.com/badlogic/pi-mono/blob/main/packages/coding-agent/docs/extensions.md) |
 | Orca | 开启桌面的标题同步 | 在 Orca 设置中关闭 **Name chats automatically**，避免两个应用同时改名。 |
 
@@ -63,3 +64,7 @@
 首次识别标题来源时，以 SQLite `mode=ro` 读取 `ORCA_USER_DATA_PATH` 或 `%APPDATA%/Orca` 中已绑定会话的名称元数据。对版本 2 的记录，两个名称字段都缺省且显示确为宿主默认占位名时可判为自动。记录标为 `user` 且名称与实时显示一致时判为手动。未知版本、无记录、库不可读或者来源不明时，应由用户显式接管。
 
 每次写入（包括重试和采用）都比较 Orca 的身份与旧标题，并在最后一步重新核验绑定、读取原生标题。Codex 用 App Server `thread/read`，Claude 使用适配器的标题元数据读回，Pi 读取已绑定会话文件的最近 `session_info`。原生名已改变时，旧任务过期；读不到时保留重试机会。匹配后才执行 `orca chat rename` 并从 CLI 回读。当前宿主读取和 Orca 改名是独立操作，二者之间仍存在竞态窗口。
+
+
+
+Antigravity 和 Pi 的本机终端标签同步仅作用于 Orca kind == `terminal` 的单窗格本地会话，写入后会回读 orca terminal list --include-visual-layouts 验证；Codex 和 Claude 仍只同步 kind == `chat`。

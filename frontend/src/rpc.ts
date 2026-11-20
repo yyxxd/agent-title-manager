@@ -141,7 +141,13 @@ export type RecordItem = {
 
 export type Preferences = { startup: boolean; startupAvailable: boolean };
 
-const agents: Record<string, string> = { codex: 'Codex', claude: 'Claude Code', pi: 'Pi', orca: 'Orca' };
+const agents: Record<string, string> = {
+  codex: 'Codex',
+  claude: 'Claude Code',
+  antigravity: 'Antigravity',
+  pi: 'Pi',
+  orca: 'Orca',
+};
 export const agentName = (id: string) => (Object.hasOwn(agents, id) ? agents[id] : id);
 export const providerName = (id: string) => (id === 'api' ? '自定义 API' : id === 'claude' ? 'Claude Code' : agentName(id));
 export const num = (value: number) => new Intl.NumberFormat('zh-CN').format(value);

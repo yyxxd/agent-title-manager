@@ -49,7 +49,7 @@ func testManager(t *testing.T) (*Manager, map[string]string) {
 	writeFixture(t, filepath.Join(bundle, "node.exe"), "never invoked")
 	writeFixture(t, filepath.Join(filepath.Dir(bundle), "atm-bridge.exe"), "never invoked")
 	hostPaths := map[string]string{}
-	hostEnvs := map[string]string{"codex": "CODEX_HOME", "claude": "CLAUDE_CONFIG_DIR", "pi": "PI_CODING_AGENT_DIR"}
+	hostEnvs := map[string]string{"codex": "CODEX_HOME", "claude": "CLAUDE_CONFIG_DIR", "pi": "PI_CODING_AGENT_DIR", "antigravity": "ANTIGRAVITY_CONFIG_DIR"}
 	for id, env := range hostEnvs {
 		home := filepath.Join(root, id+" config")
 		hostPaths[id] = home
@@ -96,7 +96,7 @@ func TestListAndSyncDefaultDisabled(t *testing.T) {
 		Items      []Item            `json:"items"`
 		AutoUpdate *AutoUpdateResult `json:"autoUpdate,omitempty"`
 	}).Items
-	for i, expected := range []string{"codex", "claude", "pi", "orca"} {
+	for i, expected := range []string{"codex", "claude", "pi", "antigravity", "orca"} {
 		if got[i].ID != expected || got[i].Enabled || got[i].Status != "disabled" {
 			t.Fatalf("unexpected builtin %+v", got[i])
 		}

@@ -16,6 +16,7 @@ import { StatusNotice, Switch, useAction, useLoad } from './ui';
 const builtinDescriptions: Record<string, string> = {
   codex: '监听 Codex 会话自动生成标题，并同步至 Orca。',
   claude: '首轮对话后在后台生成候选标题，下次交互时应用。',
+  antigravity: '通过 Antigravity Hook 自动生成会话标题，并同步至 Orca。',
   pi: '通过 Pi 扩展协议接入自动会话命名。',
   orca: '将各 Agent 生成的标题同步写回 Orca 会话列表。',
 };

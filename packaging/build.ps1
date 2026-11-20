@@ -43,7 +43,7 @@ try {
     # Keep the helper trust root in internal/update, where atm-update calls it.
     $helperLinkFlags = "-s -w -X github.com/yyxxd/agent-title-manager/internal/update.updatePublicKey=$UpdatePublicKey"
     Invoke-Checked 'go' @('build', '-trimpath', '-ldflags', $helperLinkFlags, '-o', (Join-Path $stage 'atm-update.exe'), './cmd/atm-update')
-    foreach ($id in @('codex', 'claude', 'pi', 'example')) {
+    foreach ($id in @('codex', 'claude', 'pi', 'antigravity', 'example')) {
         Copy-Item -LiteralPath "plugins\$id" -Destination "$stage\plugins\$id" -Recurse
     }
     Copy-Item -LiteralPath "$node\node.exe" -Destination "$stage\plugins\node.exe"

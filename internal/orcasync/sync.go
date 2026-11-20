@@ -33,11 +33,14 @@ type NativeTitleReader func(ctx context.Context, agent, sessionID, nativeHandle 
 type preflight func(context.Context, place) error
 
 type place struct {
-	ID     string  `json:"orcaSessionId"`
-	Agent  string  `json:"agent"`
-	Kind   string  `json:"kind"`
-	HostID string  `json:"hostId"`
-	Title  *string `json:"title"`
+	ID        string  `json:"orcaSessionId"`
+	Agent     string  `json:"agent"`
+	Kind      string  `json:"kind"`
+	HostID    string  `json:"hostId"`
+	Title     *string `json:"title"`
+	PaneKey   string  `json:"paneKey"`
+	Handle    string  `json:"handle"`
+	PaneTitle string  `json:"-"`
 }
 
 // SyncVerified requires a fresh read of the bound native session immediately
@@ -81,7 +84,7 @@ func syncTitle(ctx context.Context, run runCLI, id, expected, title string, veri
 	}
 	ctx, cancel := context.WithTimeout(ctx, 11*time.Second)
 	defer cancel()
-	before, err := observe(ctx, run, rawID)
+	before, err := observeForAgent(ctx, run, rawID, "")
 	if err != nil {
 		return err
 	}
@@ -94,8 +97,12 @@ func syncTitle(ctx context.Context, run runCLI, id, expected, title string, veri
 	if *before.Title == title {
 		return nil
 	}
-	writeErr := call(ctx, run, nil, "chat", "rename", "--session", before.ID, "--name", title)
-	after, readErr := observe(ctx, run, rawID)
+	writeArgs := []string{"chat", "rename", "--session", before.ID, "--name", title}
+	if before.Kind == "terminal" {
+		writeArgs = []string{"terminal", "rename", "--terminal", before.Handle, "--title", title}
+	}
+	writeErr := call(ctx, run, nil, writeArgs...)
+	after, readErr := observeForAgent(ctx, run, rawID, before.Agent)
 	if readErr == nil && *after.Title == title {
 		return nil
 	}
@@ -112,6 +119,15 @@ func validTitle(title string) bool {
 }
 
 func observe(ctx context.Context, run runCLI, id string) (place, error) {
+	return observeForAgent(ctx, run, id, "")
+}
+
+func observeForAgent(ctx context.Context, run runCLI, id, agent string) (place, error) {
+	if agent == "antigravity" || agent == "pi" || agent == "" {
+		if terminal, err := observeTerminal(ctx, run, id, agent); err == nil {
+			return terminal, nil
+		}
+	}
 	var list struct {
 		Agents    []place `json:"agents"`
 		Truncated *bool   `json:"truncated"`
@@ -129,6 +145,101 @@ func observe(ctx context.Context, run runCLI, id string) (place, error) {
 		return place{}, fmt.Errorf("%w：列表未能唯一确认本机聊天", ErrSkipped)
 	}
 	return verifyPlace(ctx, run, id, matches[0])
+}
+
+type terminalEntry struct {
+	Handle   string `json:"handle"`
+	Orphaned bool   `json:"orphaned"`
+	HostID   string `json:"executionHostId"`
+	TabID    string `json:"tabId"`
+	LeafID   string `json:"leafId"`
+	Identity string `json:"agentIdentity"`
+	Title    string `json:"title"`
+}
+type visualTab struct {
+	TabID string          `json:"tabId"`
+	Title string          `json:"title"`
+	Panes json.RawMessage `json:"panes"`
+}
+type visualNode struct {
+	Type     string          `json:"type"`
+	Tabs     []visualTab     `json:"tabs"`
+	Children []visualNode    `json:"children"`
+	Splits   []visualNode    `json:"splits"`
+	Panes    json.RawMessage `json:"panes"`
+	Root     *visualNode     `json:"root"`
+}
+
+func observeTerminal(ctx context.Context, run runCLI, id, agent string) (place, error) {
+	bound, err := showTerminal(ctx, run, id, agent)
+	if err != nil {
+		return place{}, err
+	}
+	var result struct {
+		Truncated bool            `json:"truncated"`
+		Terminals []terminalEntry `json:"terminals"`
+		Layouts   json.RawMessage `json:"visualLayouts"`
+	}
+	if err := call(ctx, run, &result, "terminal", "list", "--include-visual-layouts"); err != nil || result.Truncated {
+		return place{}, fmt.Errorf("%w: terminal list", ErrSkipped)
+	}
+	var match []terminalEntry
+	for _, t := range result.Terminals {
+		if !t.Orphaned && t.HostID == "local" && t.TabID+":"+t.LeafID == bound.PaneKey && (t.Identity == "" || t.Identity == bound.Agent) {
+			match = append(match, t)
+		}
+	}
+	if len(match) != 1 {
+		return place{}, fmt.Errorf("%w: terminal not unique", ErrSkipped)
+	}
+	t := match[0]
+	tabTitle, paneTitle, ok := findVisualTab(result.Layouts, t.TabID, t.LeafID, t.Handle)
+	if !ok {
+		return place{}, fmt.Errorf("%w: terminal layout", ErrSkipped)
+	}
+	return place{ID: id, Agent: bound.Agent, Kind: "terminal", HostID: "local", Title: &tabTitle, PaneKey: bound.PaneKey, Handle: t.Handle, PaneTitle: paneTitle}, nil
+}
+
+func findVisualTab(raw json.RawMessage, tabID, leafID, handle string) (string, string, bool) {
+	var roots []visualNode
+	if json.Unmarshal(raw, &roots) != nil {
+		var one visualNode
+		if json.Unmarshal(raw, &one) != nil {
+			return "", "", false
+		}
+		roots = []visualNode{one}
+	}
+	var walk func(visualNode) (string, string, bool)
+	walk = func(n visualNode) (string, string, bool) {
+		for _, tab := range n.Tabs {
+			var pane struct {
+				Type   string `json:"type"`
+				Handle string `json:"handle"`
+				LeafID string `json:"leafId"`
+				Title  string `json:"title"`
+			}
+			if json.Unmarshal(tab.Panes, &pane) == nil && pane.Type == "terminal" && pane.Handle == handle && pane.LeafID == leafID && tab.TabID == tabID {
+				return tab.Title, pane.Title, true
+			}
+		}
+		for _, c := range append(append(n.Children, n.Splits...), []visualNode{}...) {
+			if t, p, ok := walk(c); ok {
+				return t, p, ok
+			}
+		}
+		if n.Root != nil {
+			if t, p, ok := walk(*n.Root); ok {
+				return t, p, ok
+			}
+		}
+		return "", "", false
+	}
+	for _, n := range roots {
+		if t, p, ok := walk(n); ok {
+			return t, p, ok
+		}
+	}
+	return "", "", false
 }
 
 func verifyPlace(ctx context.Context, run runCLI, id string, listed place) (place, error) {
@@ -158,6 +269,22 @@ func showChat(ctx context.Context, run runCLI, id string) (place, error) {
 	at := shown.Places[0]
 	if at.Kind != "chat" || at.HostID != "local" || strings.TrimPrefix(at.ID, idPrefix) != id {
 		return place{}, fmt.Errorf("%w：详情无法确认本机聊天", ErrSkipped)
+	}
+	return at, nil
+}
+
+func showTerminal(ctx context.Context, run runCLI, id, agent string) (place, error) {
+	var shown struct {
+		ID     string  `json:"orcaSessionId"`
+		Kind   string  `json:"kind"`
+		Places []place `json:"places"`
+	}
+	if err := call(ctx, run, &shown, "agent", "show", idPrefix+id); err != nil || strings.TrimPrefix(shown.ID, idPrefix) != id || shown.Kind != "terminal" || len(shown.Places) != 1 {
+		return place{}, fmt.Errorf("%w: terminal location", ErrSkipped)
+	}
+	at := shown.Places[0]
+	if at.Kind != "terminal" || at.HostID != "local" || strings.TrimPrefix(at.ID, idPrefix) != id || (agent != "" && at.Agent != agent) || (at.Agent != "pi" && at.Agent != "antigravity") || at.PaneKey == "" {
+		return place{}, fmt.Errorf("%w: terminal binding", ErrSkipped)
 	}
 	return at, nil
 }
