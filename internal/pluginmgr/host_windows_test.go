@@ -49,3 +49,33 @@ func TestCodexHookCommandWindowsShells(t *testing.T) {
 		})
 	}
 }
+
+func TestAntigravityHookThroughRealCmd(t *testing.T) {
+	node, err := exec.LookPath("node.exe")
+	if err != nil {
+		t.Skip("Node.js is unavailable")
+	}
+	dir := filepath.Join(t.TempDir(), "AGY %TEMP%! & (Hook's package)")
+	entry := filepath.Join(dir, "index 中文.mjs")
+	writeFixture(t, entry, `process.stdout.write(process.argv[2] + ":"); process.stdin.pipe(process.stdout)`)
+	prefix, err := hookEntry("antigravity", node, entry)
+	if err != nil {
+		t.Fatal(err)
+	}
+	systemDir, err := windows.GetSystemDirectory()
+	if err != nil {
+		t.Fatal(err)
+	}
+	cmdPath := filepath.Join(systemDir, "cmd.exe")
+	const input = `{"hookEventName":"Stop","conversationId":"isolated-turn"}`
+	for _, command := range []string{prefix + " stop", `"` + prefix + ` stop"`} {
+		cmd := exec.Command(cmdPath)
+		hideProcess(cmd)
+		cmd.SysProcAttr.CmdLine = `"` + cmdPath + `" /d /v:on /c ` + command
+		cmd.Stdin = strings.NewReader(input)
+		out, err := cmd.CombinedOutput()
+		if err != nil || string(out) != "stop:"+input {
+			t.Fatalf("Antigravity hook failed through cmd.exe: %q (%v)", out, err)
+		}
+	}
+}

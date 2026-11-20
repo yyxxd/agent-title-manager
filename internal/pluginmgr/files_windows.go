@@ -1,6 +1,7 @@
 package pluginmgr
 
 import (
+	"encoding/base64"
 	"fmt"
 	"io/fs"
 	"os"
@@ -19,7 +20,7 @@ var kernel = syscall.NewLazyDLL("kernel32.dll")
 var shellExecutable = regexp.MustCompile(`^[A-Za-z]:/[\pL\pN_./-]+$`)
 
 func platformHookEntry(id, node, entry, direct string) (string, error) {
-	if id != "codex" {
+	if id != "codex" && id != "antigravity" {
 		return direct, nil
 	}
 	systemDir, err := windows.GetSystemDirectory()
@@ -27,6 +28,17 @@ func platformHookEntry(id, node, entry, direct string) (string, error) {
 		return "", err
 	}
 	powershell := filepath.ToSlash(filepath.Join(systemDir, "WindowsPowerShell", "v1.0", "powershell.exe"))
+	if id == "antigravity" {
+		if !shellExecutable.MatchString(powershell) {
+			return "", fmt.Errorf("Antigravity Hook: unsafe system PowerShell path")
+		}
+		// cmd.exe 只看到一组引号，路径在 PowerShell 内解码，不参与 shell 解析。
+		decode := func(path string) string {
+			return "([Text.Encoding]::UTF8.GetString([Convert]::FromBase64String('" +
+				base64.StdEncoding.EncodeToString([]byte(path)) + "')))"
+		}
+		return powershell + antigravityLauncher + decode(node) + " " + decode(entry) + `"`, nil
+	}
 	if !shellExecutable.MatchString(powershell) || strings.ContainsAny(node+entry, "‘’“”") {
 		return "", fmt.Errorf("Codex Hook 路径包含 Windows Shell 无法安全引用的字符")
 	}

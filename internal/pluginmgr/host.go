@@ -7,6 +7,8 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"regexp"
+	"strconv"
 	"strings"
 )
 
@@ -97,6 +99,12 @@ func (m *Manager) writeRuntime(dir string) error {
 }
 
 func hookEntry(id, node, entry string) (string, error) {
+	if id == "antigravity" {
+		if !filepath.IsAbs(node) || !filepath.IsAbs(entry) {
+			return "", errors.New("Antigravity Hook: executable and script paths must be absolute")
+		}
+		return platformHookEntry(id, node, entry, strconv.Quote(node)+" "+strconv.Quote(entry))
+	}
 	quotedNode, err := quoteCommandPath(node)
 	if err != nil {
 		return "", err
@@ -173,6 +181,10 @@ func editPi(root object, entry string, adding bool) (bool, error) {
 	return true, setList(root, "extensions", kept)
 }
 
+const antigravityLauncher = ` -NoProfile -NonInteractive -Command "& `
+
+var oldAntigravityCommand = regexp.MustCompile(`(?i)^"[^"]*[\\/]node(?:\.exe)?" "[^"]*[\\/]packages[\\/]pkg-[0-9]{8}-[0-9]+[\\/]index\.mjs" (start|prompt|stop)$`)
+
 func editAntigravity(root object, entry string, adding bool) (bool, error) {
 	const groupName = "agent-title-manager"
 	groups, err := nested(root, groupName)
@@ -193,9 +205,11 @@ func editAntigravity(root object, entry string, adding bool) (bool, error) {
 			if json.Unmarshal(raw, &h) != nil {
 				return false, errors.New("Antigravity Hook 配置无法解析")
 			}
-			if h["type"] == "command" && h["command"] == command {
-				found = true
-				if !adding {
+			value, _ := h["command"].(string)
+			if h["type"] == "command" && (value == command || oldAntigravityCommand.MatchString(value)) {
+				if adding && !found && value == command {
+					found = true
+				} else {
 					changed = true
 					continue
 				}
