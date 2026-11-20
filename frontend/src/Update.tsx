@@ -3,6 +3,7 @@ import { useEffect, useRef, useState, useSyncExternalStore } from 'react';
 import { rpc } from './rpc';
 import { toast } from './toast';
 import { ConfirmDialog, StatusNotice, useAction } from './ui';
+import { UpdateNotes } from './UpdateNotes';
 
 type Available = { version: string; notes: string; size: number; sha256: string };
 type Notice = { ok: boolean; version: string; message: string };
@@ -273,15 +274,15 @@ export function UpdateSection() {
       {(available || downloading) && (
         <div className="update-notes">
           {available && (
-            <>
-              <strong>v{available.version} 更新说明</strong>
-              <p className="update-notes-body">{available.notes || '本次更新未提供说明。'}</p>
-            </>
+            <UpdateNotes version={available.version} notes={available.notes} variant="card" />
           )}
           {downloading && (
-            <div role="status" aria-live="polite" style={{ marginTop: available ? 10 : 0 }}>
-              <div style={{ fontSize: 12, color: 'var(--text-muted)' }}>
-                {downloading.total > 0 ? `正在下载安装包 ${percent}%` : '正在下载安装包…'}
+            <div className="update-progress" role="status" aria-live="polite">
+              <div className="update-progress-head">
+                <span>正在下载安装包</span>
+                <span className="mono tabular">
+                  {downloading.total > 0 ? `${percent}%` : '连接中…'}
+                </span>
               </div>
               <div className="progress-bar">
                 <div className="progress-fill" style={{ width: `${percent}%` }} />
@@ -366,16 +367,20 @@ function UpdateNotesDialog({
     >
       <div className="modal" role="dialog" aria-modal="true" aria-labelledby="update-notes-title">
         <div className="modal-head">
-          <h2 className="modal-title" id="update-notes-title">
-            更新到 v{available.version}
-          </h2>
+          <div className="modal-title-group">
+            <h2 className="modal-title" id="update-notes-title">
+              发现新版本
+            </h2>
+            <span className="release-notes-ver mono">v{available.version}</span>
+          </div>
           <button type="button" className="icon-btn" onClick={onLater} aria-label="关闭">
             <X size={15} aria-hidden="true" />
           </button>
         </div>
         <div className="modal-body">
-          <p>发现可用新版本 v{available.version}，建议更新以获取最新修复与改进。</p>
-          <pre className="update-notes-pre">{available.notes || '本次更新未提供说明。'}</pre>
+          <div className="update-notes-dialog-body">
+            <UpdateNotes version={available.version} notes={available.notes} variant="dialog" />
+          </div>
         </div>
         <div className="modal-foot">
           <button type="button" className="btn btn-sm" onClick={onLater}>
