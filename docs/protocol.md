@@ -18,7 +18,9 @@
 {"ok":false,"error":"会话键、版本或标题无效"}
 ```
 
-bridge 只允许 `event.submit`、`title.claim`、`title.ack`。宿主在分发前验证插件已启用且有权使用 `params.agent`，在退出或桌面不可用时让原生 Hook 快速放行。第三方插件的 Orca 映射或标题来源由宿主独立验证，无法证明归属时宿主剥离 Orca 字段。设置、凭据、诊断、统计和插件管理只走可信 UI。插件收到的是标题候选，API 密钥始终由后端保管。
+bridge 的命名白名单为 `event.submit`、`title.claim`、`title.ack`。宿主在分发前验证 `params.agent` 对应的插件已启用。适配器输入中的 Orca 字段会被剥离，桌面只在独立核验绑定后补入。设置、凭据、诊断、统计和插件管理走可信 UI。插件收到标题候选，API 密钥由后端保管。
+
+随附 Codex 适配器另用 `hook.observed {"registration":"atm-registration-…"}` 报告 `SessionStart` 或 `Stop` Hook 的运行。桌面核对当前启用的登记和命令标识，只记录对应桌面版本、适配器版本与登记的证明。该方法无原始会话数据，也不触发命名。
 
 Go 宿主创建 `engine.Open(dataDir, syncer)`，通过 `Engine.Handle(ctx, method, params)` 分发，退出时调用 `Close()`。同一个数据目录只允许一个打开的 Engine。`plugins.*` 由宿主交给 `pluginmgr.Manager.Handle`。Engine 的 `Handle` 同时提供可信方法，宿主负责 bridge 白名单。
 
@@ -37,8 +39,6 @@ Go 宿主创建 `engine.Open(dataDir, syncer)`，通过 `Engine.Handle(ctx, meth
   "titleOrigin": "auto",
   "project": "demo",
   "originalGoal": "修复构建路径",
-  "orcaSessionId": "raw-orca-session-1",
-  "orcaTitle": "",
   "turns": [
     {"role": "user", "text": "修复构建路径"},
     {"role": "assistant", "text": "我会检查构建配置。"}
@@ -46,15 +46,15 @@ Go 宿主创建 `engine.Open(dataDir, syncer)`，通过 `Engine.Handle(ctx, meth
 }
 ```
 
-返回 `{"accepted":true}`。会话键是 `(agent, sessionId)`。`agent` 允许 `codex`、`claude`、`pi` 及通过宿主注册的 ID。ID 格式为 `[a-z][a-z0-9._-]{0,63}`。`revision` 必须是来源内容的稳定版本，重试须复用。提供最近最多 24 条对话，角色为 `user` 或 `assistant`。模型只收到最近最多 10 条与限定字数的对话，当前缺少有效用户目标时保留原标题。
+返回 `{"accepted":true}`。会话键是 `(agent, sessionId)`。`agent` 允许 `codex`、`claude`、`pi`、`antigravity` 及通过宿主注册的社区 ID。引擎的 ID 格式为 `[a-z][a-z0-9._-]{0,63}`。`revision` 必须是来源内容的稳定版本，重试须复用。提供最近最多 24 条对话，角色为 `user` 或 `assistant`。模型只收到最近最多 10 条与限定字数的对话，当前缺少有效用户目标时保留原标题。
 
 可选的 `originalGoal` 仅用于原生历史可以确认的起始用户目标，引擎最多取 800 个 Unicode 码点。省略时模型仅见近期内容。绝对 `project` 路径在本地规范化并计算项目哈希，外发提示仅包括通过校验的目录末级名称。已知同项目的标题及活跃候选参与重名检查，撞名时保留原标题。同名末级目录归属不同路径时分别处理。
 
-`confirmationOnly:true` 仅在新用户消息明确是完整纯文本确认且无附件时提供。核心核对当前已受管标题、上一已处理版本的完整对话前缀、项目及已知原始目标，再检查新增用户消息是否为短确认。最多连续免调用两次。近期窗口滚动或基线内容变化时按常规处理。
+`confirmationOnly:true` 用于可确认的纯文本确认轮。Codex 有命令、工具或具体进展时传 `substantiveActivity:true`，即使用户只说「继续」。引擎会核对已受管标题、项目、历史前缀与新增内容，正常情况下最多连续跳过两次。最近一次标题校验失败时，仍跳过可验证的纯确认，等待下一段实质内容复评。此时匹配原始目标及充分重叠的近期窗口也可作为连续性的证据。
 
 `titleOrigin` 可选 `auto`、`manual`、`unknown`，默认 `unknown`。只有宿主能证明标题由 Agent 自动创建时传 `auto`；空名可进入命名。初次非空且来源未知、明确手动名，或运行中观察到无法解释的标题变化时保护原生名，即使其格式像自动名。新版本使旧候选失效。已见过的同一版本重新提交只返回原有接受结果，不再次调用模型。修订值不需要可排序，适配器应提交最新观察到的版本，领取时再核对本地版本。
 
-Orca 绑定字段可选。`orcaSessionId` 是 Orca 原始 ID。Pi 适配器可另报 `orcaNativeHandle`，bridge 仅在验证绑定后透传该字段，供宿主同步写前定位原生会话。省略 `orcaTitle` 表示未观察到其原标题，明确空字符串表示已确认当时为空。可选的 `orcaTitleOrigin` 与原生来源使用同一枚举，缺少可信来源省略。当前 Orca 列表接口的标题不携带来源。只有已证实自动名、未标为手动的空名、与该会话上次成功写入一致的 Orca 标题才允许自动替换。Orca 自己标记为手动的管理器写入回声仍由上次已读回的标题识别。首次未知的非空 Orca 标题及其它手动标题由 UI 选择之后处理。同步始终以记录中接收到的 Orca 原标题为预期值。
+适配器可提交 `hostSessionHint` 作为 Orca 核验线索。Pi 提交规范化前的原生会话文件路径作为 `nativeHandle`，Antigravity CLI 提交可核验的原生标识。桌面核验成功后才向 Engine 传入 `orcaSessionId`、`orcaTitle`、`orcaTitleOrigin` 和用于写前读回的 `orcaNativeHandle`。绑定支持 Orca 聊天与可唯一确认的终端标签，Antigravity ACP 聊天由独立观察器处理。省略 `orcaTitle` 表示未观察到原标题，空字符串表示已确认为空。自动同步允许已证实的自动名、未标为手动的空名，或与上次成功写入一致的标题。其它非空未知名和手动名需要用户明确采用。同步以已核验的 Orca 原标题为预期值。
 
 ### 已有原生标题补同步
 
@@ -71,7 +71,7 @@ Orca 绑定字段可选。`orcaSessionId` 是 Orca 原始 ID。Pi 适配器可�
 }
 ```
 
-该模式要求宿主已确认非空原生标题和完整 Orca 绑定。只尝试同步现有原生名，未知 Orca 名触发保护状态。它与普通事件分开去重，无模型调用、无改名计数，也不替换普通事件的修订。建议由原生标题及已观测 Orca 标题组成稳定修订。
+该示例展示桌面验证绑定后传给 Engine 的对象。适配器提交非空原生标题与必要的原生定位线索，桌面补入受信 Orca 绑定。此模式只同步现有标题，独立于普通事件去重，无模型调用或改名计数。桌面将核验后的 Orca 观测合入去重版本。
 
 ### `title.claim`
 
@@ -102,7 +102,10 @@ Orca 绑定字段可选。`orcaSessionId` 是 Orca 原始 ID。Pi 适配器可�
 ```json
 {
   "provider": "codex",
-  "codexModel": "gpt-6-luna",
+  "codexModel": "",
+  "codexEffort": "",
+  "claudeModel": "",
+  "claudeEffort": "",
   "fast": true,
   "apiProtocol": "chat",
   "apiBaseUrl": "",
@@ -113,7 +116,7 @@ Orca 绑定字段可选。`orcaSessionId` 是 Orca 原始 ID。Pi 适配器可�
 }
 ```
 
-`provider` 为 `codex`、`claude` 或 `api`。`maxTitleLength` 只接受 `15`（简短，默认）或 `30`（详细），以 Unicode 码点计算，包含 emoji、空格和全角分隔符。旧设置按最近的预设迁移，22 及以下取 15，23 及以上取 30。历史记录保留当时的上限。`fast` 打开时 Codex 请求 `priority`，实际是否生效取服务返回的证据。Codex 使用原生 CLI 的 ChatGPT 登录状态及临时 exec，通常由 npm Windows 原生可执行文件提供。支持 CLI 默认的文件认证存储；管理器通过 CLI 检查账号类型，从不打开认证文件。使用低推理档，忽略用户配置，关闭 Hook、apps、插件、shell 和多 Agent 等能力，模型调用不持久化原生会话。
+`provider` 为 `codex`、`claude` 或 `api`。`maxTitleLength` 接受 `15`（简短，默认）或 `30`（详细）。简短档发给模型的目标仍是 10–12 码点、模型输入上限 15，本地验收最多 20，超限纠错仍要求压到 15。详细档的模型目标上限与本地上限均为 30。emoji、空格和全角分隔符均计入 Unicode 码点。已有 15 与 30 预设沿用，历史记录保留当时的校验上限。`fast` 打开时 Codex 请求 `priority`，实际档位以响应证据为准。Codex 复用原生 CLI 的 ChatGPT 登录状态，临时 exec 忽略用户配置、使用已选思考强度，并关闭 Hook、apps、插件、shell 和多 Agent 等能力。桌面通过 CLI 检查登录类型，不读取认证文件。
 
 `apiProtocol` 为 `chat`、`responses`、`anthropic` 或 `gemini`，同时用于 API 命名、连接测试及备用服务。每次生成发送一个非流式 JSON 请求。保存时保留用户填写的地址路径。新地址只有主机时，Chat、Responses 和 Anthropic 使用 `/v1`，Gemini 使用 `/v1beta`。Chat、Responses 和 Gemini 保留已有的代理前缀。Anthropic 的无版本代理前缀追加 `/v1`，也可粘贴完整端点精确指定路径。0.1.1 已保存的地址默认使用 `chat` 并继续沿用旧路径规则，直到改动地址或协议。
 
@@ -121,7 +124,7 @@ Orca 绑定字段可选。`orcaSessionId` 是 Orca 原始 ID。Pi 适配器可�
 
 `providers.models {"apiProtocol":"anthropic","apiBaseUrl":"https://api.example.com"}` 向本次指定地址发 GET，返回 `{"items":[{"id":"demo","name":"Demo"}]}`，其中 `name` 可省略。支持供应商返回的分页游标。列表请求有独立超时，未保存的地址也可使用。若供应商不提供模型列表，可直接填写模型 ID。此调用不计入命名用量。
 
-`providers.subscriptionModels {"provider":"codex"}` 在确认原生登录后读取 CLI 可见模型。响应 `items` 每项包含精确 `id`、`efforts`，还可提供 `name`、`resolvedModel`、`defaultEffort`。未登录时返回空 `items`、`authRequired: true` 和 `notice`，CLI 缺失和查询失败返回 RPC 错误。目录读取只使用 CLI 元数据，模型使用资格与额度由连接测试确认。
+`providers.subscriptionModels {"provider":"codex","refresh":true}` 强制重新读取 Codex 或 Claude Code 目录，适用于超时或重新登录后重试。响应 `items` 每项包含精确 `id`、`efforts`，还可提供 `name`、`resolvedModel`、`defaultEffort`。未登录时返回空 `items`、`authRequired: true` 和 `notice`，CLI 缺失和查询失败返回 RPC 错误。目录读取只使用 CLI 元数据，无命名调用。
 
 `providers.test` 发送合成连接测试请求，无真实会话历史，可能产生模型用量。可测试已保存值或覆盖本次参数。示例 `{"provider":"api","apiProtocol":"responses","apiBaseUrl":"https://api.example.com/v1","apiModel":"demo"}`。可另传 `apiKey`，Codex 可另传 `codexModel`、`fast`。成功返回 `{"provider":"api","model":"demo","ok":true}`，失败返回外层 RPC 错误。不保存覆盖字段，不走备用服务。
 
@@ -131,7 +134,7 @@ Orca 绑定字段可选。`orcaSessionId` 是 Orca 原始 ID。Pi 适配器可�
 
 ### 日统计和记录
 
-`stats.daily {"date":"2026-11-18"}` 以运行 Windows 主机的本地日历日为准，省略 `date` 时取今天。`since` 是本数据库开始记账的时间。模型调用统计由开始请求的时间归属，原生改名以确认回执时间归属。连接测试计入 `agent:"test"`，且计入 `testAttempts`。无回执同步和历史会话不增加改名计数。`byModel` 按 `provider` 和 `model` 汇总调用与用量。
+`stats.daily {"date":"2026-11-18"}` 以运行 Windows 主机的本地日历日为准，省略 `date` 时取今天。`stats.range {"start":"2026-11-01","end":"2026-11-18"}` 包含首尾两天。`since` 是本数据库开始记账的时间。调用按请求开始时间归属，原生改名按确认回执时间归属。`kept` 含各种跳过改名结果，`modelKept` 统计有模型保留证据的事件，含各原因类别。`namingUsage` 排除连接测试，`attempts` 和 `byModel` 保留连接测试并以 `testAttempts` 单列次数。
 
 每类 Token 单独汇总已报告的数值，全部缺报时为 `null`。明确报告零时保留 `0`。对应的 `inputKnown`、`outputKnown`、`cachedKnown` 是各自已报告的次数，缺报次数等于 `attempts` 减相应已知次数。`unknownUsage` 统计至少缺一个维度的调用。
 
@@ -145,6 +148,7 @@ Anthropic 输入计入已报告的缓存创建和读取 Token，缓存列记录�
   "testAttempts": 0,
   "renames": 1,
   "kept": 0,
+  "modelKept": 0,
   "inputTokens": 50,
   "outputTokens": 8,
   "cachedTokens": null,
@@ -152,12 +156,17 @@ Anthropic 输入计入已报告的缓存创建和读取 Token，缓存列记录�
   "outputKnown": 1,
   "cachedKnown": 0,
   "unknownUsage": 1,
-  "byAgent": [{"agent":"codex","attempts":1,"testAttempts":0,"renames":1,"kept":0,"inputTokens":50,"outputTokens":8,"cachedTokens":null,"inputKnown":1,"outputKnown":1,"cachedKnown":0,"unknownUsage":1}],
+  "namingUsage": {"attempts":1,"testAttempts":0,"inputTokens":50,"outputTokens":8,"cachedTokens":null,"inputKnown":1,"outputKnown":1,"cachedKnown":0,"unknownUsage":1},
+  "byAgent": [{"agent":"codex","attempts":1,"testAttempts":0,"renames":1,"kept":0,"modelKept":0,"inputTokens":50,"outputTokens":8,"cachedTokens":null,"inputKnown":1,"outputKnown":1,"cachedKnown":0,"unknownUsage":1}],
   "byModel": [{"provider":"codex","model":"gpt-6-luna","attempts":1,"testAttempts":0,"inputTokens":50,"outputTokens":8,"cachedTokens":null,"inputKnown":1,"outputKnown":1,"cachedKnown":0,"unknownUsage":1}]
 }
 ```
 
-`records.list {"limit":50}` 返回最近更新的事件及独立的连接测试调用列表 `testAttempts`，每个列表默认 50，最多 200。连接测试明细沿用事件调用的字段，按启动时间与日统计核对。用量各字段可独立为 `null`，`usageKnown` 为兼容标记，三项均已知时才为真。记录中没有对话和密钥。
+`records.list {"limit":50,"filter":"attention","query":"关键词"}` 在全部历史中检索事件。可省略 `filter`，或传 `all`、`attention`、Agent ID。将返回的 `next` 原样传为 `before` 获取下一页，保持筛选和搜索词一致。每页默认 50、最多 200。`counts` 按搜索范围给出 `total`、`attention`、`failed`、`syncFailed`、`protected`。待处理合并命名失败、同步失败及可采用的 Orca 保护记录，重叠只计一条。原生标题锁定仅在历史中说明。记录的 `canAdopt` 表示受保护的 Orca 记录仍匹配当前原生标题和绑定，执行时仍需实时核验。
+
+事件的 `reason` 为可选固定码。模型保留包含 `model_keep_goal`（延续目标）、`model_keep_progress`（已有工作内的步骤或进展）、`model_keep_unspecified`（具体依据无法确认）及历史 `model_keep`（具体依据未记录）。标题保护使用 `manual_locked` 或 `unknown_protected`。其它原因有 `empty_title`、`no_content`、`confirmation_only`、`throttled`、`duplicate_turn`、`title_collision`、`same_title`。历史没有记录原因时省略。失败信息可通过 `failure` 返回当时的长度和上限。记录不返回对话、模型原始理由或密钥。
+
+`attempts` 包含该事件的全部请求，包括纠错与回退。行摘要合计所有已回报的输入、输出，标注部分回报。各 Token 字段独立为 `null` 或数字，`usageKnown` 在三项均已知时为真。连接测试另列为 `testAttempts`，使用相同明细字段。
 
 ```json
 {
@@ -170,6 +179,7 @@ Anthropic 输入计入已报告的缓存创建和读取 Token，缓存列记录�
     "baseTitle": "",
     "status": "applied",
     "syncStatus": "failed",
+    "canAdopt": false,
     "updatedAt": "2026-11-18T09:01:00+08:00",
     "attempts": [{
       "provider": "codex",
@@ -185,7 +195,8 @@ Anthropic 输入计入已报告的缓存创建和读取 Token，缓存列记录�
       "usageKnown": false
     }]
   }],
-  "testAttempts": []
+  "testAttempts": [],
+  "counts": {"total":1,"attention":1,"failed":0,"syncFailed":1,"protected":0}
 }
 ```
 
@@ -194,7 +205,7 @@ Anthropic 输入计入已报告的缓存创建和读取 Token，缓存列记录�
 | `status` | `queued` 待命名、`running` 命名中、`candidate` 候选待领取、`claimed` 已交给宿主待读回、`applied` 原生名已读回、`kept` 保留原名、`stale` 已过期、`failed` 生成失败、`interrupted` 命名中断且未重发、`disabled` 插件停用、`native` 已有原生名的免模型同步记录 |
 | `syncStatus` | 空字符串未调度、`unbound` 缺少绑定或原标题、`unchanged` Orca 标题已一致、`protected` Orca 标题受保护、`pending` 待同步、`writing` 同步中、`synced` 已同步并读回、`failed` 失败且可重试、`skipped` 安全跳过、`stale` 原生标题变化或绑定已过期 |
 | `attempts[].status` | `running` 正在请求、`completed` 已收到决策、`failed` 服务失败、`interrupted` 中断未重发、`invalid_response` 响应无效、`rejected_tool` 尝试使用工具而被拒绝 |
-| `attempts[].source` | `codex_subscription`、`openai_compatible`、`anthropic_compatible` 或 `gemini_compatible` |
+| `attempts[].source` | `codex_subscription`、`claude_subscription`、`openai_compatible`、`anthropic_compatible` 或 `gemini_compatible` |
 | `requestedTier` | `priority` 或 `default` |
 | `actualTier` | 由供应方证据确认的 `default`、`priority`、`flex`、`scale`，字段缺失或无法证实为 `unknown` |
 
@@ -206,8 +217,8 @@ Anthropic 输入计入已报告的缓存创建和读取 Token，缓存列记录�
 
 实时原生标题变化返回 `engine.ErrSyncStale`，现场安全跳过返回 `engine.ErrSyncSkipped`。这两类为终态。暂未拿到原生读回证据、写入失败或写后未获确认返回普通错误，记录为 `failed` 并允许重试。
 
-## 状态存储与旧插件
+## 状态存储与适配器
 
-模型发起前记录调用开始；数据库中的中断模型任务不重新提交，已排队但尚未开始的任务可恢复。仅在待命名期间暂存截取后的对话，开始工作与过期时清除它。宿主的插件管理负责对旧插件做可恢复的精确接管，本核心不导入旧插件的会话、用量或认证状态。现有标题可用上述免模型事件补同步。
+模型发起前记录调用开始。数据库中的中断模型任务不重新提交，已排队但尚未开始的任务可恢复。仅在待命名期间暂存截取后的对话，开始工作与过期时清除。桌面只管理自己的适配器登记。现有原生标题可用上述免模型事件补同步。
 
-命名规则复用已安装的 oil-codex-title 版本。Codex 临时调用参考 [oil-oil/oil-codex-title](https://github.com/oil-oil/oil-codex-title) 及 [yyxxd/agent-session-namer](https://github.com/yyxxd/agent-session-namer) 的原生调用方式。原作者 oil，Copyright (c) 2026，原 MIT 文本见 [LICENSE.naming](../internal/engine/LICENSE.naming)。
+随附命名规则和 Codex 临时调用参考上游实现。原作者 oil，Copyright (c) 2026。 [oil-codex-title](https://github.com/oil-oil/oil-codex-title) · [agent-session-namer](https://github.com/yyxxd/agent-session-namer) · [MIT 许可](../internal/engine/LICENSE.naming)
