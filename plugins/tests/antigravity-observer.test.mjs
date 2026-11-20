@@ -54,8 +54,24 @@ function summaries(path) {
   db.exec(`CREATE TABLE conversation_summaries (
     conversation_id TEXT PRIMARY KEY, title TEXT, preview TEXT, raw_summary BLOB, status TEXT,
     not_fully_idle INTEGER, step_count INTEGER, last_modified_time TEXT, last_user_input_step_index INTEGER
-  ); CREATE VIRTUAL TABLE conversations_fts USING fts5(conversation_id UNINDEXED, chunk_index UNINDEXED, title);`);
+  );`);
   return db;
+}
+
+function seedSearchIndex(db, title) {
+  const declaration = "CREATE VIRTUAL TABLE conversations_fts USING fts5(conversation_id UNINDEXED, chunk_index UNINDEXED, title)";
+  try {
+    db.exec(declaration);
+    db.prepare("INSERT INTO conversations_fts VALUES (?,?,?)").run(desktopId, -1, title);
+    return true;
+  } catch (error) {
+    if (error?.code !== "ERR_SQLITE_ERROR" || error.message !== "no such module: fts5") throw error;
+    // 模拟由 Antigravity 创建的数据库，由缺少 FTS5 的随附 Node 打开。
+    db.exec("PRAGMA writable_schema=ON");
+    db.prepare("INSERT INTO sqlite_schema VALUES ('table','conversations_fts','conversations_fts',0,?)").run(declaration);
+    db.exec("PRAGMA writable_schema=OFF");
+    return false;
+  }
 }
 
 const stringField = (field, value) => {
@@ -82,7 +98,7 @@ test("summary writes preserve preview, unrelated protobuf bytes and other conver
     .run(desktopId, "old", preview, pack("old"));
   db.prepare("INSERT INTO conversation_summaries (conversation_id,title,preview,raw_summary) VALUES (?,?,?,?)")
     .run(manualId, "", preview, untitled);
-  db.prepare("INSERT INTO conversations_fts VALUES (?,?,?)").run(desktopId, -1, "old");
+  const hasFTS = seedSearchIndex(db, "old");
   db.close();
   await writeFile(cache, Buffer.concat([entry(desktopId, pack("old")), untouched, entry(manualId, untitled)]));
   assert.equal(writeTitle(desktop.dir, desktopId, title), true);
@@ -95,7 +111,8 @@ test("summary writes preserve preview, unrelated protobuf bytes and other conver
   assert.deepEqual(Buffer.from(record.raw_summary), pack(title));
   assert.equal(query.get(manualId).preview, preview);
   assert.deepEqual(Buffer.from(query.get(manualId).raw_summary), newlyTitled);
-  assert.equal(verify.prepare("SELECT title FROM conversations_fts").get().title, title);
+  if (hasFTS) assert.equal(verify.prepare("SELECT title FROM conversations_fts").get().title, title);
+  else assert.throws(() => verify.prepare("SELECT title FROM conversations_fts").get(), /no such module: fts5/);
   verify.close();
   assert.deepEqual(await readFile(cache), Buffer.concat([entry(desktopId, pack(title)), untouched, entry(manualId, newlyTitled)]));
 });

@@ -1,6 +1,6 @@
 import { closeSync, fstatSync, openSync, readSync } from "node:fs";
 import { basename, join } from "node:path";
-import { safeStat } from "./paths.mjs";
+import { safeStat, sameFileIdentity } from "./paths.mjs";
 
 export function readStored(root, file, limit) {
   const info = safeStat(root, file);
@@ -9,7 +9,7 @@ export function readStored(root, file, limit) {
   const fd = openSync(file, "r");
   try {
     const stat = fstatSync(fd);
-    if (!stat.isFile() || stat.nlink !== 1 || stat.size > limit || stat.ino !== info.ino || stat.dev !== info.dev) {
+    if (!stat.isFile() || stat.nlink !== 1 || stat.size > limit || !sameFileIdentity(info, stat)) {
       throw new Error("Antigravity file changed or exceeded its size limit");
     }
     const buffer = Buffer.alloc(stat.size + 1);
@@ -38,7 +38,7 @@ export function openDatabase(root, name, readOnly = true) {
   return new Database(file, { readOnly, timeout: 200 });
 }
 
-function updateDatabase(dir, id, title) {
+function updateDatabase(dir, id, title, diagnostic) {
   const db = openDatabase(dir, "conversation_summaries.db", false);
   if (!db) return;
   try {
@@ -49,7 +49,13 @@ function updateDatabase(dir, id, title) {
       if (raw) db.prepare("UPDATE conversation_summaries SET title = ?, raw_summary = ? WHERE conversation_id = ?").run(title, raw, id);
       else db.prepare("UPDATE conversation_summaries SET title = ? WHERE conversation_id = ?").run(title, id);
       if (db.prepare("SELECT 1 FROM sqlite_master WHERE name = 'conversations_fts'").get()) {
-        db.prepare("UPDATE conversations_fts SET title = ? WHERE conversation_id = ? AND chunk_index = -1").run(title, id);
+        try {
+          db.prepare("UPDATE conversations_fts SET title = ? WHERE conversation_id = ? AND chunk_index = -1").run(title, id);
+        } catch (error) {
+          // 随附 Node 22.14.0 没有 FTS5，保留可写入的摘要与 protobuf 变更。
+          if (error?.code !== "ERR_SQLITE_ERROR" || error.message !== "no such module: fts5") throw error;
+          diagnostic("summary.fts.unsupported", error);
+        }
       }
     }
     db.exec("COMMIT");
@@ -157,7 +163,7 @@ function updateCache(dir, name, id, title, replaceStored) {
 }
 
 export function updateSummaries(dir, id, title, replaceStored, diagnostic) {
-  try { updateDatabase(dir, id, title); }
+  try { updateDatabase(dir, id, title, diagnostic); }
   catch (error) { diagnostic("summary.sqlite.failed", error); }
   const name = { "antigravity": "agyhub", "antigravity-cli": "jetbox" }[basename(dir)];
   if (!name) return;

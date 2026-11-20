@@ -3,7 +3,7 @@ import { isAbsolute, resolve } from "node:path";
 import { setTimeout as delay } from "node:timers/promises";
 import { fingerprint, isTextConfirmation, recentTurns, textOf } from "./client.mjs";
 import { readTitle } from "./annotations.mjs";
-import { roots, safeID, safeStat, samePath, transcriptPath, uuid } from "./paths.mjs";
+import { roots, safeID, safeStat, sameFileIdentity, samePath, transcriptPath, uuid } from "./paths.mjs";
 
 function clean(value) {
   return textOf(value).replace(/<USER_REQUEST>([\s\S]*?)<\/USER_REQUEST>/i, "$1")
@@ -39,7 +39,7 @@ function readWindow(identified, limit, head) {
   try {
     const stat = fstatSync(fd);
     if (!stat.isFile() || stat.nlink !== 1) throw new Error("Invalid Antigravity transcript");
-    if (stat.ino !== info.ino || stat.dev !== info.dev) return { lines: [], partial: true };
+    if (!sameFileIdentity(info, stat)) return { lines: [], partial: true };
     const start = head ? 0 : Math.max(0, stat.size - limit);
     const seek = start ? start - 1 : start;
     const buf = Buffer.alloc(Math.min(stat.size - seek, limit + 1));

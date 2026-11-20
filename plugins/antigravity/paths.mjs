@@ -41,6 +41,12 @@ export function safeStat(base, file) {
   }
 }
 
+export function sameFileIdentity(info, stat) {
+  if (!info || !stat || info.ino !== stat.ino) return false;
+  // Windows 随附 Node 22.14.0 的 lstat 可能缺少卷序列号，fstat 仍会返回实际值。
+  return info.dev === stat.dev || (process.platform === "win32" && (info.dev === 0 || stat.dev === 0));
+}
+
 export function transcriptPath(dir, id) {
   if (!safeID(id)) throw new Error("Invalid Antigravity session ID");
   return join(dir, "brain", id, ".system_generated", "logs", "transcript.jsonl");
