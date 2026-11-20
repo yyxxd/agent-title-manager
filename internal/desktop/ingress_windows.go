@@ -50,6 +50,12 @@ func (ingress *eventIngress) stop() {
 }
 
 func (s *Service) pluginEvent(ctx context.Context, method string, params json.RawMessage) (any, error) {
+	if method == "hook.observed" {
+		if s.backend.ObserveCodexHook == nil {
+			return nil, errors.New("Codex Hook 状态不可用")
+		}
+		return s.backend.ObserveCodexHook(ctx, params)
+	}
 	var fields map[string]json.RawMessage
 	if err := json.Unmarshal(params, &fields); err != nil {
 		return nil, errors.New("事件 JSON 无效")

@@ -40,6 +40,12 @@ export function Agents({ onChanged }: { onChanged: () => void }) {
     if (value?.autoUpdate) syncPluginAutoUpdate(value.autoUpdate);
   }, [value?.autoUpdate]);
 
+  useEffect(() => {
+    const refreshStatus = () => setRefresh((n) => n + 1);
+    window.addEventListener('focus', refreshStatus);
+    return () => window.removeEventListener('focus', refreshStatus);
+  }, []);
+
   const items = value?.items ?? [];
   const builtin = items.filter((item) => item.kind === 'builtin');
   const integrations = items.filter((item) => item.kind === 'integration');

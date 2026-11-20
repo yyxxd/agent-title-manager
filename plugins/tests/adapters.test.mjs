@@ -419,7 +419,7 @@ test("四个发布包都有独立 manifest 和运行入口", async () => {
     assert.equal(manifest.kind, "agent");
     assert.match(await readFile(new URL(manifest.entry, root), "utf8"), /from "\.\/client\.mjs"/);
     if (host !== "external") {
-      assert.equal(manifest.version, id === "antigravity" ? "0.3.0" : "0.2.0");
+      assert.equal(manifest.version, { antigravity: "0.3.0", codex: "0.2.1" }[id] ?? "0.2.0");
       for (const helper of ["orca.mjs", "orca-binding.mjs"]) {
         await assert.rejects(readFile(new URL(helper, root)), { code: "ENOENT" });
       }
