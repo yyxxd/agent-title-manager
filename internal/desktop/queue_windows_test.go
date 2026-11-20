@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"github.com/yyxxd/agent-title-manager/internal/orcasync"
 	"strings"
 	"testing"
 	"time"
@@ -15,11 +16,12 @@ func TestIngressFullPreservesSessionOrderAndDrains(t *testing.T) {
 	started, release := make(chan struct{}), make(chan struct{})
 	var revisions []string
 	ingress := startIngress(parent, Backend{
-		Enabled: func(context.Context, string) (bool, error) { return true, nil },
-		ResolveTitleOrigin: func(context.Context, string, string, string, string) (string, string, bool) {
+		Enabled:     func(context.Context, string) (bool, error) { return true, nil },
+		OrcaEnabled: func(context.Context, string) bool { return true },
+		ResolveTitleOrigin: func(context.Context, string, string, string, string) (orcasync.Binding, bool) {
 			close(started)
 			<-release
-			return "原名", "auto", true
+			return orcasync.Binding{ID: "orca", Title: "原名", Origin: "auto", Handle: "native"}, true
 		},
 		Engine: func(_ context.Context, _ string, raw json.RawMessage) (any, error) {
 			var fields map[string]json.RawMessage
@@ -50,8 +52,9 @@ func TestIngressFullPreservesSessionOrderAndDrains(t *testing.T) {
 func testQueueCapacity(t *testing.T, ingress *eventIngress, started <-chan struct{}) {
 	t.Helper()
 	first := queueFixture(0)
-	first.fields["orcaNativeHandle"] = json.RawMessage(`"native"`)
-	first.fields["orcaSessionId"] = json.RawMessage(`"orca"`)
+	first.probe = true
+	first.fields["nativeHandle"] = json.RawMessage(`"native"`)
+	first.fields["hostSessionHint"] = json.RawMessage(`"orca"`)
 	expectQueued(t, ingress, first, false)
 	select {
 	case <-started:

@@ -1,7 +1,6 @@
 import { spawn } from "node:child_process";
 import { fileURLToPath, pathToFileURL } from "node:url";
-import { ack, bridge, nativeOrigin, readInput, readRuntime, safeID, submitEvent, waitCandidate } from "./client.mjs";
-import { bindOrca, submitNative } from "./orca.mjs";
+import { ack, bridge, nativeOrigin, readInput, readRuntime, safeID, hostSessionHint, submitEvent, submitNative, waitCandidate } from "./client.mjs";
 import { findCodex, withAppServer } from "./app-server.mjs";
 import { latestTurn, readThread, stopContext } from "./history.mjs";
 
@@ -12,20 +11,17 @@ async function current(call, snapshot) {
   return turn?.id === snapshot.revision && turn.status === "completed";
 }
 
-async function prepare(mode, input, rpc, call, resolveBinding) {
+async function prepare(mode, input, rpc, call) {
   const sessionId = input.session_id;
   const thread = await readThread(call, sessionId);
   if (!thread) return;
   const snapshot = {
     agent: "codex", sessionId, revision: input.turn_id ?? "session-start",
-    currentTitle: thread.name ?? "", titleOrigin: nativeOrigin(thread.name), project: thread.cwd,
+    currentTitle: thread.name ?? "", titleOrigin: nativeOrigin(thread.name), project: thread.cwd, hostSessionHint: hostSessionHint(),
   };
   if (mode === "start") {
-    if (snapshot.currentTitle) {
-      const binding = await resolveBinding(snapshot.agent, sessionId);
-      if (binding.orcaSessionId && (await readThread(call, sessionId))?.name === snapshot.currentTitle) {
-        await submitNative(rpc, snapshot, binding);
-      }
+    if (snapshot.currentTitle && (await readThread(call, sessionId))?.name === snapshot.currentTitle) {
+      await submitNative(rpc, snapshot);
     }
     const latest = await latestTurn(call, thread);
     if (safeID(latest?.id) && latest.status === "completed") return { ...snapshot, revision: latest.id };
@@ -33,17 +29,16 @@ async function prepare(mode, input, rpc, call, resolveBinding) {
   }
   const context = await stopContext(call, thread, snapshot.revision);
   if (!context?.turns.length) return;
-  const binding = await resolveBinding(snapshot.agent, sessionId);
-  const result = await submitEvent(rpc, { ...snapshot, ...context, ...binding }, {
+  const result = await submitEvent(rpc, { ...snapshot, ...context }, {
     fresh: () => current(call, snapshot),
   });
   if (result?.accepted) return snapshot;
 }
 
-export async function handleCodex(mode, input, rpc, withNative, resolveBinding = bindOrca, polling) {
+export async function handleCodex(mode, input, rpc, withNative, polling) {
   if (!safeID(input.session_id) || !["start", "stop"].includes(mode)) return;
   if (mode === "stop" && (!safeID(input.turn_id) || input.stop_hook_active === true)) return;
-  const snapshot = await withNative(call => prepare(mode, input, rpc, call, resolveBinding));
+  const snapshot = await withNative(call => prepare(mode, input, rpc, call));
   if (!snapshot) return;
 
   const { candidate } = await waitCandidate(rpc, snapshot, { ...polling, resume: mode === "start" });

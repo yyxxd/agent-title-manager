@@ -1,3 +1,4 @@
+import { sameFileIdentity } from "../antigravity/paths.mjs";
 import assert from "node:assert/strict";
 import { mkdtemp, mkdir, readFile, rm, writeFile } from "node:fs/promises";
 import { join } from "node:path";
@@ -150,4 +151,14 @@ test("Antigravity expands the tail window to keep a long tool turn paired", asyn
 test("Antigravity rejects an old answer appended after a new user step", async t => {
   const f = await fixture(t, [user(1, "first"), answer(2, "old answer"), user(3, "new request"), answer(2, "old answer")]);
   assert.equal(snapshot(f.identified), undefined);
+});
+
+test("Windows Node 22 missing volume identity keeps inode verification", () => {
+  const missingVolume = { dev: 0, ino: 123 };
+  const openFile = { dev: 4036855968, ino: 123 };
+  assert.equal(sameFileIdentity(missingVolume, openFile), process.platform === "win32");
+  assert.equal(sameFileIdentity(openFile, openFile), true);
+  assert.equal(sameFileIdentity(openFile, { ...openFile, dev: 4036855967 }), false);
+  assert.equal(sameFileIdentity(missingVolume, { ...openFile, ino: 456 }), false);
+  assert.equal(sameFileIdentity(undefined, openFile), false);
 });

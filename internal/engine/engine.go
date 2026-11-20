@@ -36,6 +36,8 @@ type Engine struct {
 	syncer              func(context.Context, string, string, string) error
 	isEnabled           func(context.Context, string) bool
 	now                 func() time.Time
+	activeMu            sync.Mutex
+	activeModel         *activeModel
 }
 
 // Open starts one durable worker per queue. dataDir belongs to a single running engine.
@@ -122,8 +124,10 @@ func signal(ch chan struct{}) {
 }
 
 type accepted struct {
-	Accepted   bool   `json:"accepted"`
-	SyncStatus string `json:"syncStatus,omitempty"`
+	Accepted        bool   `json:"accepted"`
+	SyncStatus      string `json:"syncStatus,omitempty"`
+	EventRevision   string `json:"-"`
+	SessionRevision string `json:"-"`
 }
 
 // Handle dispatches RPC for the trusted host. Bridge callers must pass a separate allowlist.

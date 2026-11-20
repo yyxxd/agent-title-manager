@@ -19,7 +19,7 @@ func (m *Manager) AutoUpdateBuiltins(ctx context.Context) (AutoUpdateResult, err
 		m.autoMu.Unlock()
 		return result, nil
 	}
-	for _, id := range []string{"codex", "claude", "pi", "antigravity"} {
+	for _, id := range builtinOrder {
 		old, ok := state.Items[id]
 		if !ok || old.Dir == "" {
 			continue
@@ -36,6 +36,9 @@ func (m *Manager) AutoUpdateBuiltins(ctx context.Context) (AutoUpdateResult, err
 		updated := item.(Item)
 		result.Upgraded = append(result.Upgraded, AutoUpdated{ID: id, Name: builtins[id], FromVersion: old.Manifest.Version, ToVersion: updated.Version, Enabled: updated.Enabled})
 	}
+	if err := m.cleanLegacyAdapters(ctx); err != nil {
+		result.Failed = append(result.Failed, AutoUpdateFailed{Name: "旧版插件辅助文件", Error: err.Error()})
+	}
 	m.autoMu.Lock()
 	m.autoUpdate = result
 	m.autoMu.Unlock()
@@ -47,7 +50,7 @@ func (m *Manager) updateBuiltin(ctx context.Context, state registry, id string) 
 		return nil, errors.New("请先停用以回滚有未完成变更的插件")
 	}
 	old := state.Items[id]
-	if id == "orca" || builtins[id] == "" || old.Dir == "" {
+	if builtins[id] == "" || old.Dir == "" {
 		return nil, errors.New("该插件没有可更新的已安装内置适配器")
 	}
 	manifest, err := m.bundledManifest(id)

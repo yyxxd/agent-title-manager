@@ -45,7 +45,9 @@ func run() error {
 	bundle := filepath.Join(filepath.Dir(exe), "plugins")
 	service := desktop.NewService(scope, func() (desktop.Backend, error) {
 		plugins := pluginmgr.New(dir, bundle)
-		core, err := engine.Open(dir, syncer(plugins), func(ctx context.Context, id string) bool {
+		plugins.SetBuildVersion(desktop.BuildVersion())
+		orca := orcaIntegration(plugins)
+		core, err := engine.Open(dir, syncer(orca), func(ctx context.Context, id string) bool {
 			enabled, err := plugins.Enabled(ctx, id)
 			return err == nil && enabled
 		})
@@ -55,8 +57,22 @@ func run() error {
 		return desktop.Backend{
 			Engine: core.Handle, Plugins: plugins.Handle, Enabled: plugins.Enabled,
 			AutoUpdateBuiltins: func(ctx context.Context) (any, error) { return plugins.AutoUpdateBuiltins(ctx) },
-			ResolveTitleOrigin: orcasync.ResolveTitleOrigin, Close: core.Close,
-			ObserveAntigravity: plugins.RunAntigravityObserver,
+			OrcaEnabled:        orca.Active, ResolveTitleOrigin: orca.ResolveTitleOrigin,
+			RetryBinding: orca.RetryBinding, NativeTitleMatches: orca.NativeTitleMatches,
+			AttachBinding: core.AttachBinding, Close: core.Close,
+			Observe: func(ctx context.Context) {
+				desktop.RunObservers(ctx, plugins.Changes,
+					desktop.Observer{Name: "Antigravity Desktop", Select: plugins.DesktopObserverEntry, Run: plugins.RunDesktopObserver},
+					desktop.Observer{Name: "Orca Chat", Select: func(ctx context.Context) (string, error) {
+						if !orca.Active(ctx, "antigravity") {
+							return "", nil
+						}
+						return plugins.AntigravityPackage(ctx)
+					}, Run: func(ctx context.Context, dir string) error {
+						return orca.RunACPObserver(ctx, dir, plugins.NodeCommand, core.Handle)
+					}},
+				)
+			},
 		}, nil
 	})
 	// NewUpdateController(appDir, dataDir, ...): helper lives beside the app;
@@ -70,7 +86,21 @@ func run() error {
 	return desktop.Run(dir, frontend.Assets(), service)
 }
 
-func syncer(plugins *pluginmgr.Manager) func(context.Context, string, string, string) error {
+func orcaIntegration(plugins *pluginmgr.Manager) *orcasync.Integration {
+	return &orcasync.Integration{
+		Enabled: func(ctx context.Context, agent string) (bool, error) {
+			on, err := plugins.IntegrationEnabled(ctx, pluginmgr.OrcaIntegration)
+			if err != nil || !on {
+				return false, err
+			}
+			return plugins.Enabled(ctx, agent)
+		},
+		Changes: plugins.Changes, Validate: plugins.ValidateNativeHandle,
+		ReadNative: plugins.ReadNativeTitle, ReadScoped: plugins.ReadAntigravityTitleAt,
+	}
+}
+
+func syncer(orca *orcasync.Integration) func(context.Context, string, string, string) error {
 	return func(ctx context.Context, id, expected, title string) error {
 		target, ok := engine.SyncTargetFromContext(ctx)
 		if !ok {
@@ -79,7 +109,10 @@ func syncer(plugins *pluginmgr.Manager) func(context.Context, string, string, st
 		if target.ExpectedTitle != title {
 			return engine.ErrSyncStale
 		}
-		err := plugins.SyncVerified(ctx, id, expected, title, target.Agent, target.SessionID, target.NativeHandle)
+		if !orca.Active(ctx, target.Agent) {
+			return engine.ErrSyncSkipped
+		}
+		err := orca.SyncVerified(ctx, id, expected, title, target.Agent, target.SessionID, target.NativeHandle)
 		switch {
 		case errors.Is(err, orcasync.ErrSkipped):
 			return engine.ErrSyncSkipped

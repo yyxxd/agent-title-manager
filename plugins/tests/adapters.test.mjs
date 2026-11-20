@@ -11,7 +11,6 @@ import { register } from "../pi/index.js";
 import { nameSession } from "../example/index.mjs";
 import { ack } from "../shared/client.mjs";
 
-const binding = async () => ({});
 const native = call => action => action(call);
 const turnId = "fixture-turn";
 const sessionId = "fixture-session";
@@ -35,7 +34,7 @@ test("Codex 按 Stop 的原生 turn 读写，完成原生读回后才确认", as
     assert.equal(params.threadId, sessionId);
     return { thread: { id: sessionId, name: title, turns: [latest] } };
   };
-  await handleCodex("stop", { session_id: sessionId, turn_id: turnId }, rpc, native(appServer), binding);
+  await handleCodex("stop", { session_id: sessionId, turn_id: turnId }, rpc, native(appServer));
   assert.deepEqual(methods.map(([method]) => method), ["event.submit", "title.claim", "title.ack"]);
   assert.deepEqual(methods[0][1].turns.map(turn => turn.text), ["修复标题同步", "已修复标题同步"]);
   assert.equal(methods[2][1].observedTitle, "新标题");
@@ -53,8 +52,8 @@ test("Codex 拒绝旧 Stop 以及候选到达期间更新的原标题", async ()
     title = "手动更名";
     return { candidate: { id: "claim", title: "新标题", baseTitle: "", revision: turnId } };
   };
-  await handleCodex("stop", { session_id: sessionId, turn_id: "old" }, async () => assert.fail("旧 Stop 不得提交"), native(reads), binding);
-  await handleCodex("stop", { session_id: sessionId, turn_id: turnId }, rpc, native(reads), binding);
+  await handleCodex("stop", { session_id: sessionId, turn_id: "old" }, async () => assert.fail("旧 Stop 不得提交"), native(reads));
+  await handleCodex("stop", { session_id: sessionId, turn_id: turnId }, rpc, native(reads));
   assert.equal(title, "手动更名");
 });
 
@@ -65,9 +64,8 @@ test("Codex 打开已命名会话时只发送可验证的原生标题", async ()
     assert.equal(method, "thread/read");
     return { thread: { id: sessionId, name: "原生标题" } };
   };
-  const orca = async () => ({ orcaSessionId: "raw", orcaTitle: "", orcaTitleOrigin: "unknown", orcaNativeHandle: sessionId });
-  await handleCodex("start", { session_id: sessionId }, rpc, native(getThread), orca);
-  await handleCodex("start", { session_id: sessionId }, rpc, native(getThread), orca);
+  await handleCodex("start", { session_id: sessionId }, rpc, native(getThread));
+  await handleCodex("start", { session_id: sessionId }, rpc, native(getThread));
   assert.deepEqual(calls[0], calls[1]);
   assert.equal(calls[0].method, "event.submit");
   assert.equal(calls[0].params.nativeTitleOnly, true);
@@ -105,13 +103,13 @@ test("Claude Stop 提交，Prompt 返回宿主标题，独立观察者读回才 
     assert.deepEqual(params, { agent: "claude", sessionId, id: "claim", observedTitle: "验证标题" });
   };
   const background = (mode, payload) => tasks.push([mode, payload]);
-  await handleClaude("stop", { ...input, hook_event_name: "Stop" }, rpc, background, binding, root);
-  const response = await handleClaude("prompt", { ...input, hook_event_name: "UserPromptSubmit" }, rpc, background, binding, root);
+  await handleClaude("stop", { ...input, hook_event_name: "Stop" }, rpc, background, root);
+  const response = await handleClaude("prompt", { ...input, hook_event_name: "UserPromptSubmit" }, rpc, background, root);
   assert.equal(response.hookSpecificOutput.sessionTitle, "验证标题");
   assert.deepEqual(events, ["event.submit", "title.claim"]);
   assert.equal(tasks[0][0], "confirm");
   await writeFile(path, JSON.stringify({ sessionId, type: "custom-title", customTitle: "验证标题" }) + "\n", { flag: "a" });
-  await handleClaude(...tasks[0], rpc, background, binding, root);
+  await handleClaude(...tasks[0], rpc, background, root);
   assert.deepEqual(events, ["event.submit", "title.claim", "title.ack"]);
 });
 
@@ -120,8 +118,8 @@ test("Claude 新一轮或不同的原生标题阻止写回和确认", async t =>
   const rpc = async method => assert.fail("不应发送后台请求 " + method);
   assert.deepEqual(await handleClaude("prompt", {
     ...input, hook_event_name: "UserPromptSubmit", session_title: "上一次标题",
-  }, rpc, undefined, binding, root), {});
-  await handleClaude("confirm", { ...input, id: "claim", title: "候选", baseTitle: "" }, rpc, undefined, binding, root);
+  }, rpc, undefined, root), {});
+  await handleClaude("confirm", { ...input, id: "claim", title: "候选", baseTitle: "" }, rpc, undefined, root);
 });
 
 test("Claude UserPromptSubmit 遇到仍在入队的候选只领取一次", async t => {
@@ -131,7 +129,7 @@ test("Claude UserPromptSubmit 遇到仍在入队的候选只领取一次", async
     assert.equal(method, "title.claim");
     claims++;
     return { status: "ingress_pending", candidate: null };
-  }, () => assert.fail("没有候选时不启动读回观察"), binding, root);
+  }, () => assert.fail("没有候选时不启动读回观察"), root);
   assert.deepEqual(result, {});
   assert.equal(claims, 1);
 });
@@ -167,7 +165,7 @@ test("Claude 确认轮忽略宿主记账，保留附件、工具及额外上下�
     ]);
     let submitted;
     await handleClaude("stop", { ...input, hook_event_name: "Stop" },
-      async (method, params) => { assert.equal(method, "event.submit"); submitted = params; }, undefined, binding, root);
+      async (method, params) => { assert.equal(method, "event.submit"); submitted = params; }, undefined, root);
     assert.equal(submitted.confirmationOnly, confirmationOnly);
     assert.equal(submitted.currentTitle, "验证标题");
   });
@@ -184,7 +182,7 @@ test("Claude 长记录从文件开头取目标；尾部确认有原生附件时�
     ]);
     let submitted;
     await handleClaude("stop", { ...input, hook_event_name: "Stop", session_title: "" },
-      async (method, params) => { assert.equal(method, "event.submit"); submitted = params; }, undefined, binding, root);
+      async (method, params) => { assert.equal(method, "event.submit"); submitted = params; }, undefined, root);
     assert.equal(submitted.originalGoal, "实现校验");
     assert.equal(submitted.confirmationOnly, attached ? undefined : true);
     assert.ok(!submitted.turns.some(turn => turn.text === "实现校验"));
@@ -203,7 +201,7 @@ test("Claude 读不到开头的真实目标时保留空值，两个原生标题�
   await handleClaude("stop", { ...input, hook_event_name: "Stop" }, async (_, params) => {
     assert.equal(params.originalGoal, undefined);
     assert.equal(params.turns[0].text, "尾部的新请求");
-  }, undefined, binding, root);
+  }, undefined, root);
   const sidecar = join(dirname(path), sessionId, "custom-title.json");
   await mkdir(dirname(sidecar), { recursive: true });
   await writeFile(sidecar, JSON.stringify({ customTitle: "另一标题" }));
@@ -223,7 +221,7 @@ test("Claude 大会话没有标题记录时仍按无标题提交", async t => {
   await handleClaude("stop", { ...input, hook_event_name: "Stop" }, async (method, params) => {
     assert.equal(method, "event.submit");
     submitted = params;
-  }, undefined, binding, root);
+  }, undefined, root);
   assert.equal(submitted.currentTitle, "");
   assert.equal(submitted.turns.at(-1).text, "尾部的答复");
 });
@@ -242,7 +240,7 @@ test("Claude 大会话的标题记录在尾部窗口之前时沿用该标题", a
   await handleClaude("stop", { ...input, hook_event_name: "Stop" }, async (method, params) => {
     assert.equal(method, "event.submit");
     submitted = params;
-  }, undefined, binding, root);
+  }, undefined, root);
   assert.equal(submitted.currentTitle, "早期标题");
 });
 
@@ -278,7 +276,7 @@ test("Pi 只在当前空闲分支应用，读回后确认并通知", async () =>
     if (method === "event.submit") return { accepted: true };
     if (method === "title.claim") return { candidate: { id: "claim", title: "Pi 新标题", baseTitle: "", revision: params.revision } };
     confirmed(params);
-  }, binding);
+  });
   assert.equal(listeners.get("agent_settled")({ aborted: false }, ctx), undefined);
   assert.equal((await completion).observedTitle, "Pi 新标题");
   assert.deepEqual(observations, ["会话已命名为 Pi 新标题"]);
@@ -291,7 +289,7 @@ test("Pi 切换分支后丢弃已返回的候选", async () => {
     assert.equal(method, "title.claim");
     nextLeaf();
     return { candidate: { id: "claim", title: "旧候选", baseTitle: "", revision: params.revision } };
-  }, binding);
+  });
   listeners.get("agent_settled")({ aborted: false }, ctx);
   await delay(5);
   assert.equal(pi.getSessionName(), undefined);
@@ -305,7 +303,7 @@ test("Pi 对 kept 保持静默，failed 只通知一次并保留原标题", asyn
     register(pi, async method => {
       methods.push(method);
       return method === "event.submit" ? { accepted: true } : { candidate: null, status };
-    }, binding);
+    });
     listeners.get("agent_settled")({ aborted: false }, ctx);
     await delay(5);
     assert.deepEqual(methods, ["event.submit", "title.claim"]);
@@ -323,7 +321,7 @@ test("Pi 恢复同一会话时领取迟到候选，无需重新提交", async ()
     methods.push(method);
     if (method === "title.claim") return { candidate: { id: "claim", title: "恢复后领取", baseTitle: "", revision: params.revision } };
     done(params);
-  }, binding);
+  });
   listeners.get("session_start")({ reason: "resume" }, ctx);
   assert.equal((await result).observedTitle, "恢复后领取");
   assert.deepEqual(methods, ["title.claim", "title.ack"]);
@@ -339,7 +337,7 @@ test("Pi 从完整分支提取初始目标，最新纯文本确认和图片分�
     register(pi, async (method, params) => {
       if (method === "event.submit") { submitted = params; return { accepted: true }; }
       return { candidate: null, status: "kept" };
-    }, binding);
+    });
     listeners.get("before_agent_start")({}, ctx);
     const blocks = [{ type: "text", text: "继续！" }];
     if (image) blocks.push({ type: "image", data: "fixture" });
@@ -397,17 +395,23 @@ test("四个发布包都有独立 manifest 和运行入口", async () => {
     assert.equal(manifest.host, host);
     assert.equal(manifest.kind, "agent");
     assert.match(await readFile(new URL(manifest.entry, root), "utf8"), /from "\.\/client\.mjs"/);
+    if (host !== "external") {
+      assert.equal(manifest.version, id === "antigravity" ? "0.3.0" : "0.2.0");
+      for (const helper of ["orca.mjs", "orca-binding.mjs"]) {
+        await assert.rejects(readFile(new URL(helper, root)), { code: "ENOENT" });
+      }
+      assert.doesNotMatch(await readFile(new URL(manifest.entry, root), "utf8"), /orcaSessionId|orcaTitle|orca\.exe/);
+    }
   }
 });
 
-test("Claude ack syncStatus controls native sync fallback", async t => {
-  for (const [syncStatus, accepted, expectedNative] of [["pending", true, false], ["unbound", true, true], [undefined, false, true]]) {
+test("Claude ack leaves delayed binding entirely to the service", async t => {
+  for (const [syncStatus, accepted] of [["pending", true], ["unbound", true], [undefined, false]]) {
     const { root, input } = await claudeFixture(t, [{ type: "custom-title", customTitle: "fixture-title" }]);
     const methods = [];
     const rpc = async (method, params) => { methods.push([method, params]); if (method === "title.ack") return { accepted, syncStatus }; return { accepted: true }; };
-    const bound = async () => ({ orcaSessionId: "orca", orcaTitle: "", orcaTitleOrigin: "unknown", orcaNativeHandle: input.transcript_path });
-    await handleClaude("confirm", { ...input, id: "claim", title: "fixture-title", baseTitle: "" }, rpc, undefined, bound, root);
+    await handleClaude("confirm", { ...input, id: "claim", title: "fixture-title", baseTitle: "" }, rpc, undefined, root);
     assert.equal(methods.filter(([method]) => method === "title.ack").length, 1);
-    assert.equal(methods.filter(([method, params]) => method === "event.submit" && params.nativeTitleOnly).length, expectedNative ? 1 : 0);
+    assert.equal(methods.filter(([method, params]) => method === "event.submit" && params.nativeTitleOnly).length, 0);
   }
 });

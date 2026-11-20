@@ -8,8 +8,6 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
-
-	"github.com/yyxxd/agent-title-manager/internal/orcasync"
 )
 
 func writeFixture(t *testing.T, path, text string) {
@@ -101,9 +99,6 @@ func TestListAndSyncDefaultDisabled(t *testing.T) {
 			t.Fatalf("unexpected builtin %+v", got[i])
 		}
 	}
-	if err := m.SyncVerified(ctx, "id", "old", "new", "pi", "session", "handle"); !errors.Is(err, orcasync.ErrSkipped) {
-		t.Fatalf("default sync status %v", err)
-	}
 	if _, err := os.Stat(m.root); !errors.Is(err, os.ErrNotExist) {
 		t.Fatalf("read-only list created plugin state: %v", err)
 	}
@@ -111,11 +106,11 @@ func TestListAndSyncDefaultDisabled(t *testing.T) {
 	if enabled, _ := m.Enabled(ctx, "orca"); enabled {
 		t.Fatal("Orca sync may not register a bridge agent")
 	}
-	if enabled, err := m.enabled(ctx, "orca"); !enabled || err != nil {
+	if enabled, err := m.IntegrationEnabled(ctx, "orca"); !enabled || err != nil {
 		t.Fatalf("missing Orca sync flag %v, %v", enabled, err)
 	}
 	mustInvoke(t, m, "disable", request{ID: "orca"})
-	if enabled, err := m.enabled(ctx, "orca"); enabled || err != nil {
+	if enabled, err := m.IntegrationEnabled(ctx, "orca"); enabled || err != nil {
 		t.Fatalf("stale Orca sync flag %v, %v", enabled, err)
 	}
 }

@@ -95,7 +95,11 @@ func (m *Manager) save(state registry) error {
 	if err != nil {
 		return err
 	}
-	return writeAtomic(m.stateFile(), content, 0600)
+	if err := writeAtomic(m.stateFile(), content, 0600); err != nil {
+		return err
+	}
+	m.notifyChange()
+	return nil
 }
 
 func (m *Manager) locked(ctx context.Context, fn func(registry) (any, error)) (any, error) {

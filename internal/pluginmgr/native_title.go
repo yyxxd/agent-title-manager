@@ -8,26 +8,29 @@ import (
 	"os/exec"
 	"strings"
 	"time"
-
-	"github.com/yyxxd/agent-title-manager/internal/orcasync"
 )
 
 //go:embed read-native-title.mjs
 var nativeTitleScript string
 
-func (m *Manager) readNativeTitle(ctx context.Context, agent, sessionID, handle string) (string, error) {
+var ErrNativePending = errors.New("暂时无法读取原生会话标题")
+
+func (m *Manager) ReadNativeTitle(ctx context.Context, agent, sessionID, handle string) (string, error) {
 	enabled, err := m.Enabled(ctx, agent)
-	if err != nil || !enabled {
-		return "", orcasync.ErrNativePending
+	if err != nil {
+		return "", err
+	}
+	if !enabled {
+		return "", ErrNativePending
 	}
 	if agent == "pi" {
-		return orcasync.ReadPiTitle(ctx, sessionID, handle)
+		return ReadPiTitle(ctx, sessionID, handle)
 	}
 	if agent != "codex" && agent != "claude" && agent != "antigravity" {
-		return "", orcasync.ErrNativePending
+		return "", ErrNativePending
 	}
 	if agent == "antigravity" && sessionID != handle {
-		return "", orcasync.ErrNativePending
+		return "", ErrNativePending
 	}
 	state, err := m.load()
 	if err != nil {
@@ -35,7 +38,7 @@ func (m *Manager) readNativeTitle(ctx context.Context, agent, sessionID, handle 
 	}
 	r := state.Items[agent]
 	if !r.Enabled || r.Dir == "" || r.Manifest.ID != agent || state.Pending != nil && state.Pending.ID == agent {
-		return "", orcasync.ErrNativePending
+		return "", ErrNativePending
 	}
 	node, err := m.findExecutable("node.exe", true)
 	if err != nil {
@@ -48,15 +51,30 @@ func (m *Manager) readNativeTitle(ctx context.Context, agent, sessionID, handle 
 	return adapterTitle(ctx, node, agent, sessionID, m.packageDir(r.release), h.dir)
 }
 
-func adapterTitle(ctx context.Context, node, agent, sessionID, adapterDir, hostDir string) (string, error) {
+func (m *Manager) ReadAntigravityTitleAt(ctx context.Context, id, root string) (string, error) {
+	dir, err := m.AntigravityPackage(ctx)
+	if err != nil {
+		return "", err
+	}
+	if dir == "" {
+		return "", ErrNativePending
+	}
+	node, err := m.findExecutable("node.exe", true)
+	if err != nil {
+		return "", err
+	}
+	return adapterTitle(ctx, node, "antigravity", id, dir, "", root)
+}
+
+func adapterTitle(ctx context.Context, node, agent, sessionID, adapterDir, hostDir string, scope ...string) (string, error) {
 	ctx, cancel := context.WithTimeout(ctx, 6*time.Second)
 	defer cancel()
-	cmd := exec.CommandContext(ctx, node, "--input-type=module", "-e", nativeTitleScript, agent, sessionID, adapterDir, hostDir)
+	cmd := exec.CommandContext(ctx, node, append([]string{"--input-type=module", "-e", nativeTitleScript, agent, sessionID, adapterDir, hostDir}, scope...)...)
 	hideProcess(cmd)
 	cmd.Env = withoutNodeInjection(cmd.Environ())
 	wire, err := cmd.Output()
 	if err != nil {
-		return "", orcasync.ErrNativePending
+		return "", ErrNativePending
 	}
 	var reply struct {
 		Title *string `json:"title"`

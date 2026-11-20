@@ -1,15 +1,14 @@
-import { isAbsolute } from "node:path";
 import { setTimeout as delay } from "node:timers/promises";
 import { pathToFileURL } from "node:url";
 import { bridge, readRuntime } from "./client.mjs";
 import { diagnostic } from "./diagnostics.mjs";
+import { observeSettlements } from "./settlements.mjs";
 import { processTurn } from "./index.mjs";
-import { orcaHome, roots, samePath, transcriptPath, uuid } from "./paths.mjs";
+import { roots, transcriptPath, uuid } from "./paths.mjs";
 import { openDatabase } from "./summaries.mjs";
 import { completedTurn, identify, snapshot } from "./transcript.mjs";
 
 const MAX_SESSIONS = 64;
-const REPLAY_WINDOW = 5 * 60_000;
 
 function readRows(root, name, sql, ...args) {
   const db = openDatabase(root, name);
@@ -27,84 +26,25 @@ export function readDesktopSettlements(root, since) {
     ORDER BY last_modified_time DESC LIMIT ?`, since / 1000, MAX_SESSIONS);
 }
 
-export function readACPSettlements(root, home, since) {
-  if (!home) return [];
-  const rows = readRows(home, "agent-session-domain.db", `
-    SELECT session_id AS orca, json_extract(record_json, '$.lastTurn.at') AS at,
-           json_extract(record_json, '$.accountHome.path') AS home,
-           json_extract(record_json, '$.providerHandleChain[#-1].handle.nativeId') AS native
-    FROM agent_session_records
-    WHERE json_extract(record_json, '$.schemaVersion') = 2
-      AND json_extract(record_json, '$.sessionId') = session_id
-      AND json_extract(record_json, '$.provider') = 'antigravity'
-      AND json_extract(record_json, '$.location.executionHostId') = 'local'
-      AND json_extract(record_json, '$.accountHome.variable') = 'GEMINI_HOME'
-      AND json_extract(record_json, '$.providerHandleChain[#-1].handle.transport') = 'acp'
-      AND json_extract(record_json, '$.providerHandleChain[#-1].handle.agent') = 'antigravity'
-      AND json_extract(record_json, '$.lastTurn.state') = 'settled'
-      AND json_extract(record_json, '$.lastTurn.outcome') = 'success'
-      AND coalesce(json_extract(record_json, '$.conversationNameSource'), '') <> 'user'
-      AND json_extract(record_json, '$.lastTurn.at') >= ?
-    ORDER BY at DESC LIMIT ?`, since, MAX_SESSIONS);
-  return rows.filter(row => uuid(row.native) && uuid(row.orca) && typeof row.home === "string" &&
-    isAbsolute(row.home) && samePath(row.home, root.accountHome) && Number.isSafeInteger(row.at));
-}
-
-export function matchSettlement(root, row, since) {
+export function matchDesktopSettlement(root, row, since) {
   if (!uuid(row.native)) return;
-  const identified = identify({ conversationId: row.native, transcriptPath: transcriptPath(root.dir, row.native) });
-  if (!identified || identified.kind !== root.kind) return;
+  const identified = identify({ conversationId: row.native, transcriptPath: transcriptPath(root.dir, row.native) }, root.dir);
+  if (!identified) return;
   const turn = completedTurn(identified);
-  if (!turn?.answer.at || turn.answer.at < since) return;
-  if (root.kind === "desktop") {
-    if (turn.answer.step === undefined || row.steps <= turn.answer.step ||
-        (row.userStep >= 0 && row.userStep !== turn.user.step)) return;
-  } else if (turn.answer.at > row.at || (turn.user.at && turn.user.at > row.at)) return;
+  if (!turn?.answer.at || turn.answer.at < since || turn.answer.step === undefined ||
+      row.steps <= turn.answer.step || (row.userStep >= 0 && row.userStep !== turn.user.step)) return;
   const state = snapshot(identified);
-  if (state?.revision !== turn.revision) return;
-  return { identified, state };
+  if (state?.revision === turn.revision) return { identified, state };
 }
 
 export function createObserver(rpc, { started = Date.now(), process = processTurn } = {}) {
-  const jobs = new Map(), seen = new Map();
-  const readCurrent = (root, since) => root.kind === "desktop"
-    ? readDesktopSettlements(root, since) : readACPSettlements(root, orcaHome(), since);
-  const scan = () => {
-    const since = Math.max(started - 1000, Date.now() - REPLAY_WINDOW);
-    for (const [key, item] of seen) if (item.at < since) seen.delete(key);
-    for (const root of roots()) {
-      if (root.kind === "cli") continue;
-      try {
-        const rows = readCurrent(root, since);
-        for (const row of rows) {
-          try {
-            const key = root.kind + "/" + row.native;
-            const change = row.at ?? row.steps;
-            if (seen.get(key)?.change === change) continue;
-            const match = matchSettlement(root, row, since);
-            if (!match) continue;
-            const { identified, state } = match;
-            const prior = jobs.get(key);
-            if (seen.get(key)?.revision === state.revision || prior?.revision === state.revision) continue;
-            if (jobs.size >= 4 && !prior) continue;
-            prior?.controller.abort();
-            const controller = new AbortController();
-            const job = { controller, revision: state.revision };
-            jobs.set(key, job);
-            const canWrite = () => readCurrent(root, since).some(current => current.native === row.native &&
-              current.orca === row.orca && (current.at ?? current.steps) === change);
-            void process({}, identified, state, rpc, undefined, { expectedOrca: row.orca, signal: controller.signal, canWrite })
-              .then(handled => {
-                if (handled && !controller.signal.aborted) seen.set(key, { change, revision: state.revision, at: Date.now() });
-              })
-              .catch(error => { if (!controller.signal.aborted) diagnostic("observer.turn.failed", error); })
-              .finally(() => { if (jobs.get(key) === job) jobs.delete(key); });
-          } catch (error) { diagnostic("observer.session.invalid", error); }
-        }
-      } catch (error) { diagnostic(root.kind === "acp" ? "observer.acp.failed" : "observer.desktop.failed", error); }
-    }
-  };
-  return { scan, stop: () => { for (const job of jobs.values()) job.controller.abort(); } };
+  const root = roots().find(root => root.kind === "desktop");
+  return observeSettlements({
+    started, read: since => readDesktopSettlements(root, since),
+    match: (row, since) => matchDesktopSettlement(root, row, since),
+    change: row => row.steps,
+    process: (_row, identified, state, options) => process({}, identified, state, rpc, options),
+  });
 }
 
 async function main() {
@@ -116,7 +56,7 @@ async function main() {
     process.stdin.resume();
     process.stdin.once("end", () => { closed = true; observer.stop(); });
     while (!closed) {
-      observer.scan();
+      await observer.scan();
       await delay(3000);
     }
   } catch (error) {

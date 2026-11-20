@@ -32,10 +32,10 @@ type decision struct {
 }
 
 type modelJob struct {
-	id, agent string
-	payload   []byte
-	settings  Settings
-	secret    []byte
+	id, agent, sessionID, base string
+	payload                    []byte
+	settings                   Settings
+	secret                     []byte
 }
 
 type attemptRequest struct {
@@ -45,14 +45,25 @@ type attemptRequest struct {
 	settings Settings
 	secret   []byte
 	payload  []byte
+	feedback *titleRetry
+}
+
+const currentModel = `s.title=e.base AND s.manual=0 AND (s.revision=e.revision OR e.base='')`
+
+type activeModel struct {
+	job    *modelJob
+	cancel context.CancelFunc
 }
 
 func (e *Engine) nextModel() (*modelJob, error) {
 	ctx := e.ctx
 	return transact(ctx, e.db, func(tx *sql.Tx) (*modelJob, error) {
 		var job modelJob
-		err := tx.QueryRowContext(ctx, `SELECT id,agent,payload FROM events
-			WHERE status='queued' ORDER BY created,rowid LIMIT 1`).Scan(&job.id, &job.agent, &job.payload)
+		err := tx.QueryRowContext(ctx, `SELECT q.id,q.agent,q.session_id,q.base,q.payload FROM events q
+			WHERE q.status='queued' AND NOT EXISTS(SELECT 1 FROM events first
+				WHERE first.agent=q.agent AND first.session_id=q.session_id AND first.native_only=0
+				  AND first.base='' AND first.status IN ('candidate','claimed'))
+			ORDER BY q.created,q.rowid LIMIT 1`).Scan(&job.id, &job.agent, &job.sessionID, &job.base, &job.payload)
 		if errors.Is(err, sql.ErrNoRows) {
 			return nil, nil
 		}
@@ -69,23 +80,59 @@ func (e *Engine) nextModel() (*modelJob, error) {
 }
 
 func (e *Engine) processModel() (bool, error) {
+	e.activeMu.Lock()
 	job, err := e.nextModel()
 	if err != nil || job == nil {
+		e.activeMu.Unlock()
 		return false, err
 	}
-	req := attemptRequest{&job.id, job.agent, job.settings.Provider, job.settings, job.secret, job.payload}
-	result, err := e.invoke(e.ctx, req)
+	ctx, cancel := context.WithCancel(e.ctx)
+	e.activeModel = &activeModel{job, cancel}
+	e.activeMu.Unlock()
+	defer func() {
+		cancel()
+		e.activeMu.Lock()
+		e.activeModel = nil
+		e.activeMu.Unlock()
+	}()
+	result, err := e.runModelJob(ctx, job)
+	if ctx.Err() != nil && e.ctx.Err() == nil {
+		result.status = "stale"
+		return true, errors.Join(err, e.finishModel(job, result))
+	}
 	if err != nil {
 		return true, err
 	}
-	if req.provider == "codex" && req.settings.FallbackEnabled && result.confirmed && apiReady(req.settings) && e.ctx.Err() == nil {
+	return true, e.finishModel(job, result)
+}
+
+// 调用方持有 activeMu，事务提交与新任务登记之间才能准确取消旧请求。
+func (e *Engine) cancelSuperseded(agent, sessionID string, keepInitial bool) {
+	active := e.activeModel
+	if active != nil && active.job.agent == agent && active.job.sessionID == sessionID &&
+		(!keepInitial || active.job.base != "") {
+		active.cancel()
+	}
+}
+
+func (e *Engine) runModelJob(ctx context.Context, job *modelJob) (modelResult, error) {
+	req := attemptRequest{eventID: &job.id, agent: job.agent, provider: job.settings.Provider,
+		settings: job.settings, secret: job.secret, payload: job.payload}
+	result, err := e.invoke(ctx, req)
+	if err != nil || ctx.Err() != nil {
+		return result, err
+	}
+	if req.provider == "codex" && req.settings.FallbackEnabled && result.confirmed && apiReady(req.settings) {
 		req.provider = "api"
-		result, err = e.invoke(e.ctx, req)
-		if err != nil {
-			return true, err
+		result, err = e.invoke(ctx, req)
+		if err != nil || ctx.Err() != nil {
+			return result, err
 		}
 	}
-	return true, e.finishModel(job, result)
+	if req.feedback = correctionFeedback(result, job.base, job.settings.MaxTitleLength); req.feedback != nil {
+		return e.invoke(ctx, req)
+	}
+	return result, nil
 }
 
 func apiReady(s Settings) bool { return s.APIBaseURL != "" && s.APIModel != "" }
@@ -97,7 +144,7 @@ func (e *Engine) finishModel(job *modelJob, r modelResult) error {
 	_, err := transact(ctx, e.db, func(tx *sql.Tx) (bool, error) {
 		var base string
 		var current bool
-		err := tx.QueryRowContext(ctx, `SELECT e.base,s.revision=e.revision AND s.title=e.base AND s.manual=0
+		err := tx.QueryRowContext(ctx, `SELECT e.base,`+currentModel+`
 			FROM events e JOIN sessions s ON e.agent=s.agent AND e.session_id=s.session_id WHERE e.id=?`, job.id).
 			Scan(&base, &current)
 		if err != nil {
@@ -148,6 +195,9 @@ func (e *Engine) invoke(parent context.Context, req attemptRequest) (modelResult
 	defer cancel()
 	var id int64
 	var startErr error
+	if ctx.Err() != nil {
+		return modelResult{status: "interrupted", failure: contextFailure(ctx.Err())}, nil
+	}
 	if !e.attemptEnabled(ctx, req) {
 		return modelResult{status: "disabled"}, nil
 	}
@@ -164,6 +214,9 @@ func (e *Engine) invoke(parent context.Context, req attemptRequest) (modelResult
 	}
 	if errors.Is(startErr, errDisabled) {
 		return modelResult{status: "disabled"}, nil
+	}
+	if errors.Is(startErr, context.Canceled) || errors.Is(startErr, context.DeadlineExceeded) {
+		return modelResult{status: "interrupted", failure: contextFailure(startErr)}, nil
 	}
 	if startErr != nil {
 		return modelResult{}, startErr
@@ -191,7 +244,7 @@ func (e *Engine) startAttempt(ctx context.Context, req attemptRequest) (int64, e
 			var current bool
 			err := tx.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM events e JOIN sessions s
 				ON e.agent=s.agent AND e.session_id=s.session_id
-				WHERE e.id=? AND e.status='running' AND e.base=s.title AND e.revision=s.revision AND s.manual=0)`,
+				WHERE e.id=? AND e.status='running' AND `+currentModel+`)`,
 				*req.eventID).Scan(&current)
 			if err != nil {
 				return 0, err

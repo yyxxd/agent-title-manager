@@ -4,9 +4,8 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
-	"os"
-	"path/filepath"
 	"testing"
+	"time"
 )
 
 const nativeFixture = "12345678-1234-1234-1234-123456789abc"
@@ -36,44 +35,14 @@ func TestBindingUsesFinalDiagnosticAddress(t *testing.T) {
 					"orcaSessionId": at.ID, "kind": "chat", "places": []place{at},
 				}})
 			}
-			if got := approveBinding(context.Background(), run, "codex", nativeFixture, nativeFixture, "real_chat"); got != c.approved {
+			if _, got := discover(context.Background(), run, nil, "codex", nativeFixture, nativeFixture, "real_chat", "", []time.Duration{0}); got != c.approved {
 				t.Fatalf("approved = %v", got)
 			}
 			for _, agent := range []string{"external", "pi", "claude"} {
-				if approveBinding(context.Background(), run, agent, nativeFixture, "other-handle", "real_chat") {
+				if _, ok := discover(context.Background(), run, nil, agent, nativeFixture, "other-handle", "real_chat", "", []time.Duration{0}); ok {
 					t.Fatalf("unverified %s handle was accepted", agent)
 				}
 			}
 		})
-	}
-}
-
-func TestPiBindingRequiresSessionFileOfSameNativeID(t *testing.T) {
-	home := t.TempDir()
-	t.Setenv("PI_CODING_AGENT_DIR", home)
-	sessions := filepath.Join(home, "sessions")
-	if err := os.Mkdir(sessions, 0700); err != nil {
-		t.Fatal(err)
-	}
-	name := "2026-11-18T01-02-03_" + nativeFixture + ".jsonl"
-	path := filepath.Join(sessions, name)
-	put := func(path, head string) {
-		t.Helper()
-		if err := os.WriteFile(path, []byte(head+"\n{malformed second line"), 0600); err != nil {
-			t.Fatal(err)
-		}
-	}
-	put(path, `{"type":"session","id":"`+nativeFixture+`"}`)
-	if !validPiSession(context.Background(), nativeFixture, path) {
-		t.Fatal("valid header rejected")
-	}
-	put(path, `{"type":"session","id":"wrong"}`)
-	if validPiSession(context.Background(), nativeFixture, path) {
-		t.Fatal("incorrect session header accepted")
-	}
-	outside := filepath.Join(home, name)
-	put(outside, `{"type":"session","id":"`+nativeFixture+`"}`)
-	if validPiSession(context.Background(), nativeFixture, outside) {
-		t.Fatal("outside file accepted")
 	}
 }

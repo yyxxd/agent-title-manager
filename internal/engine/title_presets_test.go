@@ -62,7 +62,7 @@ func TestNamingPresetOutbound(t *testing.T) {
 
 func checkPresetRequest(t *testing.T, request chatRequest, settings Settings, payload []byte, band string, examples []string) {
 	t.Helper()
-	policy, input, err := providerPrompt(payload, settings.MaxTitleLength)
+	policy, input, err := providerPrompt(payload, settings.MaxTitleLength, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -156,7 +156,7 @@ func TestTitlePresetMigration(t *testing.T) {
 				t.Fatal(s)
 			}
 			var version int
-			if err := e.db.QueryRow("PRAGMA user_version").Scan(&version); err != nil || version != 7 {
+			if err := e.db.QueryRow("PRAGMA user_version").Scan(&version); err != nil || version != 9 {
 				t.Fatal(version, err)
 			}
 			r := latest(t, e)

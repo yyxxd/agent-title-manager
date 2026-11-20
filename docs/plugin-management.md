@@ -1,6 +1,6 @@
 # Windows 插件管理
 
-插件页管理 Codex、Claude Code、Pi、Orca 同步以及已安装的独立插件。默认全部关闭。启用 Agent 插件后，桌面会注册宿主 Hook 或扩展，并开始接受该 Agent 的桥接事件。启用 Orca 只打开标题同步。
+「支持的 Agent」管理 Codex、Claude Code、Pi、Antigravity 和社区适配器。「工作台集成」管理 Orca 标题同步。各项默认关闭，开关延续原有的 `plugin-manager/state.json` 记录。升级继续使用已有的 `engine.sqlite3` 会话和历史记录。
 
 ## 安装与接管
 
@@ -8,13 +8,13 @@
 | --- | --- | --- |
 | Codex | 在 `CODEX_HOME` 或 `~/.codex` 的 `hooks.json` 添加 `SessionStart` 和 `Stop` | 首次使用或 Hook 变更后，在 Codex CLI 的 `/hooks` 中审核和信任；重启宿主后再次查看。 [Codex Hook 文档](https://developers.openai.com/codex/hooks) |
 | Claude Code | 在 `CLAUDE_CONFIG_DIR` 或 `~/.claude` 的 `settings.json` 添加 `SessionStart`、`UserPromptSubmit` 和 `Stop` | 重启宿主。 [Claude Code Hook 文档](https://code.claude.com/docs/en/hooks) |
-| Antigravity | CLI 注册 `SessionStart`、`PreInvocation`、`Stop`。桌面端和 Orca Chat 由应用观察本地完成事件 | 重启 agy 加载 Hook。自定义 CLI 配置和数据根分别使用 `ANTIGRAVITY_CONFIG_DIR` 和 `ANTIGRAVITY_DATA_DIR` |
+| Antigravity | CLI 注册 `SessionStart`、`PreInvocation`、`Stop`。桌面端由应用观察本地完成事件 | 重启 agy 加载 Hook。自定义 CLI 配置和数据根分别使用 `ANTIGRAVITY_CONFIG_DIR` 和 `ANTIGRAVITY_DATA_DIR` |
 | Pi | 在 `PI_CODING_AGENT_DIR` 或 `~/.pi/agent` 的 `settings.json` 添加适配器入口到 `extensions` | 重启宿主。 [Pi 扩展文档](https://github.com/badlogic/pi-mono/blob/main/packages/coding-agent/docs/extensions.md) |
 | Orca | 开启桌面的标题同步 | 在 Orca 设置中关闭 **Name chats automatically**，避免两个应用同时改名。 |
 
-随附适配器位于桌面发布目录的 `plugins/codex`、`plugins/claude` 和 `plugins/pi`。Codex 和 Claude 需要 Node 22 或更新版。管理器优先选择随附的 `node.exe`，并可从 `PATH` 查找。适配器通过同目录的 `atm-runtime.json` 获得原生桥接程序路径。
+随附适配器位于桌面发布目录的 `plugins/codex`、`plugins/claude`、`plugins/pi` 和 `plugins/antigravity`。Codex 和 Claude 需要 Node 22 或更新版。管理器优先选择随附的 `node.exe`，并可从 `PATH` 查找。适配器通过同目录的 `atm-runtime.json` 获得原生桥接程序路径。
 
-如果新版桌面应用附带更高版本的内置适配器，插件页会显示可用版本。选择更新后，管理器替换现有注册并保留启用状态与接管备份。Codex 更新后需在 `/hooks` 审核新 Hook。
+如果新版桌面应用附带更高版本的内置适配器，启动时会自动更新已安装的随附适配器，并保留开关状态。登记成功后会清理已退役包中的 Orca 辅助脚本。自动更新失败时可从插件页重试。Codex 更新后需在 `/hooks` 审核新 Hook。
 
 若插件页检测到支持接管的旧版，需明确选择接管。支持已知市场 ID 的 `oil-codex-title`、包缓存中的同款 Codex 停止 Hook、Claude 用户配置中的 `session-namer/namer.py` 以及 Pi 用户全局的 `extensions/auto-name`。Pi 的旧目录会连同数据移动到同级用户配置范围内的 `.atm-disabled-auto-name`。Codex 的信任记录由 Codex 管理。
 
@@ -55,24 +55,14 @@
 | `plugins.disable` | `{id}` | `Item` |
 | `plugins.restore` | `{id}` | `Item` |
 
-`Item` 包含 `id`、`name`、`version`、`enabled`、`kind`、`status`，可选字段为 `detail`、`takeoverRequired`、`canRestore`、`entryPath`、`availableVersion`。 `kind` 为 `builtin` 或 `community`；`status` 为 `disabled`、`enabled`、`action_required`、`unavailable` 或 `recovery_required`。Codex 的 `enabled=true` 代表注册已写入，实际信任状态由宿主决定。
+`Item` 包含 `id`、`name`、`version`、`enabled`、`kind`、`status`，可选字段为 `detail`、`takeoverRequired`、`canRestore`、`entryPath`、`availableVersion`。 `kind` 为 `builtin`（随附 Agent）、`community`（社区 Agent）或 `integration`（工作台集成）。工作台集成的版本来自主程序构建版本。`status` 为 `disabled`、`enabled`、`action_required`、`unavailable` 或 `recovery_required`。Codex 的 `enabled=true` 代表注册已写入，实际信任状态由宿主决定。
 
 ## Orca 标题核对
 
-使用官方 CLI 执行本机操作。可通过 `ORCA_CLI_COMMAND` 指定可执行文件，也可使用已安装的 Windows CLI。Codex、Claude 和 Pi 先用原生会话标识反查 Orca，再用 Orca ID 核实唯一的本机聊天和宿主。Pi 标识使用用户 `sessions` 目录内的会话文件，且首行 ID 必须匹配。远端、终端、重复位置和第三方自报绑定会跳过。
+Agent 适配器上报原生会话、版本、回合与标题。Pi 可上报原生会话文件路径，CLI Hook 可透传 `hostSessionHint`。打开会话时上报的原生标题仅供同步。Orca 集成关闭时，桌面服务忽略这类观测，停止 Orca Chat 观察，也跳过历史记录的 Orca 同步请求。
 
-首次识别标题来源时，以 SQLite `mode=ro` 读取 `ORCA_USER_DATA_PATH` 或 `%APPDATA%/Orca` 中已绑定会话的名称元数据。对版本 2 的记录，两个名称字段都缺省且显示确为宿主默认占位名时可判为自动。记录标为 `user` 且名称与实时显示一致时判为手动。未知版本、无记录、库不可读或者来源不明时，应由用户显式接管。
+集成开启时，桌面服务使用官方 CLI 反查本地会话。可用 `ORCA_CLI_COMMAND` 指定可执行文件。宿主提示必须与反查结果一致。终端只接受可唯一确认的单 pane 标签页；聊天通过本地会话 ID 核对。绑定延迟出现时，主程序在原生改名确认后补查，并将结果写入同一条记录。
 
-每次写入（包括重试和采用）都比较 Orca 的身份与旧标题，并在最后一步重新核验绑定、读取原生标题。Codex 用 App Server `thread/read`，Claude 使用适配器的标题元数据读回，Pi 读取已绑定会话文件的最近 `session_info`。原生名已改变时，旧任务过期；读不到时保留重试机会。匹配后才执行 `orca chat rename` 并从 CLI 回读。当前宿主读取和 Orca 改名是独立操作，二者之间仍存在竞态窗口。
+已绑定聊天的标题来源从 `ORCA_USER_DATA_PATH` 或 `%APPDATA%/Orca` 下的 SQLite 数据库只读核对。未知来源按保护处理，需用户显式接管。每次写入前重新核验 Orca 位置、原生标题与当前目标。Codex 使用 App Server `thread/read`，Claude Code 读取会话元数据，Pi 读取已校验会话文件的 `session_info`，Antigravity 读取注解。主程序执行 `orca chat rename` 或 `orca terminal rename` 后，通过 CLI 确认结果。
 
-
-
-Antigravity 和 Pi 的本机终端标签同步仅作用于 Orca kind == `terminal` 的单窗格本地会话，写入后会回读 orca terminal list --include-visual-layouts 验证；Codex 和 Claude 仍只同步 kind == `chat`。
-
-## Antigravity 标题回写
-
-桌面端以本地会话摘要的空闲状态确认回合完成。Orca Chat 通过只读的 Orca 会话记录确认本机 ACP 回合已成功结束，再用 Orca CLI 核对会话位置。Orca Chat 的标题通过 `orca chat rename` 更新，标记为 `user` 的标题受保护，包括与默认标题完全一样的手动命名。当前 Orca 的公开命令采用手动命名语义，若它将标题标记为 `user`，后续轮次继续保护该 Orca 标题。
-
-原生写回以 `annotations/<id>.pbtxt` 为准，也会更新可识别的 SQLite 和 protobuf 摘要标题，保留预览内容。Antigravity 已有的非空标题缺少可供插件验证的来源，ATM 会保留它，除非它与 ATM 记录的上次标题一致。外部写回可确认磁盘上的标题，宿主正在打开的列表是否即时刷新取决于宿主，重新打开会话后可检查结果。
-
-插件目录下的 `antigravity-diagnostics.log` 记录阶段和已知错误码，适合从 Hook、转录读取、标题申请、原生读回、Orca 同步逐步定位。SQLite 观察和摘要更新依赖 Node.js 22.13+ 的 `node:sqlite`。
+Antigravity Desktop 观察器由 Antigravity 开关控制。Orca Chat 观察器仅在 Orca 和 Antigravity 同时开启时运行，只处理本机已成功结束的 Antigravity ACP 回合。观察器校验记录中的 `accountHome` 和受控的 `antigravity-acp` 目录，复用 Antigravity 原生转录和标题读写，并跳过用户手动命名的聊天。

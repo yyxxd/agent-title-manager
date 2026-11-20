@@ -37,6 +37,7 @@ type session struct {
 	revision, title, orcaID, orcaManaged    string
 	projectKey, priorRevision, priorProject string
 	manual                                  bool
+	supersedes, preserveInitial             bool
 }
 
 var validAgent = regexp.MustCompile(`^[a-z][a-z0-9._-]{0,63}$`)
@@ -93,6 +94,9 @@ func (e *Engine) submit(ctx context.Context, p submission) (accepted, error) {
 	if err != nil {
 		return accepted{}, err
 	}
+	e.activeMu.Lock()
+	defer e.activeMu.Unlock()
+	var observed session
 	result, err := transact(ctx, e.db, func(tx *sql.Tx) (accepted, error) {
 		var exists bool
 		err := tx.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM events
@@ -100,13 +104,16 @@ func (e *Engine) submit(ctx context.Context, p submission) (accepted, error) {
 		if err != nil || exists {
 			return accepted{Accepted: exists}, err
 		}
-		s, err := observeSubmission(ctx, tx, p, e.now().UnixMilli())
+		observed, err = observeSubmission(ctx, tx, p, e.now().UnixMilli())
 		if err != nil {
 			return accepted{}, err
 		}
-		return accepted{Accepted: true}, e.insertSubmission(ctx, tx, p, s, payload)
+		return accepted{Accepted: true}, e.insertSubmission(ctx, tx, p, observed, payload)
 	})
 	if err == nil {
+		if observed.supersedes {
+			e.cancelSuperseded(p.Agent, p.SessionID, observed.preserveInitial)
+		}
 		signal(e.modelWake)
 		signal(e.syncWake)
 	}
@@ -135,10 +142,13 @@ func observeSubmission(ctx context.Context, tx *sql.Tx, p submission, now int64)
 			s.manual = true
 		}
 	}
-	if !p.NativeOnly || p.CurrentTitle != s.title || s.manual {
+	s.supersedes = !p.NativeOnly || p.CurrentTitle != s.title || s.manual
+	s.preserveInitial = !p.NativeOnly && !s.manual && s.title == "" && p.CurrentTitle == ""
+	if s.supersedes {
 		_, err = tx.ExecContext(ctx, `UPDATE events SET status='stale',payload=NULL,updated=?
-			WHERE agent=? AND session_id=? AND (status IN ('queued','candidate') OR (status='claimed' AND title<>?))`,
-			now, p.Agent, p.SessionID, p.CurrentTitle)
+			WHERE agent=? AND session_id=? AND (status='queued' OR
+				(NOT (? AND base='') AND (status IN ('running','candidate') OR (status='claimed' AND (title<>? OR ?)))))`,
+			now, p.Agent, p.SessionID, s.preserveInitial, p.CurrentTitle, s.manual)
 		if err != nil {
 			return s, err
 		}
@@ -169,21 +179,36 @@ func (e *Engine) insertSubmission(ctx context.Context, tx *sql.Tx, p submission,
 	if err != nil {
 		return err
 	}
+	var throttled bool
+	var throttleSkip int
+	var hashes []string
+	var goalHash string
+	if !p.NativeOnly {
+		hashes = hashTurnWindow(p.Turns)
+		goalHash = hashText([]byte(p.OriginalGoal))
+	}
+	if payload != nil && skips == 0 {
+		throttled, throttleSkip, err = throttleNaming(ctx, tx, p, s, now, hashes, goalHash)
+		if err != nil {
+			return err
+		}
+	}
 	switch {
 	case p.NativeOnly:
 		status = "native"
 		syncStatus = syncPolicy(p.OrcaID, p.OrcaTitle, p.OrcaOrigin, s.orcaManaged, p.CurrentTitle)
-	case s.manual || payload == nil || skips > 0:
+	case s.manual || payload == nil || skips > 0 || throttled:
 		status = "kept"
 		finalized = &now
 		payload = nil
 	}
 	_, err = tx.ExecContext(ctx, `INSERT INTO events(id,agent,session_id,revision,native_only,base,title,status,payload,
-		orca_id,orca_base,orca_origin,sync_status,created,updated,finalized,turns_hash,turn_count,confirmation_skips,native_handle)
-		VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
+		orca_id,orca_base,orca_origin,sync_status,created,updated,finalized,turns_hash,turn_count,confirmation_skips,native_handle,throttle_skips,
+		turn_hashes,goal_hash)
+		VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
 		rand.Text(), p.Agent, p.SessionID, p.Revision, p.NativeOnly, p.CurrentTitle, p.CurrentTitle,
 		status, payload, p.OrcaID, p.OrcaTitle, p.OrcaOrigin, syncStatus, now, now, finalized,
-		turnsHash(p.OriginalGoal, p.Turns), len(p.Turns), skips, p.OrcaNativeHandle)
+		turnsHash(p.OriginalGoal, p.Turns), len(p.Turns), skips, p.OrcaNativeHandle, throttleSkip, strings.Join(hashes, ","), goalHash)
 	return err
 }
 

@@ -5,24 +5,18 @@ import { dirname, join } from "node:path";
 import { DatabaseSync } from "node:sqlite";
 import test from "node:test";
 import { readTitle, writeTitle } from "../antigravity/annotations.mjs";
-import { processTurn } from "../antigravity/index.mjs";
-import { createObserver, readACPSettlements, readDesktopSettlements } from "../antigravity/observe.mjs";
-import { bindOrca } from "../antigravity/orca-binding.mjs";
-import { roots, transcriptPath } from "../antigravity/paths.mjs";
+import { createObserver, readDesktopSettlements } from "../antigravity/observe.mjs";
+import { roots, safeStat, transcriptPath } from "../antigravity/paths.mjs";
 import { identify, locateNative } from "../antigravity/transcript.mjs";
 
 const desktopId = "a68b5391-bfed-45ae-948e-259bb4abf011";
 const acpId = "b68b5391-bfed-45ae-948e-259bb4abf012";
 const manualId = "b68b5391-bfed-45ae-948e-259bb4abf013";
-const chatId = "e139bb8d-a50a-4de6-8bef-6fa674f005c1";
-const manualChat = "e139bb8d-a50a-4de6-8bef-6fa674f005c2";
 
 async function isolated(t) {
   const temp = await mkdtemp(join(tmpdir(), "atm-antigravity-observe-"));
   t.after(() => rm(temp, { recursive: true, force: true }));
-  const orca = join(temp, "orca");
-  await mkdir(orca);
-  const environment = { USERPROFILE: temp, HOME: temp, ORCA_USER_DATA_PATH: orca, ANTIGRAVITY_DATA_DIR: undefined };
+  const environment = { USERPROFILE: temp, HOME: temp, ANTIGRAVITY_DATA_DIR: undefined };
   const before = Object.fromEntries(Object.keys(environment).map(key => [key, process.env[key]]));
   for (const [key, value] of Object.entries(environment)) {
     if (value === undefined) delete process.env[key];
@@ -34,7 +28,7 @@ async function isolated(t) {
       else process.env[key] = value;
     }
   });
-  return { temp, orca, desktop: roots().find(r => r.kind === "desktop"), acp: roots().find(r => r.kind === "acp") };
+  return { temp, desktop: roots().find(r => r.kind === "desktop") };
 }
 
 async function transcript(root, id, time) {
@@ -54,8 +48,24 @@ function summaries(path) {
   db.exec(`CREATE TABLE conversation_summaries (
     conversation_id TEXT PRIMARY KEY, title TEXT, preview TEXT, raw_summary BLOB, status TEXT,
     not_fully_idle INTEGER, step_count INTEGER, last_modified_time TEXT, last_user_input_step_index INTEGER
-  ); CREATE VIRTUAL TABLE conversations_fts USING fts5(conversation_id UNINDEXED, chunk_index UNINDEXED, title);`);
+  );`);
   return db;
+}
+
+function seedSearchIndex(db, title) {
+  const declaration = "CREATE VIRTUAL TABLE conversations_fts USING fts5(conversation_id UNINDEXED, chunk_index UNINDEXED, title)";
+  try {
+    db.exec(declaration);
+    db.prepare("INSERT INTO conversations_fts VALUES (?,?,?)").run(desktopId, -1, title);
+    return true;
+  } catch (error) {
+    if (error?.code !== "ERR_SQLITE_ERROR" || error.message !== "no such module: fts5") throw error;
+    // 模拟由 Antigravity 创建的数据库，由缺少 FTS5 的随附 Node 打开。
+    db.exec("PRAGMA writable_schema=ON");
+    db.prepare("INSERT INTO sqlite_schema VALUES ('table','conversations_fts','conversations_fts',0,?)").run(declaration);
+    db.exec("PRAGMA writable_schema=OFF");
+    return false;
+  }
 }
 
 const stringField = (field, value) => {
@@ -82,7 +92,7 @@ test("summary writes preserve preview, unrelated protobuf bytes and other conver
     .run(desktopId, "old", preview, pack("old"));
   db.prepare("INSERT INTO conversation_summaries (conversation_id,title,preview,raw_summary) VALUES (?,?,?,?)")
     .run(manualId, "", preview, untitled);
-  db.prepare("INSERT INTO conversations_fts VALUES (?,?,?)").run(desktopId, -1, "old");
+  const hasFTS = seedSearchIndex(db, "old");
   db.close();
   await writeFile(cache, Buffer.concat([entry(desktopId, pack("old")), untouched, entry(manualId, untitled)]));
   assert.equal(writeTitle(desktop.dir, desktopId, title), true);
@@ -95,100 +105,68 @@ test("summary writes preserve preview, unrelated protobuf bytes and other conver
   assert.deepEqual(Buffer.from(record.raw_summary), pack(title));
   assert.equal(query.get(manualId).preview, preview);
   assert.deepEqual(Buffer.from(query.get(manualId).raw_summary), newlyTitled);
-  assert.equal(verify.prepare("SELECT title FROM conversations_fts").get().title, title);
+  if (hasFTS) assert.equal(verify.prepare("SELECT title FROM conversations_fts").get().title, title);
+  else assert.throws(() => verify.prepare("SELECT title FROM conversations_fts").get(), /no such module: fts5/);
   verify.close();
   assert.deepEqual(await readFile(cache), Buffer.concat([entry(desktopId, pack(title)), untouched, entry(manualId, newlyTitled)]));
 });
 
-test("ACP rejects traversal, junctions and ambiguous native IDs", async t => {
-  const { temp, acp, desktop } = await isolated(t);
-  const path = await transcript(acp, acpId, Date.now());
+test("explicit transcript root rejects traversal and junctions without participating in native lookup", async t => {
+  const { temp, desktop } = await isolated(t);
+  const external = { dir: join(temp, "explicit") };
+  const path = await transcript(external, acpId, Date.now());
   const input = { conversationId: acpId, transcriptPath: path };
-  assert.equal(identify(input).kind, "acp");
-  assert.equal(locateNative(acpId).appDataDir, acp.dir);
-  assert.equal(identify({ ...input, transcriptPath: dirname(path) + "/../logs/transcript.jsonl" }), undefined);
-  await transcript(desktop, acpId, Date.now());
+  assert.equal(identify(input), undefined);
   assert.equal(locateNative(acpId), undefined);
+  assert.equal(identify(input, external.dir).appDataDir, external.dir);
+  assert.equal(identify({ ...input, transcriptPath: dirname(path) + "/../logs/transcript.jsonl" }, external.dir), undefined);
+  await transcript(desktop, acpId, Date.now());
+  assert.equal(locateNative(acpId).appDataDir, desktop.dir);
   const escaped = await transcript({ dir: join(temp, "other") }, manualId, Date.now());
-  const nativeDir = join(acp.dir, "brain", manualId);
+  const nativeDir = join(external.dir, "brain", manualId);
   await symlink(dirname(dirname(dirname(escaped))), nativeDir, process.platform === "win32" ? "junction" : "dir");
-  assert.throws(() => identify({ conversationId: manualId, transcriptPath: transcriptPath(acp.dir, manualId) }), /redirected/);
+  assert.throws(() => identify({ conversationId: manualId, transcriptPath: transcriptPath(external.dir, manualId) }, external.dir), /redirected/);
+  const linkedBase = join(temp, "redirected-base");
+  await symlink(external.dir, linkedBase, process.platform === "win32" ? "junction" : "dir");
+  assert.throws(() => safeStat(linkedBase, join(linkedBase, "missing")), /redirected/);
+  const throughLink = join(linkedBase, "brain", acpId);
+  assert.throws(() => safeStat(throughLink, join(throughLink, "missing")), /redirected/);
 });
 
-test("observer processes only locally settled desktop and ACP turns, skipping manual Orca names", async t => {
-  const { desktop, acp, orca } = await isolated(t);
+test("desktop observer processes only settled native desktop turns", async t => {
+  const { temp, desktop } = await isolated(t);
   const now = Date.now(), at = now - 100;
   await transcript(desktop, desktopId, at);
-  await transcript(acp, acpId, at);
-  await transcript(acp, manualId, at);
+  await transcript({ dir: join(temp, "explicit") }, acpId, at);
   const file = join(desktop.dir, "conversation_summaries.db");
-  const desktopDB = summaries(file);
-  desktopDB.prepare("INSERT INTO conversation_summaries VALUES (?,?,?,?,?,?,?,?,?)")
+  const db = summaries(file);
+  db.prepare("INSERT INTO conversation_summaries VALUES (?,?,?,?,?,?,?,?,?)")
     .run(desktopId, "", "preview", null, "CASCADE_RUN_STATUS_RUNNING", 0, 7, new Date(now).toISOString(), 3);
   assert.equal(readDesktopSettlements(desktop, now - 1000).length, 0);
+  db.exec("UPDATE conversation_summaries SET status = 'CASCADE_RUN_STATUS_IDLE'");
+  db.close();
 
-  const orcaDB = new DatabaseSync(join(orca, "agent-session-domain.db"));
-  orcaDB.exec("CREATE TABLE agent_session_records (session_id TEXT PRIMARY KEY, record_json TEXT)");
-  const insert = (sessionId, nativeId, extra) => orcaDB.prepare("INSERT INTO agent_session_records VALUES (?,?)")
-    .run(sessionId, JSON.stringify({
-      schemaVersion: 2, sessionId, provider: "antigravity", location: { executionHostId: "local" },
-      accountHome: { variable: "GEMINI_HOME", path: acp.accountHome },
-      providerHandleChain: [{ handle: { transport: "acp", agent: "antigravity", nativeId } }],
-      lastTurn: { state: "settled", outcome: "success", at: now }, ...extra,
-    }));
-  insert(chatId, acpId);
-  insert(manualChat, manualId, { conversationNameSource: "user", conversationName: "Antigravity Chat" });
-  insert("f139bb8d-a50a-4de6-8bef-6fa674f005c1", acpId, { accountHome: { variable: "GEMINI_HOME", path: desktop.dir } });
-  orcaDB.close();
-  assert.deepEqual(readACPSettlements(acp, orca, now - 1000).map(row => row.native), [acpId]);
-
-  desktopDB.exec("UPDATE conversation_summaries SET status = 'CASCADE_RUN_STATUS_IDLE'");
-  desktopDB.close();
-  const events = new Map(), jobs = [], submitted = [];
+  const submitted = [], jobs = [];
   const rpc = async (method, params) => {
     if (method === "event.submit") {
-      events.set(params.sessionId, params);
       submitted.push(params);
       return { accepted: true };
     }
-    if (method === "title.claim") {
-      const { revision } = events.get(params.sessionId);
-      return { candidate: { id: "fixture", title: "测试标题", baseTitle: "", revision } };
-    }
-    return { accepted: true, syncStatus: params.sessionId === acpId ? "pending" : "unbound" };
+    if (method === "title.claim") return { candidate: { id: "fixture", title: "desktop title", baseTitle: "", revision: submitted.at(-1).revision } };
+    return { accepted: true };
   };
-  const observer = createObserver(rpc, { started: now, process: (...args) => {
-    const pending = processTurn(...args.slice(0, 4), async () => ({
-      orcaSessionId: chatId, orcaTitle: "Antigravity Chat", orcaNativeHandle: acpId,
-    }), args[5]);
-    jobs.push(pending);
-    return pending;
+  const observer = createObserver(rpc, { started: now, process: async (_input, identified, state, _rpc, options) => {
+    assert.equal(await options.canWrite(), true);
+    jobs.push(state);
+    await rpc("event.submit", state);
+    assert.equal(writeTitle(identified.appDataDir, identified.sessionId, "desktop title"), true);
+    return true;
   } });
   t.after(observer.stop);
-  observer.scan();
-  await Promise.all(jobs);
-  await Promise.resolve();
-  observer.scan();
-  assert.deepEqual(submitted.map(event => [event.sessionId, event.orcaSessionId]), [[desktopId, undefined], [acpId, chatId]]);
-  assert.equal(readTitle(desktop.dir, desktopId), "测试标题");
-  assert.equal(readTitle(acp.dir, acpId), "测试标题");
-  assert.equal(readTitle(acp.dir, manualId), "");
-});
-
-test("Antigravity Orca terminal retries delayed mapping and refuses ambiguous panes", async () => {
-  const waits = [], timeouts = [];
-  const place = { kind: "terminal", hostId: "local", agent: "antigravity", orcaSessionId: chatId, title: "agy" };
-  const diagnostic = { ok: false, error: { code: "agent_provider_id", message: "Provider ID. Address it as orca_session_id:" + chatId + "." } };
-  const lookup = async (id, _signal, timeout) => {
-    timeouts.push(timeout);
-    if (id === acpId) return waits.length ? diagnostic : {};
-    return { ok: true, result: { orcaSessionId: chatId, places: [place] } };
-  };
-  const options = { lookup, kind: "terminal", inherited: chatId, retry: true, pause: async ms => waits.push(ms) };
-  assert.equal((await bindOrca("antigravity", acpId, options)).orcaSessionId, chatId);
-  assert.deepEqual(waits, [250]);
-  assert.deepEqual(timeouts, [900, 1500, 1500]);
-  const twoPanes = async id => id === acpId ? diagnostic : { ok: true, result: { orcaSessionId: chatId, places: [place, place] } };
-  assert.deepEqual(await bindOrca("antigravity", acpId, { lookup: twoPanes, kind: "terminal" }), {});
-  assert.deepEqual(await bindOrca("antigravity", acpId, { ...options, inherited: manualChat }), {});
+  await observer.scan();
+  await new Promise(resolve => setImmediate(resolve));
+  await observer.scan();
+  assert.equal(jobs.length, 1);
+  assert.deepEqual(submitted.map(event => [event.sessionId, event.orcaSessionId, event.nativeHandle]), [[desktopId, undefined, undefined]]);
+  assert.equal(readTitle(desktop.dir, desktopId), "desktop title");
 });

@@ -1,8 +1,7 @@
 import { spawn } from "node:child_process";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import { setTimeout as delay } from "node:timers/promises";
-import { ack, bridge, readInput, readRuntime, submitEvent, textOf, validCandidate } from "./client.mjs";
-import { bindOrca, submitNative } from "./orca.mjs";
+import { ack, bridge, readInput, readRuntime, hostSessionHint, submitEvent, submitNative, textOf, validCandidate } from "./client.mjs";
 import { identify, originalGoal, readObservedTitle, snapshot } from "./transcript.mjs";
 
 const START_SOURCES = new Set(["startup", "resume", "fork"]);
@@ -18,14 +17,13 @@ function background(mode, payload) {
   child.unref();
 }
 
-async function submitStop(input, identified, rpc, binding) {
+async function submitStop(input, identified, rpc) {
   const finishing = textOf(input.last_assistant_message);
   const deadline = Date.now() + 1000;
   do {
     const state = snapshot(identified, input);
     if (state?.revision && state.turns.length && (!finishing || state.turns.at(-1)?.text === finishing)) {
-      const orca = await binding(state.agent, state.sessionId);
-      await submitEvent(rpc, { ...state, ...orca, originalGoal: originalGoal(identified) }, { fresh: () => {
+      await submitEvent(rpc, { ...state, hostSessionHint: hostSessionHint(), originalGoal: originalGoal(identified) }, { fresh: () => {
         const current = snapshot(identified, input);
         return current?.revision === state.revision && current.currentTitle === state.currentTitle;
       } });
@@ -36,23 +34,14 @@ async function submitStop(input, identified, rpc, binding) {
   } while (true);
 }
 
-async function confirm(input, identified, rpc, binding) {
+async function confirm(input, identified, rpc) {
   if (typeof input.id !== "string" || typeof input.title !== "string") return;
   const deadline = Date.now() + 12_000;
   do {
     const title = readObservedTitle(identified);
     if (title === input.title) {
       try {
-        const ackResult = await ack(rpc, { agent: "claude", sessionId: identified.sessionId }, input, title);
-        if (ackResult?.accepted && ackResult.syncStatus && ackResult.syncStatus !== "unbound") return;
-        const native = snapshot(identified, input);
-        if (!native?.currentTitle) return;
-        try {
-          const orca = await binding(native.agent, native.sessionId);
-          if (native.currentTitle === title && orca?.orcaSessionId) {
-            await submitNative(rpc, { ...native, revision: native.revision ?? "session-confirm" }, orca);
-          }
-        } catch { /* ack 已完成，补发失败不应再次确认 */ }
+        await ack(rpc, { agent: "claude", sessionId: identified.sessionId }, input, title);
         return;
       }
       catch (error) { if (Date.now() >= deadline) throw error; }
@@ -64,25 +53,24 @@ async function confirm(input, identified, rpc, binding) {
   } while (true);
 }
 
-export async function handleClaude(mode, input, rpc, runBackground = background, binding = bindOrca, configDir) {
+export async function handleClaude(mode, input, rpc, runBackground = background, configDir) {
   const identified = identify(input, configDir);
   if (!identified) return {};
   if (mode === "confirm") {
-    await confirm(input, identified, rpc, binding);
+    await confirm(input, identified, rpc);
     return {};
   }
   if (mode === "native") {
     const native = snapshot(identified, input);
     if (native?.currentTitle) {
-      const orca = await binding(native.agent, native.sessionId);
       if (snapshot(identified, input)?.currentTitle === native.currentTitle) {
-        await submitNative(rpc, { ...native, revision: native.revision ?? "session-start" }, orca);
+        await submitNative(rpc, { ...native, revision: native.revision ?? "session-start", hostSessionHint: hostSessionHint() });
       }
     }
     return {};
   }
   if (mode === "stop" && input.hook_event_name === "Stop" && !input.stop_hook_active) {
-    await submitStop(input, identified, rpc, binding);
+    await submitStop(input, identified, rpc);
     return {};
   }
 

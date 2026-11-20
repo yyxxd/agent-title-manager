@@ -4,7 +4,6 @@ import { readFileSync, writeFileSync } from "node:fs";
 const check = process.argv.includes("--check");
 const sets = [
   ["client.mjs", ["codex", "claude", "pi", "antigravity", "example"]],
-  ["orca.mjs", ["codex", "claude", "pi", "antigravity"]],
 ];
 for (const [file, agents] of sets) {
   const canonical = readFileSync(new URL("./shared/" + file, import.meta.url), "utf8");

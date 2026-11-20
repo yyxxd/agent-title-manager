@@ -1,11 +1,14 @@
-package orcasync
+package pluginmgr
 
 import (
+	"bufio"
 	"bytes"
 	"context"
 	"encoding/json"
 	"io"
 	"os"
+	"path/filepath"
+	"regexp"
 	"strings"
 )
 
@@ -88,4 +91,60 @@ type piHeader struct {
 	Type    string `json:"type"`
 	ID      string `json:"id"`
 	Version int    `json:"version"`
+}
+
+var piSessionID = regexp.MustCompile(`^[0-9A-Fa-f]{8}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{12}$`)
+
+func (m *Manager) ValidateNativeHandle(ctx context.Context, agent, id, handle string) bool {
+	if agent != "pi" {
+		return id == handle
+	}
+	file, err := openPiSession(ctx, id, handle)
+	if err != nil {
+		return false
+	}
+	return file.Close() == nil
+}
+
+func openPiSession(ctx context.Context, id, handle string) (*os.File, error) {
+	if ctx.Err() != nil || !piSessionID.MatchString(id) || !filepath.IsAbs(handle) ||
+		!strings.HasSuffix(filepath.Base(handle), "_"+id+".jsonl") {
+		return nil, ErrNativePending
+	}
+	piHome := os.Getenv("PI_CODING_AGENT_DIR")
+	if piHome == "" {
+		home, err := os.UserHomeDir()
+		if err != nil {
+			return nil, err
+		}
+		piHome = filepath.Join(home, ".pi", "agent")
+	}
+	sessionRoot := filepath.Join(piHome, "sessions")
+	rel, err := filepath.Rel(sessionRoot, handle)
+	if err != nil || !filepath.IsAbs(sessionRoot) || !filepath.IsLocal(rel) {
+		return nil, ErrNativePending
+	}
+	root, err := os.OpenRoot(sessionRoot)
+	if err != nil {
+		return nil, err
+	}
+	defer root.Close()
+	info, err := root.Stat(rel)
+	if err != nil || !info.Mode().IsRegular() {
+		return nil, ErrNativePending
+	}
+	file, err := root.Open(rel)
+	if err != nil {
+		return nil, err
+	}
+	header, err := readPiHeader(file)
+	if err != nil || header.Type != "session" || header.ID != id {
+		file.Close()
+		return nil, ErrNativePending
+	}
+	return file, nil
+}
+
+func readFirstLine(file *os.File) ([]byte, error) {
+	return bufio.NewReader(io.LimitReader(file, 64<<10)).ReadBytes('\n')
 }

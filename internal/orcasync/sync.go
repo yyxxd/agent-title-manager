@@ -43,43 +43,52 @@ type place struct {
 	PaneTitle string  `json:"-"`
 }
 
-// SyncVerified requires a fresh read of the bound native session immediately
-// before asking Orca to rename it. Orca may also update the native title.
-func SyncVerified(ctx context.Context, id, expected, title, agent, session, handle string, reader NativeTitleReader) error {
-	lock.Lock()
-	defer lock.Unlock()
-	return syncVerified(ctx, localCLI, id, expected, title, agent, session, handle, reader)
+type syncChecks struct {
+	validate NativeHandleValidator
+	read     NativeTitleReader
+	readChat NativeTitleReader
+	origin   func(context.Context, string, string, string) string
 }
 
-func syncVerified(ctx context.Context, run runCLI, id, expected, title, agent, session, handle string, reader NativeTitleReader) error {
-	if reader == nil {
+func syncWithChecks(ctx context.Context, run runCLI, id, expected, title, agent, session, handle string, checks syncChecks) error {
+	if checks.read == nil {
 		return ErrNativePending
 	}
 	return syncTitle(ctx, run, id, expected, title, func(ctx context.Context, prior place) error {
-		at, bound := boundChat(ctx, run, agent, session, handle, prior.ID)
+		delays := []time.Duration{0}
+		if agent == "antigravity" {
+			delays = []time.Duration{0, 250 * time.Millisecond, 500 * time.Millisecond}
+		}
+		at, bound := discover(ctx, run, checks.validate, agent, session, handle, prior.ID, prior.Kind, delays)
 		if !bound || at.Title == nil {
-			return fmt.Errorf("%w：无法重新核验原生会话与 Orca 聊天的绑定", ErrNativePending)
+			return fmt.Errorf("%w: 无法重新核验原生会话与 Orca 位置的绑定", ErrNativePending)
 		}
 		if *at.Title != *prior.Title || at.Agent != prior.Agent || at.Kind != prior.Kind ||
 			(at.Kind == "terminal" && (at.Handle != prior.Handle || at.PaneKey != prior.PaneKey)) {
-			return fmt.Errorf("%w：原生核验期间 Orca 聊天已改变", ErrSkipped)
+			return fmt.Errorf("%w: 原生核验期间 Orca 位置已改变", ErrSkipped)
+		}
+		reader := checks.read
+		if agent == "antigravity" && at.Kind == "chat" && checks.readChat != nil {
+			reader = checks.readChat
 		}
 		observed, err := reader(ctx, agent, session, handle)
 		if err != nil {
-			return fmt.Errorf("%w：原生宿主标题尚不可读", ErrNativePending)
+			return fmt.Errorf("%w: %v", ErrNativePending, err)
 		}
 		if observed != title {
 			return ErrNativeStale
 		}
-		if agent == "antigravity" && at.Kind == "terminal" {
+		if at.Kind == "terminal" {
 			live, err := terminalLayout(ctx, run, strings.TrimPrefix(at.ID, idPrefix), at)
 			if err != nil || *live.Title != *at.Title || live.Handle != at.Handle || live.PaneTitle != at.PaneTitle {
-				return fmt.Errorf("%w: Antigravity terminal title or layout changed", ErrSkipped)
+				return fmt.Errorf("%w: terminal title or layout changed", ErrSkipped)
 			}
 		}
-		if agent == "antigravity" && at.Kind == "chat" && *at.Title != title &&
-			titleOrigin(ctx, orcaDatabase(), agent, strings.TrimPrefix(at.ID, idPrefix), *at.Title) != titleAuto {
-			return fmt.Errorf("%w: Antigravity chat title origin is protected", ErrSkipped)
+		if agent == "antigravity" && at.Kind == "chat" && *at.Title != title {
+			origin := resolvePlaceOrigin(ctx, at, checks.origin)
+			if origin != titleAuto {
+				return fmt.Errorf("%w: Orca chat title is protected", ErrSkipped)
+			}
 		}
 		return nil
 	})
@@ -134,7 +143,7 @@ func observe(ctx context.Context, run runCLI, id string) (place, error) {
 }
 
 func observeForAgent(ctx context.Context, run runCLI, id, agent string) (place, error) {
-	if agent == "antigravity" || agent == "pi" || agent == "" {
+	if agent == "" || supportsAgent(agent) {
 		if terminal, err := observeTerminal(ctx, run, id, agent); err == nil {
 			return terminal, nil
 		}
@@ -303,16 +312,8 @@ func showAgentPlace(ctx context.Context, run runCLI, id string) (place, error) {
 }
 
 func showTerminal(ctx context.Context, run runCLI, id, agent string) (place, error) {
-	var shown struct {
-		ID     string  `json:"orcaSessionId"`
-		Kind   string  `json:"kind"`
-		Places []place `json:"places"`
-	}
-	if err := call(ctx, run, &shown, "agent", "show", idPrefix+id); err != nil || strings.TrimPrefix(shown.ID, idPrefix) != id || shown.Kind != "terminal" || len(shown.Places) != 1 {
-		return place{}, fmt.Errorf("%w: terminal location", ErrSkipped)
-	}
-	at := shown.Places[0]
-	if at.Kind != "terminal" || at.HostID != "local" || strings.TrimPrefix(at.ID, idPrefix) != id || (agent != "" && at.Agent != agent) || (at.Agent != "pi" && at.Agent != "antigravity") || at.PaneKey == "" {
+	at, err := showAgentPlace(ctx, run, id)
+	if err != nil || at.Kind != "terminal" || (agent != "" && at.Agent != agent) || !supportsAgent(at.Agent) || at.PaneKey == "" {
 		return place{}, fmt.Errorf("%w: terminal binding", ErrSkipped)
 	}
 	return at, nil
@@ -346,6 +347,14 @@ func localCLI(ctx context.Context, args ...string) ([]byte, error) {
 		return nil, err
 	}
 	cmd := exec.CommandContext(ctx, cli, args...)
+	for _, entry := range cmd.Environ() {
+		name, _, _ := strings.Cut(entry, "=")
+		switch strings.ToUpper(name) {
+		case "ORCA_PAIRING_CODE", "ORCA_ENVIRONMENT", "ORCA_REMOTE_PAIRING":
+			continue
+		}
+		cmd.Env = append(cmd.Env, entry)
+	}
 	hideWindow(cmd)
 	return cmd.Output()
 }
