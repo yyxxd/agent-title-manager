@@ -1,8 +1,8 @@
 import { ChevronDown, ChevronRight, RefreshCw, Search } from 'lucide-react';
-import { useEffect, useState } from 'react';
+import { useRef, useState } from 'react';
 import {
   agentName, canAdoptTitle, formatTime, needsAttention, num, recordCounts, rpc,
-  type RecordCursor, type RecordItem, type RecordList,
+  type RecordCounts, type RecordCursor, type RecordItem, type RecordList,
 } from './rpc';
 import { AttemptRow } from './RecordAttempt';
 import { toast } from './toast';
@@ -114,11 +114,11 @@ function attemptSummary(item: RecordItem) {
 
 export function Records({
   initialFilter = 'all',
-  filterKey = 0,
+  onOpened,
   onChanged,
 }: {
   initialFilter?: RecordFilter;
-  filterKey?: number;
+  onOpened: (unread: number) => void;
   onChanged: () => void;
 }) {
   const [refresh, setRefresh] = useState(0);
@@ -128,14 +128,24 @@ export function Records({
   const [expandedId, setExpandedId] = useState<string | null>(null);
   const [confirmItem, setConfirmItem] = useState<RecordItem | null>(null);
 
-  useEffect(() => {
-    setFilter(initialFilter);
-    setCursors([]);
-  }, [initialFilter, filterKey]);
-
+  const visit = useRef<Promise<RecordList> | null>(null);
   const before = cursors.at(-1);
   const { value, error, loading } = useLoad(
-    () => rpc<RecordList>('records.list', { limit: 50, filter, query: query.trim(), before }),
+    async () => {
+      const params = { limit: 50, filter, query: query.trim(), before };
+      if (!visit.current) {
+        visit.current = rpc<RecordList & { counts: RecordCounts }>('records.open', params).then((result) => {
+          onOpened(result.counts.unread);
+          return result;
+        }).catch((error) => {
+          visit.current = null;
+          throw error;
+        });
+        return visit.current;
+      }
+      await visit.current;
+      return rpc<RecordList>('records.list', params);
+    },
     `${refresh}:${filter}:${before?.updated}:${before?.rowId}:${query.trim()}`,
   );
   const action = useAction();
@@ -193,7 +203,7 @@ export function Records({
             className={`seg-btn ${filter === 'attention' ? 'active' : ''}`}
             onClick={() => selectFilter('attention')}
           >
-            待处理{counts.attention > 0 ? ` (${counts.attention})` : ''}
+            提醒记录
           </button>
           <button
             type="button"

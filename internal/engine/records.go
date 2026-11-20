@@ -34,6 +34,7 @@ type recordCursor struct {
 
 type recordCounts struct {
 	Total      int `json:"total"`
+	Unread     int `json:"unread"`
 	Attention  int `json:"attention"`
 	Failed     int `json:"failed"`
 	SyncFailed int `json:"syncFailed"`
@@ -83,6 +84,7 @@ type attemptRecord struct {
 
 const recordAdoptable = `(e.sync_status='protected' AND e.orca_id<>'' AND e.orca_base IS NOT NULL AND ` + currentSyncSession + `)`
 const recordAttention = `(e.status='failed' OR e.sync_status='failed' OR ` + recordAdoptable + `)`
+const recordUnread = `(e.reminder_read=0 AND ` + recordAttention + `)`
 const attemptFields = `SELECT event_id,provider,model,source,requested_tier,actual_tier,status,started,
 	input_tokens,output_tokens,cached_tokens,actual_model FROM attempts`
 
@@ -97,7 +99,7 @@ func recordSearch(query string) (string, []any) {
 			(instr(atm_lower(a.model),?)>0 OR instr(atm_lower(a.actual_model),?)>0)))`, []any{query, query, query, query}
 }
 
-func (e *Engine) records(ctx context.Context, p listRequest) (recordList, error) {
+func (e *Engine) records(ctx context.Context, p listRequest, markRead bool) (recordList, error) {
 	limit := p.Limit
 	if limit == 0 {
 		limit = 50
@@ -111,12 +113,17 @@ func (e *Engine) records(ctx context.Context, p listRequest) (recordList, error)
 	}
 	local := e.now().Location()
 	return transact(ctx, e.db, func(tx *sql.Tx) (recordList, error) {
+		if markRead {
+			if _, err := tx.ExecContext(ctx, `UPDATE events AS e SET reminder_read=1 WHERE `+recordUnread); err != nil {
+				return recordList{}, err
+			}
+		}
 		where, args := recordSearch(p.Query)
 		var result recordList
-		err := tx.QueryRowContext(ctx, `SELECT COUNT(*),COUNT(*) FILTER (WHERE `+recordAttention+`),
+		err := tx.QueryRowContext(ctx, `SELECT COUNT(*),COUNT(*) FILTER (WHERE `+recordUnread+`),COUNT(*) FILTER (WHERE `+recordAttention+`),
 			COUNT(*) FILTER (WHERE e.status='failed'),COUNT(*) FILTER (WHERE e.sync_status='failed'),
 			COUNT(*) FILTER (WHERE `+recordAdoptable+`) FROM events e`+where, args...).
-			Scan(&result.Counts.Total, &result.Counts.Attention, &result.Counts.Failed, &result.Counts.SyncFailed, &result.Counts.Protected)
+			Scan(&result.Counts.Total, &result.Counts.Unread, &result.Counts.Attention, &result.Counts.Failed, &result.Counts.SyncFailed, &result.Counts.Protected)
 		if err != nil {
 			return recordList{}, err
 		}

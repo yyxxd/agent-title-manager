@@ -281,7 +281,7 @@ func TestRecordsCountAndSearchAllHistoryWithoutRepeatingPages(t *testing.T) {
 		t.Fatal(err)
 	}
 	first := call[recordList](t, e, "records.list", listRequest{})
-	wantCounts := recordCounts{Total: 67, Attention: 3, Failed: 2, SyncFailed: 1, Protected: 1}
+	wantCounts := recordCounts{Total: 67, Unread: 3, Attention: 3, Failed: 2, SyncFailed: 1, Protected: 1}
 	if first.Counts != wantCounts || len(first.Items) != 50 || first.Next == nil {
 		t.Fatalf("counts or first page: %+v", first.Counts)
 	}

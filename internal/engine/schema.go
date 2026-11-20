@@ -99,6 +99,18 @@ ALTER TABLE sessions ADD COLUMN protection_reason TEXT NOT NULL DEFAULT '';
 ALTER TABLE events ADD COLUMN decision_reason TEXT NOT NULL DEFAULT '';
 PRAGMA user_version=10;`
 
+const schemaV11 = `
+ALTER TABLE events ADD COLUMN reminder_read INTEGER NOT NULL DEFAULT 0;
+CREATE TRIGGER events_new_reminder AFTER UPDATE OF status,sync_status ON events
+WHEN NEW.reminder_read=1 AND (
+	(NEW.status='failed' AND OLD.status<>NEW.status) OR
+	(NEW.sync_status IN ('failed','protected') AND OLD.sync_status<>NEW.sync_status)
+)
+BEGIN
+	UPDATE events SET reminder_read=0 WHERE id=NEW.id;
+END;
+PRAGMA user_version=11;`
+
 func initialize(db *sql.DB) error {
 	for _, pragmas := range []string{"PRAGMA busy_timeout=2500", "PRAGMA foreign_keys=ON", "PRAGMA journal_mode=WAL", "PRAGMA secure_delete=ON"} {
 		if _, err := db.Exec(pragmas); err != nil {
@@ -169,6 +181,11 @@ func initialize(db *sql.DB) error {
 		}
 		fallthrough
 	case 10:
+		if _, err = tx.Exec(schemaV11); err != nil {
+			return err
+		}
+		fallthrough
+	case 11:
 	default:
 		return fmt.Errorf("无法读取数据库版本 %d", version)
 	}

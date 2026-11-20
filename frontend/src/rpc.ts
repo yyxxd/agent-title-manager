@@ -145,13 +145,15 @@ export type RecordItem = {
 };
 
 export type RecordCursor = { updated: number; rowId: number };
-export type RecordCounts = { total: number; attention: number; failed: number; syncFailed: number; protected: number };
+export type RecordCounts = { total: number; unread: number; attention: number; failed: number; syncFailed: number; protected: number };
 export type RecordList = { items: RecordItem[]; counts?: RecordCounts; next?: RecordCursor; testAttempts?: Attempt[] };
 
 export function recordCounts(items: RecordItem[]): RecordCounts {
+  const attention = items.filter(needsAttention).length;
   return {
     total: items.length,
-    attention: items.filter(needsAttention).length,
+    unread: attention,
+    attention,
     failed: items.filter((item) => item.status === 'failed').length,
     syncFailed: items.filter((item) => item.syncStatus === 'failed').length,
     protected: items.filter(canAdoptTitle).length,

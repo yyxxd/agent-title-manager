@@ -1,5 +1,5 @@
 import { Moon, Settings as SettingsIcon, Sun } from 'lucide-react';
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import { createRoot } from 'react-dom/client';
 import { Agents } from './Agents';
 import { useAppearance } from './Appearance';
@@ -13,7 +13,6 @@ import {
   recordCounts,
   type Plugin,
   type PluginListResponse,
-  type RecordCounts,
   type RecordList,
   type Settings as SettingsData,
 } from './rpc';
@@ -42,31 +41,33 @@ function App() {
     key: 0,
   });
 
+  const [unread, setUnread] = useState(0);
+  const countsRequest = useRef(0);
   const [shell, setShell] = useState<{
     plugins: Plugin[];
     settings?: SettingsData;
-    counts: RecordCounts;
   }>({
     plugins: [],
-    counts: recordCounts([]),
   });
 
   const refreshShell = useCallback(() => {
+    const request = ++countsRequest.current;
     void Promise.allSettled([
       rpc<PluginListResponse>('plugins.list'),
       rpc<SettingsData>('settings.get'),
       rpc<RecordList>('records.list', { limit: 50 }),
     ]).then(([pluginsRes, settingsRes, recordsRes]) => {
+      if (recordsRes.status === 'fulfilled' && request === countsRequest.current) {
+        const { counts, items } = recordsRes.value;
+        setUnread(counts?.unread ?? counts?.attention ?? recordCounts(items).unread);
+      }
       if (pluginsRes.status === 'fulfilled') {
         syncPluginAutoUpdate(pluginsRes.value.autoUpdate);
       }
       setShell((prev) => {
         const plugins = pluginsRes.status === 'fulfilled' ? pluginsRes.value.items ?? [] : prev.plugins;
         const settings = settingsRes.status === 'fulfilled' ? settingsRes.value : prev.settings;
-        const counts = recordsRes.status === 'fulfilled'
-          ? recordsRes.value.counts ?? recordCounts(recordsRes.value.items)
-          : prev.counts;
-        return { plugins, settings, counts };
+        return { plugins, settings };
       });
     });
   }, []);
@@ -78,8 +79,8 @@ function App() {
   }, [refreshShell, revision]);
 
   function commitNav(next: Page, filter?: RecordFilter) {
-    if (next === 'records' && filter) {
-      setRecordFilter((prev) => ({ filter, key: prev.key + 1 }));
+    if (next === 'records') {
+      setRecordFilter((prev) => ({ filter: filter ?? 'all', key: prev.key + 1 }));
     }
     setPage(next);
     setRevision((n) => n + 1);
@@ -87,8 +88,8 @@ function App() {
 
   function navigateTo(next: Page, filter?: RecordFilter) {
     if (next === page) {
-      if (next === 'records' && filter) {
-        setRecordFilter((prev) => ({ filter, key: prev.key + 1 }));
+      if (next === 'records' && (filter || unread > 0)) {
+        commitNav(next, filter);
       }
       return;
     }
@@ -99,7 +100,6 @@ function App() {
     commitNav(next, filter);
   }
 
-  const attnCount = shell.counts.attention;
   const agents = shell.plugins.filter((p) => p.kind !== 'integration' && p.id !== 'orca');
   const enabledCount = agents.filter((p) => p.enabled).length;
   const totalCount = agents.length;
@@ -148,20 +148,20 @@ function App() {
               onClick={() => navigateTo('records')}
             >
               <span>记录</span>
-              {attnCount > 0 && <span className="nav-count">{attnCount}</span>}
+              {unread > 0 && <span className="nav-count">{unread}</span>}
             </button>
           </nav>
 
           <div className="topbar-right">
-            {attnCount > 0 ? (
+            {unread > 0 ? (
               <button
                 type="button"
                 className="status-chip warn"
-                title="查看需要处理的记录"
+                title="查看新提醒"
                 onClick={() => navigateTo('records', 'attention')}
               >
                 <span className="status-dot warn" />
-                <span>{attnCount} 条待处理</span>
+                <span>{unread} 条新提醒</span>
               </button>
             ) : (
               <button
@@ -208,7 +208,7 @@ function App() {
           revision={revision}
           plugins={shell.plugins}
           settings={shell.settings}
-          counts={shell.counts}
+          unread={unread}
           onNavigate={navigateTo}
           onRefreshShell={refreshShell}
         />
@@ -217,8 +217,12 @@ function App() {
       {page === 'models' && <Models onSaved={refreshShell} onDirtyChange={setModelsDirty} />}
       {page === 'records' && (
         <Records
+          key={recordFilter.key}
           initialFilter={recordFilter.filter}
-          filterKey={recordFilter.key}
+          onOpened={(count) => {
+            ++countsRequest.current;
+            setUnread(count);
+          }}
           onChanged={refreshShell}
         />
       )}
