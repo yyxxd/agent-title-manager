@@ -36,6 +36,8 @@ type Engine struct {
 	syncer              func(context.Context, string, string, string) error
 	isEnabled           func(context.Context, string) bool
 	now                 func() time.Time
+	activeMu            sync.Mutex
+	activeModel         *activeModel
 }
 
 // Open starts one durable worker per queue. dataDir belongs to a single running engine.
