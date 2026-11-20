@@ -30,7 +30,7 @@ func NewWindowsHelper(h Handoff) *WindowsHelper {
 // key is compiled into the helper and used to re-verify the handoff.
 func (h *WindowsHelper) Deps(publicKeyHex string) helperDeps {
 	return helperDeps{
-		verify:        func() error { return verifyHandoff(h.handoff, publicKeyHex) },
+		verify:        func() error { return h.verify(publicKeyHex) },
 		waitExit:      h.waitExit,
 		prepare:       h.prepare,
 		install:       installNSIS,
@@ -39,6 +39,13 @@ func (h *WindowsHelper) Deps(publicKeyHex string) helperDeps {
 		verifyVersion: h.verifyRegistryVersion,
 		restart:       restartApp,
 	}
+}
+
+func (h *WindowsHelper) verify(publicKeyHex string) error {
+	if h.handoff.Isolated != (os.Getenv("ATM_UPDATE_ISOLATED") == "1") {
+		return errors.New("更新交接的隔离模式与启动环境不一致")
+	}
+	return verifyHandoff(h.handoff, publicKeyHex)
 }
 
 // waitExit polls the process handle without terminating it, so in-flight work

@@ -106,10 +106,26 @@ func TestHelperDepsUseInjectedPublicKey(t *testing.T) {
 	dir := fixtureWithSignedInstaller(t)
 	key := publicHexFromFixture(t, dir)
 	h := handoffFixture(dir, key)
+	t.Setenv("ATM_UPDATE_ISOLATED", "1")
 	previous := updatePublicKey
 	updatePublicKey = key
 	defer func() { updatePublicKey = previous }()
 	if err := NewWindowsHelper(h).Deps(PublicKey()).verify(); err != nil {
 		t.Fatalf("helper did not receive the injected public key: %v", err)
+	}
+}
+
+func TestHelperRejectsIsolationModeMismatch(t *testing.T) {
+	dir := fixtureWithSignedInstaller(t)
+	key := publicHexFromFixture(t, dir)
+	h := handoffFixture(dir, key)
+	t.Setenv("ATM_UPDATE_ISOLATED", "")
+	if err := NewWindowsHelper(h).Deps(key).verify(); err == nil {
+		t.Fatal("accepted an isolated handoff from a normal launch")
+	}
+	t.Setenv("ATM_UPDATE_ISOLATED", "1")
+	h.Isolated = false
+	if err := NewWindowsHelper(h).Deps(key).verify(); err == nil {
+		t.Fatal("accepted a normal handoff from an isolated launch")
 	}
 }
