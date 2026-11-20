@@ -131,6 +131,7 @@ export type Attempt = TokenUsage & {
 export type RecordItem = {
   reason?: string;
   orcaTitleOrigin?: string;
+  canAdopt?: boolean;
   id: string;
   agent: string;
   sessionId: string;
@@ -153,16 +154,16 @@ export function recordCounts(items: RecordItem[]): RecordCounts {
     attention: items.filter(needsAttention).length,
     failed: items.filter((item) => item.status === 'failed').length,
     syncFailed: items.filter((item) => item.syncStatus === 'failed').length,
-    protected: items.filter(isProtected).length,
+    protected: items.filter(canAdoptTitle).length,
   };
 }
 
-function isProtected(item: RecordItem) {
-  return item.syncStatus === 'protected' || item.reason === 'manual_locked' || item.reason === 'unknown_protected';
+export function canAdoptTitle(item: RecordItem) {
+  return item.syncStatus === 'protected' && (item.canAdopt ?? true);
 }
 
 export function needsAttention(item: RecordItem) {
-  return item.status === 'failed' || item.syncStatus === 'failed' || isProtected(item);
+  return item.status === 'failed' || item.syncStatus === 'failed' || canAdoptTitle(item);
 }
 
 export type Preferences = { startup: boolean; startupAvailable: boolean };

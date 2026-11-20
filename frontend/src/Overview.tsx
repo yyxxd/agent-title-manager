@@ -112,7 +112,7 @@ export function Overview({
   const attnParts: string[] = [];
   if (counts.failed > 0) attnParts.push(`${counts.failed} 条命名失败`);
   if (counts.syncFailed > 0) attnParts.push(`${counts.syncFailed} 条同步至 Orca 失败`);
-  if (counts.protected > 0) attnParts.push(`${counts.protected} 条标题受保护`);
+  if (counts.protected > 0) attnParts.push(`${counts.protected} 条 Orca 标题受保护`);
 
   const scope = selectedAgent ?? value;
   const usageMetrics = computeScopeTokens(scope, agents, value);

@@ -48,7 +48,7 @@ func TestLegacyProtectionKeepsHistoricalReasonsUnknown(t *testing.T) {
 		t.Fatalf("historical reason was inferred from the current lock: %+v", old)
 	}
 	page := call[recordList](t, e, "records.list", listRequest{Filter: "attention"})
-	if page.Counts.Total != 4 || page.Counts.Attention != 3 || len(page.Items) != 3 {
+	if page.Counts.Total != 4 || page.Counts.Attention != 0 || len(page.Items) != 0 {
 		t.Fatalf("legacy vs current protection counts: %+v", page.Counts)
 	}
 }
@@ -157,12 +157,12 @@ func TestRecordsCountAndSearchAllHistoryWithoutRepeatingPages(t *testing.T) {
 		if status == "failed" {
 			reason = ""
 		}
-		if _, err := e.db.Exec(`INSERT INTO sessions(agent,session_id,revision,title,manual) VALUES('claude',?,'r','样例标题',0)`, id); err != nil {
+		if _, err := e.db.Exec(`INSERT INTO sessions(agent,session_id,revision,title,manual,orca_id) VALUES('claude',?,'r','样例标题',0,?)`, id, sessionOrcaID); err != nil {
 			t.Fatal(err)
 		}
-		if _, err := e.db.Exec(`INSERT INTO events(id,agent,session_id,revision,base,title,status,orca_id,orca_origin,sync_status,
-			decision_reason,created,updated) VALUES(?,'claude',?,'r','','样例标题',?,'','',?,?,?,?)`,
-			id, id, status, sync, reason, now, now); err != nil {
+		if _, err := e.db.Exec(`INSERT INTO events(id,agent,session_id,revision,base,title,status,orca_id,orca_base,orca_origin,sync_status,
+			decision_reason,created,updated) VALUES(?,'claude',?,'r','','样例标题',?,?,?,'',?,?,?,?)`,
+			id, id, status, orcaID, orcaBase, sync, reason, now, now); err != nil {
 			t.Fatal(err)
 		}
 	}
@@ -171,7 +171,7 @@ func TestRecordsCountAndSearchAllHistoryWithoutRepeatingPages(t *testing.T) {
 		t.Fatal(err)
 	}
 	first := call[recordList](t, e, "records.list", listRequest{})
-	wantCounts := recordCounts{Total: 67, Attention: 5, Failed: 2, SyncFailed: 1, Protected: 3}
+	wantCounts := recordCounts{Total: 67, Attention: 3, Failed: 2, SyncFailed: 1, Protected: 1}
 	if first.Counts != wantCounts || len(first.Items) != 50 || first.Next == nil {
 		t.Fatalf("counts or first page: %+v", first.Counts)
 	}
@@ -201,3 +201,20 @@ func TestRecordsCountAndSearchAllHistoryWithoutRepeatingPages(t *testing.T) {
 		t.Fatalf("search across all history: %+v", found)
 	}
 }
+		orcaID, sessionOrcaID := "", ""
+		var orcaBase *string
+			reason = decisionManual
+			orcaID, sessionOrcaID = "orca-current", "orca-current"
+			old := "Orca 原标题"
+			orcaBase = &old
+		case 5:
+			sync = "protected"
+			orcaID, sessionOrcaID = "orca-old", "orca-new"
+			old := "Orca 旧绑定标题"
+			orcaBase = &old
+			if item.ID == "record-3" && (!item.CanAdopt || item.Reason != decisionManual) {
+				t.Fatalf("native lock hid actionable Orca protection: %+v", item)
+			}
+	if !seen["record-0"] || !seen["record-3"] || !seen["record-4"] {
+		t.Fatalf("wrong pending records: %v", seen)
+	}

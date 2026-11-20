@@ -1,7 +1,7 @@
 import { ChevronDown, ChevronRight, RefreshCw, Search } from 'lucide-react';
 import { useEffect, useState } from 'react';
 import {
-  agentName, formatTime, needsAttention, num, recordCounts, rpc,
+  agentName, canAdoptTitle, formatTime, needsAttention, num, recordCounts, rpc,
   type RecordCursor, type RecordItem, type RecordList,
 } from './rpc';
 import { AttemptRow } from './RecordAttempt';
@@ -280,7 +280,10 @@ export function Records({
                   warn: true,
                 });
                 if (item.reason && Object.hasOwn(decisionMessages, item.reason)) {
-                  reasons.push({ text: decisionMessages[item.reason] });
+                  reasons.push({
+                    text: decisionMessages[item.reason],
+                    warn: item.reason === 'manual_locked' || item.reason === 'unknown_protected',
+                  });
                 } else if (item.status === 'kept') {
                   reasons.push({ text: '历史原因未记录。' });
                 }
@@ -342,7 +345,7 @@ export function Records({
                             重试同步
                           </button>
                         )}
-                        {item.syncStatus === 'protected' && (
+                        {canAdoptTitle(item) && (
                           <button
                             type="button"
                             className="btn btn-sm"

@@ -58,6 +58,7 @@ type record struct {
 	SyncStatus string          `json:"syncStatus"`
 	SyncError  string          `json:"syncError,omitempty"`
 	OrcaOrigin string          `json:"orcaTitleOrigin,omitempty"`
+	CanAdopt   bool            `json:"canAdopt"`
 	UpdatedAt  string          `json:"updatedAt"`
 	Attempts   []attemptRecord `json:"attempts"`
 	Failure    *failureReason  `json:"failure,omitempty"`
@@ -80,8 +81,8 @@ type attemptRecord struct {
 	UsageKnown    bool   `json:"usageKnown"`
 }
 
-const recordProtection = `(e.sync_status='protected' OR e.decision_reason IN ('manual_locked','unknown_protected'))`
-const recordAttention = `(e.status='failed' OR e.sync_status='failed' OR ` + recordProtection + `)`
+const recordAdoptable = `(e.sync_status='protected' AND e.orca_id<>'' AND e.orca_base IS NOT NULL AND ` + currentSyncSession + `)`
+const recordAttention = `(e.status='failed' OR e.sync_status='failed' OR ` + recordAdoptable + `)`
 const attemptFields = `SELECT event_id,provider,model,source,requested_tier,actual_tier,status,started,
 	input_tokens,output_tokens,cached_tokens,actual_model FROM attempts`
 
@@ -114,7 +115,7 @@ func (e *Engine) records(ctx context.Context, p listRequest) (recordList, error)
 		var result recordList
 		err := tx.QueryRowContext(ctx, `SELECT COUNT(*),COUNT(*) FILTER (WHERE `+recordAttention+`),
 			COUNT(*) FILTER (WHERE e.status='failed'),COUNT(*) FILTER (WHERE e.sync_status='failed'),
-			COUNT(*) FILTER (WHERE `+recordProtection+`) FROM events e`+where, args...).
+			COUNT(*) FILTER (WHERE `+recordAdoptable+`) FROM events e`+where, args...).
 			Scan(&result.Counts.Total, &result.Counts.Attention, &result.Counts.Failed, &result.Counts.SyncFailed, &result.Counts.Protected)
 		if err != nil {
 			return recordList{}, err
@@ -155,7 +156,8 @@ func (e *Engine) records(ctx context.Context, p listRequest) (recordList, error)
 
 func listRecords(ctx context.Context, tx *sql.Tx, local *time.Location, where string, args []any) ([]record, error) {
 	rows, err := tx.QueryContext(ctx, `SELECT id,agent,session_id,revision,title,base,status,sync_status,sync_error,updated,
-		failure_code,failure_length,failure_limit,decision_reason,rowid,orca_origin FROM events e`+where+` ORDER BY updated DESC,rowid DESC LIMIT ?`, args...)
+		failure_code,failure_length,failure_limit,decision_reason,rowid,orca_origin,`+recordAdoptable+`
+		FROM events e`+where+` ORDER BY updated DESC,rowid DESC LIMIT ?`, args...)
 	if err != nil {
 		return nil, err
 	}
@@ -165,7 +167,8 @@ func listRecords(ctx context.Context, tx *sql.Tx, local *time.Location, where st
 		var item record
 		var reason failureReason
 		err = rows.Scan(&item.ID, &item.Agent, &item.SessionID, &item.Revision, &item.Title, &item.BaseTitle, &item.Status,
-			&item.SyncStatus, &item.SyncError, &item.cursor.Updated, &reason.Code, &reason.Length, &reason.Limit, &item.Reason, &item.cursor.RowID, &item.OrcaOrigin)
+			&item.SyncStatus, &item.SyncError, &item.cursor.Updated, &reason.Code, &reason.Length, &reason.Limit,
+			&item.Reason, &item.cursor.RowID, &item.OrcaOrigin, &item.CanAdopt)
 		if err != nil {
 			return nil, err
 		}
