@@ -91,13 +91,20 @@ function titlePillClass(status: string): string {
 }
 
 function attemptSummary(item: RecordItem) {
-  const last = item.attempts?.length ? item.attempts[item.attempts.length - 1] : undefined;
-  if (!last) return { model: '', totalTokens: null as number | null };
-  const model = last.actualModel || last.model || '';
-  const totalTokens = typeof last.inputTokens === 'number' && typeof last.outputTokens === 'number'
-    ? last.inputTokens + last.outputTokens
-    : null;
-  return { model, totalTokens };
+  const attempts = item.attempts ?? [];
+  const last = attempts.at(-1);
+  const model = last?.actualModel || last?.model || '';
+  let known = 0;
+  let total = 0;
+  for (const attempt of attempts) {
+    for (const value of [attempt.inputTokens, attempt.outputTokens]) {
+      if (typeof value === 'number') {
+        known++;
+        total += value;
+      }
+    }
+  }
+  return { model, count: attempts.length, totalTokens: known ? total : null, partial: known < attempts.length * 2 };
 }
 
 export function Records({
@@ -259,7 +266,7 @@ export function Records({
             <div className="record-list">
               {filtered.map((item) => {
                 const expanded = expandedId === item.id;
-                const { model, totalTokens } = attemptSummary(item);
+                const { model, count, totalTokens, partial } = attemptSummary(item);
                 const reason = failureText(item);
                 const syncError = item.syncError?.trim() || undefined;
                 const syncMeta = item.syncStatus ? syncStates[item.syncStatus] : undefined;
@@ -307,12 +314,14 @@ export function Records({
                               <span className="mono">{model}</span>
                             </>
                           )}
-                          {!item.attempts?.length && <span>· 未调用模型</span>}
-                          {totalTokens !== null && (
-                            <>
-                              <span>·</span>
-                              <span>{num(totalTokens)} Token</span>
-                            </>
+                          <span>· {count ? `${num(count)} 次调用` : '未调用模型'}</span>
+                          {count > 0 && (
+                            <span>· {totalTokens === null
+                              ? 'Token 未回报'
+                              : partial
+                                ? `已知 ${num(totalTokens)} Token（部分回报）`
+                                : `${num(totalTokens)} Token`}
+                            </span>
                           )}
                         </div>
                         {reasons.length > 0 && (
