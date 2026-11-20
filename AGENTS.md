@@ -4,14 +4,27 @@
 
 应用内更新弹窗（`frontend/src/Update.tsx`）和 GitHub Release 页面会直接展示版本更新说明。发布任何新版本时必须遵守以下规则：
 
-1. **必须使用简体中文**：面向最终用户说明本版本的新增功能、问题修复和体验优化，禁止直接粘贴英文 Git 提交记录、PR squash 摘要、`---------` 分隔线或 `Co-authored-by:` 元数据。
-2. **排版保持紧凑**：每条更新说明占一行，使用 `- ` 开头，**条目之间不要插入空行**（应用内使用 `white-space: pre-wrap` 原样渲染，空行会导致列表间距过大）。
-3. **通过 annotated tag 传入说明**：Git commit 仍遵循英文 Conventional Commits；发版打标签时必须使用 annotated tag（例如 `git tag -a v0.4.1 -F release-notes.txt`），把中文更新说明写入 tag 正文。`.github/workflows/release.yml` 会优先读取 annotated tag 正文，同步写入签名清单 `update-manifest.json` 与 GitHub Release。
+1. **必须使用简体中文**：面向最终用户说明本版本变化，禁止直接粘贴英文 Git 提交记录、PR squash 摘要、`---------` 分隔线或 `Co-authored-by:` 元数据。
+2. **按固定分类组织**（仅保留本版本实际有内容的分类，空分类省略），并按以下从高到低的固定顺序排列：
+   - `【重要变更】`：升级注意事项、破坏性改动或核心行为切换（无则省略）
+   - `【新增】`：新增功能或新增能力支持
+   - `【修复】`：功能缺陷与环境兼容性修复
+   - `【优化】`：体验改进、性能/Token 优化与架构整理
+3. **组内按优先级从高到低排序**：
+   - 第 1 优先级：影响核心功能可用性、阻断性故障、数据或安全相关改动；
+   - 第 2 优先级：高频日常使用直接可感知的功能与体验变化；
+   - 第 3 优先级：边缘场景修复、次要细节打磨与底层重构。
+4. **排版保持紧凑**：分类标题与条目各占一行，条目以 `- ` 开头，**条目之间和分类之间均不留空行**（应用内使用 `white-space: pre-wrap` 原样渲染，空行会导致间距过大）。
+5. **通过 annotated tag 传入说明**：Git commit 仍遵循英文 Conventional Commits；发版打标签时必须使用 annotated tag（例如 `git tag -a v0.4.1 -F release-notes.txt`），把中文更新说明写入 tag 正文。`.github/workflows/release.yml` 会优先读取 annotated tag 正文，同步写入签名清单 `update-manifest.json` 与 GitHub Release。
 
 示例格式：
 
 ```text
-- 修复 Antigravity 在打包版 Node 环境下无法自动命名的问题
-- 新增标题超长或格式不合规时的自动二次重试机制
-- 优化连续对话的命名节流，减少过期记录与 Token 消耗
+【新增】
+- 标题超长或格式不合规时自动二次纠错重试（最多重试 1 次）
+【修复】
+- 修复 Antigravity 在打包版 Node v22.14.0（含缺失 FTS5）及 Windows 短路径下无法自动命名的问题
+【优化】
+- 彻底解耦 Agent 插件与 Orca 工作台集成，关闭 Orca 开关后零调用、零后台观察进程
+- 优化连续对话命名策略：空标题首轮保底、已有标题按 3 轮/3 分钟滚动节流，过时请求即时取消
 ```
