@@ -223,13 +223,66 @@ func TestNamingThrottleCountsOnlyEligibleFollowUpsAndRespectsBypasses(t *testing
 	submit("edited", "follow up after an edited earlier turn", 5, 0)
 }
 
-func TestNamingThrottleMigratesV7History(t *testing.T) {
+func TestNamingThrottleFollowsAdapterRollingWindow(t *testing.T) {
+	e := engineAt(t, t.TempDir(), nil)
+	var calls atomic.Int32
+	httpProvider(t, e, func(w http.ResponseWriter, _ *http.Request) {
+		calls.Add(1)
+		_, _ = w.Write([]byte(usageReply))
+	})
+	p := event("turn-1", "")
+	p.OriginalGoal = "initial fixture goal"
+	call[accepted](t, e, "event.submit", p)
+	eventually(t, func() bool { return revisionRecord(t, e, "turn-1").Status == "candidate" })
+	c := call[claimResponse](t, e, "title.claim", claimRequest{p.Agent, p.SessionID, "", p.Revision}).Candidate
+	if c == nil || !call[accepted](t, e, "title.ack", ackRequest{p.Agent, p.SessionID, c.ID, c.Title}).Accepted {
+		t.Fatal("unable to apply initial title")
+	}
+	p.CurrentTitle = c.Title
+	submit := func(revision string, wantCalls int32, wantSkips int) {
+		t.Helper()
+		p.Revision = revision
+		call[accepted](t, e, "event.submit", p)
+		eventually(t, func() bool { return revisionRecord(t, e, revision).Status == "kept" })
+		var skips int
+		if err := e.db.QueryRow("SELECT throttle_skips FROM events WHERE revision=?", revision).Scan(&skips); err != nil ||
+			skips != wantSkips || calls.Load() != wantCalls {
+			t.Fatalf("%s: got %d calls and %d skipped turns, want %d and %d, error %v",
+				revision, calls.Load(), skips, wantCalls, wantSkips, err)
+		}
+	}
+	for n := 2; n <= 9; n++ {
+		p.Turns = append(p.Turns, turn{"user", fmt.Sprintf("question %d", n)}, turn{"assistant", fmt.Sprintf("answer %d", n)})
+		p.Turns = p.Turns[max(0, len(p.Turns)-8):]
+		switch n {
+		case 2, 3:
+			submit(fmt.Sprintf("turn-%d", n), 1, 1)
+		case 4:
+			submit("turn-4", 2, 0)
+		case 5, 6:
+			submit(fmt.Sprintf("turn-%d", n), 2, 1)
+			if n == 5 {
+				submit("turn-5-identical", 2, 0)
+			}
+		case 7:
+			submit("turn-7", 3, 0)
+		case 8:
+			p.Turns[2].Text = "edited question inside overlap"
+			submit("turn-8", 4, 0)
+		case 9:
+			p.OriginalGoal = "replaced fixture goal"
+			submit("turn-9", 5, 0)
+		}
+	}
+}
+
+func TestNamingThrottleMigratesV8History(t *testing.T) {
 	dir := t.TempDir()
 	db, err := sql.Open("sqlite", filepath.Join(dir, "engine.sqlite3"))
 	if err != nil {
 		t.Fatal(err)
 	}
-	for _, script := range []string{schema, schemaV2, schemaV3, schemaV4, schemaV5, schemaV6, schemaV7,
+	for _, script := range []string{schema, schemaV2, schemaV3, schemaV4, schemaV5, schemaV6, schemaV7, schemaV8, "PRAGMA user_version=8",
 		`INSERT INTO sessions(agent,session_id,revision,title,manual,orca_id,orca_managed) VALUES('pi','history','r','Title',0,'chat','Title');
 		 INSERT INTO events(id,agent,session_id,revision,base,title,status,orca_id,orca_origin,sync_status,created,updated,finalized)
 		 VALUES('prior','pi','history','r','','Title','applied','chat','auto','synced',1,2,2);
@@ -248,8 +301,10 @@ func TestNamingThrottleMigratesV7History(t *testing.T) {
 		e := engineAt(t, dir, nil)
 		r := latest(t, e)
 		var skips int
-		if err := e.db.QueryRow("SELECT throttle_skips FROM events WHERE id='prior'").Scan(&skips); err != nil || skips != 0 {
-			t.Fatalf("throttle migration: %d, %v", skips, err)
+		var hashes, goalHash string
+		if err := e.db.QueryRow("SELECT throttle_skips,turn_hashes,goal_hash FROM events WHERE id='prior'").
+			Scan(&skips, &hashes, &goalHash); err != nil || skips != 0 || hashes != "" || goalHash != "" {
+			t.Fatalf("throttle migration: %d, %q, %q, %v", skips, hashes, goalHash, err)
 		}
 		if r.ID != "prior" || r.Status != "applied" || r.SyncStatus != "synced" || len(r.Attempts) != 1 ||
 			r.Attempts[0].InputTokens == nil || *r.Attempts[0].InputTokens != 13 {

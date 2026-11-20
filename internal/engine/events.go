@@ -181,8 +181,14 @@ func (e *Engine) insertSubmission(ctx context.Context, tx *sql.Tx, p submission,
 	}
 	var throttled bool
 	var throttleSkip int
+	var hashes []string
+	var goalHash string
+	if !p.NativeOnly {
+		hashes = hashTurnWindow(p.Turns)
+		goalHash = hashText([]byte(p.OriginalGoal))
+	}
 	if payload != nil && skips == 0 {
-		throttled, throttleSkip, err = throttleNaming(ctx, tx, p, s, now)
+		throttled, throttleSkip, err = throttleNaming(ctx, tx, p, s, now, hashes, goalHash)
 		if err != nil {
 			return err
 		}
@@ -197,11 +203,12 @@ func (e *Engine) insertSubmission(ctx context.Context, tx *sql.Tx, p submission,
 		payload = nil
 	}
 	_, err = tx.ExecContext(ctx, `INSERT INTO events(id,agent,session_id,revision,native_only,base,title,status,payload,
-		orca_id,orca_base,orca_origin,sync_status,created,updated,finalized,turns_hash,turn_count,confirmation_skips,native_handle,throttle_skips)
-		VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
+		orca_id,orca_base,orca_origin,sync_status,created,updated,finalized,turns_hash,turn_count,confirmation_skips,native_handle,throttle_skips,
+		turn_hashes,goal_hash)
+		VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
 		rand.Text(), p.Agent, p.SessionID, p.Revision, p.NativeOnly, p.CurrentTitle, p.CurrentTitle,
 		status, payload, p.OrcaID, p.OrcaTitle, p.OrcaOrigin, syncStatus, now, now, finalized,
-		turnsHash(p.OriginalGoal, p.Turns), len(p.Turns), skips, p.OrcaNativeHandle, throttleSkip)
+		turnsHash(p.OriginalGoal, p.Turns), len(p.Turns), skips, p.OrcaNativeHandle, throttleSkip, strings.Join(hashes, ","), goalHash)
 	return err
 }
 

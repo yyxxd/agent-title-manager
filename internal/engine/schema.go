@@ -89,6 +89,11 @@ PRAGMA user_version=7;`
 
 const schemaV8 = `ALTER TABLE events ADD COLUMN throttle_skips INTEGER NOT NULL DEFAULT 0`
 
+const schemaV9 = `
+ALTER TABLE events ADD COLUMN turn_hashes TEXT NOT NULL DEFAULT '';
+ALTER TABLE events ADD COLUMN goal_hash TEXT NOT NULL DEFAULT '';
+PRAGMA user_version=9;`
+
 func initialize(db *sql.DB) error {
 	for _, pragmas := range []string{"PRAGMA busy_timeout=2500", "PRAGMA foreign_keys=ON", "PRAGMA journal_mode=WAL", "PRAGMA secure_delete=ON"} {
 		if _, err := db.Exec(pragmas); err != nil {
@@ -149,6 +154,11 @@ func initialize(db *sql.DB) error {
 		}
 		fallthrough
 	case 8:
+		if _, err = tx.Exec(schemaV9); err != nil {
+			return err
+		}
+		fallthrough
+	case 9:
 	default:
 		return fmt.Errorf("无法读取数据库版本 %d", version)
 	}
