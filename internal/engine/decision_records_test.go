@@ -3,6 +3,7 @@ package engine
 import (
 	"context"
 	"database/sql"
+	"encoding/json"
 	"fmt"
 	"path/filepath"
 	"strings"
@@ -80,7 +81,7 @@ func TestTitleValidationFailureRetriesNextNewTurnAfterRestart(t *testing.T) {
 	p := event("baseline", goodTitle)
 	p.TitleOrigin = "auto"
 	call[accepted](t, e, "event.submit", p)
-	eventually(t, func() bool { return revisionRecord(t, e, "baseline").Reason == decisionModelKeep })
+	eventually(t, func() bool { return revisionRecord(t, e, "baseline").Reason == decisionKeepUnknown })
 	clock.Add(recheckCooldown.Milliseconds())
 	p.Revision = "validation-failed"
 	p.Turns = append(p.Turns, turn{"user", "继续"}, turn{"assistant", "收到"})
@@ -105,11 +106,59 @@ func TestTitleValidationFailureRetriesNextNewTurnAfterRestart(t *testing.T) {
 	p.ConfirmationOnly = false
 	p.SubstantiveActivity = true
 	call[accepted](t, e, "event.submit", p)
-	eventually(t, func() bool { return revisionRecord(t, e, p.Revision).Reason == decisionModelKeep })
+	eventually(t, func() bool { return revisionRecord(t, e, p.Revision).Reason == decisionKeepUnknown })
 	r := revisionRecord(t, e, p.Revision)
 	stats := call[dailyStats](t, e, "stats.daily", dateRequest{})
 	if len(r.Attempts) != 1 || calls.Load() != 4 || stats.ModelKept != 2 {
 		t.Fatalf("retry did not require exactly one new review: %+v %+v, calls=%d", r, stats, calls.Load())
+	}
+}
+
+func TestModelKeepReasonsUseFixedCodesAndCountAllKeeps(t *testing.T) {
+	e := engineAt(t, t.TempDir(), nil)
+	const private = "fixture-private-key-and-transcript"
+	cases := []struct{ reason, want string }{
+		{"延续原标题目标。", decisionKeepGoal},
+		{"只是已有工作的步骤或进展", decisionKeepProgress},
+		{"", decisionKeepUnknown},
+		{"没有把握判断", decisionKeepUnknown},
+		{"延续原标题目标。 " + private, decisionKeepUnknown},
+	}
+	var calls atomic.Int32
+	e.generate = func(_ context.Context, _ attemptRequest, start func() error) modelResult {
+		if err := start(); err != nil {
+			t.Error(err)
+			return modelResult{status: "failed"}
+		}
+		tc := cases[calls.Add(1)-1]
+		return modelResult{status: "completed", decision: decision{Action: "keep", Reason: tc.reason}}
+	}
+	for i, tc := range cases {
+		p := event(fmt.Sprintf("keep-%d", i), goodTitle)
+		p.SessionID, p.TitleOrigin = p.Revision, "auto"
+		p.Turns = append(p.Turns, turn{"user", private})
+		call[accepted](t, e, "event.submit", p)
+		eventually(t, func() bool { return revisionRecord(t, e, p.Revision).Status == "kept" })
+		got := revisionRecord(t, e, p.Revision)
+		if got.Reason != tc.want || len(got.Attempts) != 1 {
+			t.Fatalf("unexpected keep reason or invocation count: %+v", got)
+		}
+		wire, err := json.Marshal(got)
+		if err != nil || strings.Contains(string(wire), private) {
+			t.Fatalf("record exposes private input: err=%v", err)
+		}
+		var reason string
+		var payload []byte
+		if err := e.db.QueryRow("SELECT decision_reason,payload FROM events WHERE id=?", got.ID).Scan(&reason, &payload); err != nil || reason != tc.want || payload != nil {
+			t.Fatalf("expected only a fixed stored reason: %v", err)
+		}
+	}
+	if _, err := e.db.Exec("UPDATE events SET decision_reason=? WHERE revision='keep-0'", decisionModelKeep); err != nil {
+		t.Fatal(err)
+	}
+	if got := call[dailyStats](t, e, "stats.daily", dateRequest{}); got.ModelKept != int64(len(cases)) ||
+		got.Attempts != int64(len(cases)) || calls.Load() != int32(len(cases)) {
+		t.Fatalf("mixed generations of keep reasons: %+v", got)
 	}
 }
 

@@ -54,7 +54,8 @@ type dailyStats struct {
 const statsQuery = `
 WITH outcomes AS (
 	SELECT agent,'' AS provider,'' AS model,0 AS attempts,0 AS tests,(status='applied') AS renames,
-		(status='kept') AS kept,(status='kept' AND decision_reason='model_keep') AS model_kept,
+		(status='kept') AS kept,(status='kept' AND decision_reason IN
+			('` + decisionModelKeep + `','` + decisionKeepGoal + `','` + decisionKeepProgress + `','` + decisionKeepUnknown + `')) AS model_kept,
 		NULL AS input,NULL AS output,NULL AS cached,0 AS unknown
 	FROM events WHERE finalized>=? AND finalized<?
 	UNION ALL

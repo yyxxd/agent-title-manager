@@ -63,7 +63,10 @@ const failureMessages: Record<string, string> = {
 const decisionMessages: Record<string, string> = {
   manual_locked: '手动重命名锁定',
   unknown_protected: '已有标题来源未确认，已保留。',
-  model_keep: '模型判断原标题仍符合当前会话。',
+  model_keep: '模型选择保留原标题，具体依据未记录。',
+  model_keep_goal: '模型判断本轮延续原标题的目标。',
+  model_keep_progress: '模型判断本轮是已有工作的步骤或进展。',
+  model_keep_unspecified: '模型未提供可确认的更具体依据。',
   empty_title: '模型未生成标题。',
   confirmation_only: '本轮仅确认，沿用现有标题。',
   throttled: '尚未达到重新评估的轮数或时间间隔。',
@@ -72,6 +75,8 @@ const decisionMessages: Record<string, string> = {
   title_collision: '候选标题与同项目中的会话重名。',
   same_title: '模型给出的标题与原标题相同。',
 };
+
+const modelKeepReasons = new Set(['model_keep', 'model_keep_goal', 'model_keep_progress', 'model_keep_unspecified']);
 
 function failureText(item: RecordItem): string | undefined {
   const failure = item.failure;
@@ -337,7 +342,7 @@ export function Records({
 
                       <div className="record-right">
                         <span className={`pill ${titlePillClass(item.status)}`}>
-                          {item.reason === 'model_keep' ? '保留原标题' : states[item.status] ?? item.status}
+                          {item.reason && modelKeepReasons.has(item.reason) ? '保留原标题' : states[item.status] ?? item.status}
                         </span>
                         {item.syncStatus && (
                           <span className={`pill ${syncMeta?.pill ?? 'pill-neutral'}`}>
