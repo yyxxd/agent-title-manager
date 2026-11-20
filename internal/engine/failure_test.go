@@ -84,7 +84,12 @@ func failureReply(t *testing.T, title string, status int, private string) http.H
 
 func checkFailureRecord(t *testing.T, r record, original, private string, code failureCode, length int) {
 	t.Helper()
-	if len(r.Attempts) != 1 || r.BaseTitle != original {
+	attempts := 1
+	switch code {
+	case failureTooLong, failureCategory, failureSeparator, failureTitleFormat:
+		attempts = 2
+	}
+	if len(r.Attempts) != attempts || r.BaseTitle != original {
 		t.Fatal(r)
 	}
 	if code == "" {

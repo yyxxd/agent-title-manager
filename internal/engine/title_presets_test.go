@@ -62,7 +62,7 @@ func TestNamingPresetOutbound(t *testing.T) {
 
 func checkPresetRequest(t *testing.T, request chatRequest, settings Settings, payload []byte, band string, examples []string) {
 	t.Helper()
-	policy, input, err := providerPrompt(payload, settings.MaxTitleLength)
+	policy, input, err := providerPrompt(payload, settings.MaxTitleLength, nil)
 	if err != nil {
 		t.Fatal(err)
 	}

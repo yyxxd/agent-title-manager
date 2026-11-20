@@ -32,10 +32,10 @@ type decision struct {
 }
 
 type modelJob struct {
-	id, agent string
-	payload   []byte
-	settings  Settings
-	secret    []byte
+	id, agent, base string
+	payload         []byte
+	settings        Settings
+	secret          []byte
 }
 
 type attemptRequest struct {
@@ -45,14 +45,15 @@ type attemptRequest struct {
 	settings Settings
 	secret   []byte
 	payload  []byte
+	feedback *titleRetry
 }
 
 func (e *Engine) nextModel() (*modelJob, error) {
 	ctx := e.ctx
 	return transact(ctx, e.db, func(tx *sql.Tx) (*modelJob, error) {
 		var job modelJob
-		err := tx.QueryRowContext(ctx, `SELECT id,agent,payload FROM events
-			WHERE status='queued' ORDER BY created,rowid LIMIT 1`).Scan(&job.id, &job.agent, &job.payload)
+		err := tx.QueryRowContext(ctx, `SELECT id,agent,base,payload FROM events
+			WHERE status='queued' ORDER BY created,rowid LIMIT 1`).Scan(&job.id, &job.agent, &job.base, &job.payload)
 		if errors.Is(err, sql.ErrNoRows) {
 			return nil, nil
 		}
@@ -73,7 +74,8 @@ func (e *Engine) processModel() (bool, error) {
 	if err != nil || job == nil {
 		return false, err
 	}
-	req := attemptRequest{&job.id, job.agent, job.settings.Provider, job.settings, job.secret, job.payload}
+	req := attemptRequest{eventID: &job.id, agent: job.agent, provider: job.settings.Provider,
+		settings: job.settings, secret: job.secret, payload: job.payload}
 	result, err := e.invoke(e.ctx, req)
 	if err != nil {
 		return true, err
@@ -83,6 +85,14 @@ func (e *Engine) processModel() (bool, error) {
 		result, err = e.invoke(e.ctx, req)
 		if err != nil {
 			return true, err
+		}
+	}
+	if e.ctx.Err() == nil {
+		if req.feedback = correctionFeedback(result, job.base, job.settings.MaxTitleLength); req.feedback != nil {
+			result, err = e.invoke(e.ctx, req)
+			if err != nil {
+				return true, err
+			}
 		}
 	}
 	return true, e.finishModel(job, result)

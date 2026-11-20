@@ -5,6 +5,7 @@ import (
 	_ "embed"
 	"encoding/json"
 	"errors"
+	"unicode/utf8"
 )
 
 const decisionSchema = `{"type":"object","properties":{"action":{"type":"string","enum":["keep","rename"]},"title":{"type":"string"},"reason":{"type":"string"}},"required":["action","title","reason"],"additionalProperties":false}`
@@ -63,7 +64,7 @@ func (e *Engine) testProvider(ctx context.Context, p providerTest) (testResult, 
 	defer cancel()
 	stop := context.AfterFunc(e.ctx, cancel)
 	defer stop()
-	r, err := e.invoke(ctx, attemptRequest{nil, "test", s.Provider, s, secret, []byte(`{"connectivity_test":true}`)})
+	r, err := e.invoke(ctx, attemptRequest{agent: "test", provider: s.Provider, settings: s, secret: secret, payload: []byte(`{"connectivity_test":true}`)})
 	if err != nil {
 		return testResult{}, err
 	}
@@ -91,7 +92,7 @@ func draftAPIKey(saved Settings, base string, secret []byte, key *string) ([]byt
 }
 
 func (e *Engine) runProvider(ctx context.Context, req attemptRequest, start func() error) modelResult {
-	policy, prompt, err := providerPrompt(req.payload, req.settings.MaxTitleLength)
+	policy, prompt, err := providerPrompt(req.payload, req.settings.MaxTitleLength, req.feedback)
 	if err != nil {
 		return modelResult{status: "invalid_response"}
 	}
@@ -105,7 +106,26 @@ func (e *Engine) runProvider(ctx context.Context, req attemptRequest, start func
 	}
 }
 
-func providerPrompt(payload []byte, maxLength int) (string, []byte, error) {
+type titleRetry struct {
+	PreviousTitle  string      `json:"previous_title"`
+	FailureCode    failureCode `json:"failure_code"`
+	ActualLength   int         `json:"actual_length"`
+	MaxTitleLength int         `json:"max_title_length"`
+}
+
+func correctionFeedback(result modelResult, base string, limit int) *titleRetry {
+	if result.status != "completed" || result.decision.Action != "rename" || result.decision.Title == base {
+		return nil
+	}
+	title := result.decision.Title
+	reason := titleFailure(title, limit)
+	if reason.Code == "" {
+		return nil
+	}
+	return &titleRetry{title, reason.Code, utf8.RuneCountInString(title), limit}
+}
+
+func providerPrompt(payload []byte, maxLength int, feedback *titleRetry) (string, []byte, error) {
 	var preset string
 	switch maxLength {
 	case shortTitleLength:
@@ -122,6 +142,21 @@ func providerPrompt(payload []byte, maxLength int) (string, []byte, error) {
 	policy := namingPolicy + "\n" + preset
 	if data["connectivity_test"] == true {
 		policy = `这是一个连接测试。只返回 {"action":"keep","title":"","reason":""}。`
+	}
+	if feedback != nil {
+		policy += "\n上一次改名未通过校验。retry_feedback.previous_title 是上一次标题的原文，actual_length 是它的 Unicode 码点数。"
+		switch feedback.FailureCode {
+		case failureTooLong:
+			policy += "压缩原有对象和目标，将码点数严格控制在 retry_feedback.max_title_length 以内。emoji 的每个码点、空格和全角｜都计入长度。使用更短的自然措辞，避免截断单词。"
+		case failureCategory:
+			policy += "类别 emoji 不合法。选择规则列出的一个 emoji，后接一个空格，再写对象｜目标。"
+		case failureSeparator:
+			policy += "对象与目标的分隔符不合法。只用一个全角｜分隔，分隔符两侧均有内容且无多余空格。"
+		case failureTitleFormat:
+			policy += "标题格式不合法。去掉首尾空白、控制字符和不允许的符号，严格使用「emoji 空格 对象｜目标」。"
+		}
+		policy += "若 current_title 为空且主题明确，仍用 rename 返回修正后的标题。"
+		data["retry_feedback"] = feedback
 	}
 	data["max_title_length"] = maxLength
 	prompt, err := json.Marshal(data)
