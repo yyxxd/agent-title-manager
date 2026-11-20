@@ -96,11 +96,13 @@ func TestTitleValidationFailureRetriesNextNewTurnAfterRestart(t *testing.T) {
 	e = engineAt(t, dir, nil)
 	configure(e)
 	p.Revision = "duplicate"
+	p.ConfirmationOnly = true
 	call[accepted](t, e, "event.submit", p)
 	if r := revisionRecord(t, e, p.Revision); r.Reason != decisionDuplicate || len(r.Attempts) != 0 {
 		t.Fatalf("duplicate: %+v", r)
 	}
 	p.Revision = "next"
+	p.ConfirmationOnly = false
 	p.SubstantiveActivity = true
 	call[accepted](t, e, "event.submit", p)
 	eventually(t, func() bool { return revisionRecord(t, e, p.Revision).Reason == decisionModelKeep })

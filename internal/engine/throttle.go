@@ -41,8 +41,7 @@ func followsTurnWindow(previous, next []string) bool {
 }
 
 func throttleNaming(ctx context.Context, tx *sql.Tx, p submission, s session, now int64, hashes []string, goalHash string) (keep bool, skippedTurn int, err error) {
-	if p.CurrentTitle == "" || p.NativeOnly || s.manual || (p.ConfirmationOnly && !p.SubstantiveActivity) ||
-		s.priorRevision == "" || s.priorProject != s.projectKey {
+	if p.CurrentTitle == "" || p.NativeOnly || s.manual || s.priorRevision == "" || s.priorProject != s.projectKey {
 		return false, 0, nil
 	}
 	var baseline, previousHashes, previousGoal string
@@ -77,6 +76,9 @@ func throttleNaming(ctx context.Context, tx *sql.Tx, p submission, s session, no
 	}
 	if identical && !p.SubstantiveActivity {
 		return true, 0, nil
+	}
+	if p.ConfirmationOnly && !p.SubstantiveActivity {
+		return false, 0, nil
 	}
 	var reviewed, when int64
 	var validationFailed bool
