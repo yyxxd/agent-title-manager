@@ -20,6 +20,9 @@ import (
 //go:embed acp-observer.mjs
 var acpObserver string
 
+//go:embed acp-rpc.mjs
+var acpRPC string
+
 type NodeCommand func(context.Context, ...string) (*exec.Cmd, error)
 type Handler func(context.Context, string, json.RawMessage) (any, error)
 
@@ -33,7 +36,7 @@ func (i *Integration) RunACPObserver(ctx context.Context, dir string, node NodeC
 	}
 	ctx, cancel := i.operation(ctx, "antigravity")
 	defer cancel()
-	cmd, err := node(ctx, "--input-type=module", "-e", acpObserver, dir, filepath.Dir(db))
+	cmd, err := node(ctx, "--input-type=module", "-e", acpRPC+"\n"+acpObserver, dir, filepath.Dir(db))
 	if err != nil {
 		return err
 	}

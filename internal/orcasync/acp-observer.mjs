@@ -19,40 +19,10 @@ function match(root, row, since) {
   if (state?.revision === turn.revision) return { identified, state };
 }
 
-// 只有桌面服务持有这对管道。工作台标识来自当前数据库记录，而非 Hook 请求。
-function parentRPC(input) {
-  let sequence = 0;
-  const pending = new Map();
-  input.on("line", line => {
-    try {
-      const { id, result, error } = JSON.parse(line);
-      const job = pending.get(id);
-      pending.delete(id);
-      if (error) job?.reject(new Error(error));
-      else job?.resolve(result);
-    } catch (error) { diagnostic("observer.reply.invalid", error); }
-  });
-  input.once("close", () => {
-    for (const job of pending.values()) job.reject(new Error("Observer parent disconnected"));
-    pending.clear();
-  });
-  return (row, method, params, signal) => new Promise((resolve, reject) => {
-    if (input.closed || signal?.aborted) return reject(new Error("Observer stopped"));
-    const id = ++sequence;
-    pending.set(id, { resolve, reject });
-    process.stdout.write(JSON.stringify({ id, orcaSessionId: row?.orca, method, params }) + "\n", error => {
-      if (error) {
-        pending.delete(id);
-        reject(error);
-      }
-    });
-  });
-}
-
 const accountHome = join(home, "antigravity-chat");
 const root = { dir: join(accountHome, "antigravity-acp"), accountHome };
 const input = createInterface({ input: process.stdin });
-const rpc = parentRPC(input);
+const rpc = parentRPC(input, process.stdout, diagnostic);
 const observer = observeSettlements({
   started: Date.now(), read: since => rpc(null, "settlements.list", { since }),
   match: (row, since) => match(root, row, since),
