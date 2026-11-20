@@ -13,7 +13,6 @@ import (
 	"time"
 
 	"golang.org/x/sys/windows"
-	"golang.org/x/sys/windows/registry"
 	_ "modernc.org/sqlite"
 )
 
@@ -33,11 +32,11 @@ func (h *WindowsHelper) Deps(publicKeyHex string) helperDeps {
 	return helperDeps{
 		verify:        func() error { return verifyHandoff(h.handoff, publicKeyHex) },
 		waitExit:      h.waitExit,
-		prepare:       prepareSnapshot,
+		prepare:       h.prepare,
 		install:       installNSIS,
 		checkVersion:  checkInstalledVersion,
 		verifyData:    verifyDatabase,
-		verifyVersion: verifyRegistryVersion,
+		verifyVersion: h.verifyRegistryVersion,
 		restart:       restartApp,
 	}
 }
@@ -98,29 +97,6 @@ func checkInstalledVersion(installDir, want string) error {
 	}
 	if got := strings.TrimSpace(string(output)); got != want {
 		return fmt.Errorf("版本不符: 期望 %s，实际 %s", want, got)
-	}
-	return nil
-}
-
-// verifyRegistryVersion checks the uninstall record for a normal (non-isolated)
-// install, including the custom target path. Isolated installs skip integration.
-func verifyRegistryVersion(installDir, want string) error {
-	if os.Getenv("ATM_UPDATE_ISOLATED") == "1" {
-		return nil
-	}
-	const keyPath = `Software\Microsoft\Windows\CurrentVersion\Uninstall\AgentTitleManager`
-	key, err := registry.OpenKey(registry.CURRENT_USER, keyPath, registry.QUERY_VALUE)
-	if err != nil {
-		return fmt.Errorf("无法读取安装登记信息: %w", err)
-	}
-	defer key.Close()
-	version, _, err := key.GetStringValue("DisplayVersion")
-	if err != nil || version != want {
-		return fmt.Errorf("登记版本不符: 期望 %s，实际 %s (%v)", want, version, err)
-	}
-	location, _, err := key.GetStringValue("InstallLocation")
-	if err != nil || !strings.EqualFold(filepath.Clean(location), filepath.Clean(installDir)) {
-		return fmt.Errorf("登记路径不符: 期望 %s，实际 %s (%v)", installDir, location, err)
 	}
 	return nil
 }

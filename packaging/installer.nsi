@@ -112,6 +112,7 @@ removeFiles:
   Delete "$INSTDIR\plugins\THIRD_PARTY_NOTICES.md"
   RMDir /r "$INSTDIR\plugins\codex"
   RMDir /r "$INSTDIR\plugins\claude"
+  RMDir /r "$INSTDIR\plugins\antigravity"
   RMDir /r "$INSTDIR\plugins\pi"
   RMDir /r "$INSTDIR\plugins\example"
   RMDir "$INSTDIR\plugins"
