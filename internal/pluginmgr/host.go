@@ -184,6 +184,9 @@ func editPi(root object, entry string, adding bool) (bool, error) {
 const antigravityLauncher = ` -NoProfile -NonInteractive -Command "& `
 
 var oldAntigravityCommand = regexp.MustCompile(`(?i)^"[^"]*[\\/]node(?:\.exe)?" "[^"]*[\\/]packages[\\/]pkg-[0-9]{8}-[0-9]+[\\/]index\.mjs" (start|prompt|stop)$`)
+var encodedAntigravityCommand = regexp.MustCompile(`(?i)^[A-Z]:/[\pL\pN_./-]+/WindowsPowerShell/v1\.0/powershell\.exe` + regexp.QuoteMeta(antigravityLauncher) +
+	regexp.QuoteMeta(`([Text.Encoding]::UTF8.GetString([Convert]::FromBase64String('`) + `[A-Za-z0-9+/]+={0,2}` +
+	regexp.QuoteMeta(`'))) ([Text.Encoding]::UTF8.GetString([Convert]::FromBase64String('`) + `[A-Za-z0-9+/]+={0,2}` + regexp.QuoteMeta(`')))"`) + ` (start|prompt|stop)$`)
 
 func editAntigravity(root object, entry string, adding bool) (bool, error) {
 	const groupName = "agent-title-manager"
@@ -206,7 +209,7 @@ func editAntigravity(root object, entry string, adding bool) (bool, error) {
 				return false, errors.New("Antigravity Hook 配置无法解析")
 			}
 			value, _ := h["command"].(string)
-			if h["type"] == "command" && (value == command || oldAntigravityCommand.MatchString(value)) {
+			if h["type"] == "command" && (value == command || oldAntigravityCommand.MatchString(value) || encodedAntigravityCommand.MatchString(value)) {
 				if adding && !found && value == command {
 					found = true
 				} else {

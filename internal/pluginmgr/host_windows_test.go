@@ -55,12 +55,15 @@ func TestAntigravityHookThroughRealCmd(t *testing.T) {
 	if err != nil {
 		t.Skip("Node.js is unavailable")
 	}
-	dir := filepath.Join(t.TempDir(), "AGY %TEMP%! & (Hook's package)")
+	dir := filepath.Join(t.TempDir(), "AGY %TEMP% !TEMP! ^& (Hook's \u2018package\u2019) $value; sample")
 	entry := filepath.Join(dir, "index 中文.mjs")
 	writeFixture(t, entry, `process.stdout.write(process.argv[2] + ":"); process.stdin.pipe(process.stdout)`)
 	prefix, err := hookEntry("antigravity", node, entry)
 	if err != nil {
 		t.Fatal(err)
+	}
+	if strings.Contains(prefix, "Base64") || !strings.Contains(prefix, "Hook''s") {
+		t.Fatalf("expected a plain-text launch command, got %q", prefix)
 	}
 	systemDir, err := windows.GetSystemDirectory()
 	if err != nil {

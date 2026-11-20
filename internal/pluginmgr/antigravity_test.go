@@ -2,6 +2,7 @@ package pluginmgr
 
 import (
 	"context"
+	"encoding/base64"
 	"encoding/json"
 	"os"
 	"path/filepath"
@@ -73,7 +74,11 @@ func TestAntigravityBundledUpgradeRemovesLegacyHookDuplicates(t *testing.T) {
 		node := filepath.Join(m.bundled, "node.exe")
 		path := filepath.Join(m.packageDir(state.Items[id].release), "index.mjs")
 		legacy := map[string]any{"type": "command", "command": `"` + node + `" "` + path + `" ` + event.arg}
-		group[event.name] = append(group[event.name], legacy, legacy)
+		encode := func(value string) string {
+			return `([Text.Encoding]::UTF8.GetString([Convert]::FromBase64String('` + base64.StdEncoding.EncodeToString([]byte(value)) + `')))`
+		}
+		encoded := map[string]any{"type": "command", "command": `C:/Windows/System32/WindowsPowerShell/v1.0/powershell.exe` + antigravityLauncher + encode(node) + " " + encode(path) + `" ` + event.arg}
+		group[event.name] = append(group[event.name], legacy, legacy, encoded, encoded)
 	}
 	root["other-group"] = map[string][]map[string]any{"Stop": {{"type": "command", "command": "custom"}}}
 	group["Stop"] = append(group["Stop"], map[string]any{"type": "command", "command": "user-hook"})
