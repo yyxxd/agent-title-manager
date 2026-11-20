@@ -8,7 +8,7 @@ Windows 桌面应用，在本机管理 Codex、Claude Code、Antigravity 和 Pi 
 
 1. 在「模型」选择 Codex 订阅、Claude Code 或自定义 API。原生来源从本机 CLI 读取可见模型和各模型的思考强度，目录读取失败或重新登录后可刷新。通过「测试连接」检验当前草稿。Codex Fast 单独开关，实际档位见记录。启用回退后，只有 Codex 确认失败且已配置 API 时才改用 API。
 2. 在「Agent」启用对应适配器。Codex 若要求核准 Hook，请在 Codex 中运行 `/hooks`，审核后打开会话或完成一轮对话。
-3. 若使用 Orca，在「工作台集成」按需启用同步。支持可核验的 Orca 聊天及终端标签，含 Pi 和 Antigravity CLI 的终端会话。记录页可筛选待处理项目，重试失败的同步或手动采用新标题覆盖 Orca 中受保护的标题。
+3. 若使用 Orca，在「工作台集成」按需启用同步。支持可核验的 Orca 聊天及终端标签，含 Pi 和 Antigravity CLI 的终端会话。进入「记录」页会将已有提醒全部标为已读。之后仍可在「提醒记录」中查看失败详情、重试同步或手动采用新标题。
 
 Claude 完成第一轮对话后会在后台生成标题。候选就绪后，发送下一条消息或重新打开该会话时应用。
 
@@ -38,7 +38,7 @@ Claude Code 命名来源使用原版 CLI 的 `claude.ai` 登录。应用隔离�
 
 更新应用图标时，替换 `internal/desktop/icon.png` 后运行 `go generate ./cmd/atm`，并提交两个架构的资源文件与 `packaging/app.ico`（安装程序和卸载程序使用）。打包脚本会用当前 Go 工具链重新生成这些资源，提交的文件供普通的 `go build` 使用。
 
-脚本执行前端构建和 Go 测试，将桌面可执行文件、bridge、内置插件和 Node.js 组装至 `out\windows-x64-*`，默认生成 `out\AgentTitleManager-0.4.1-windows-x64-setup.exe`。默认版本从 `internal/desktop/version.txt` 读取。
+脚本执行前端构建和 Go 测试，将桌面可执行文件、bridge、内置插件和 Node.js 组装至 `out\windows-x64-*`，默认生成 `out\AgentTitleManager-0.4.2-windows-x64-setup.exe`。默认版本从 `internal/desktop/version.txt` 读取。
 
 测试可为桌面应用和 bridge 同时设置绝对路径 `ATM_DATA_DIR`，隔离 SQLite、WebView2 数据及命名管道。验证安装程序时使用独立目录，例如 `setup.exe /S /NoIntegration /D=C:\temp\atm-sandbox`。插件操作仍须使用独立 Agent 配置与会话样本。
 

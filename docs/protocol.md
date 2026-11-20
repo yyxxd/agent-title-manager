@@ -162,7 +162,9 @@ Anthropic 输入计入已报告的缓存创建和读取 Token，缓存列记录�
 }
 ```
 
-`records.list {"limit":50,"filter":"attention","query":"关键词"}` 在全部历史中检索事件。可省略 `filter`，或传 `all`、`attention`、Agent ID。将返回的 `next` 原样传为 `before` 获取下一页，保持筛选和搜索词一致。每页默认 50、最多 200。`counts` 按搜索范围给出 `total`、`attention`、`failed`、`syncFailed`、`protected`。待处理合并命名失败、同步失败及可采用的 Orca 保护记录，重叠只计一条。原生标题锁定仅在历史中说明。记录的 `canAdopt` 表示受保护的 Orca 记录仍匹配当前原生标题和绑定，执行时仍需实时核验。
+`records.list {"limit":50,"filter":"attention","query":"关键词"}` 在全部历史中检索事件。可省略 `filter`，或传 `all`、`attention`、Agent ID。将返回的 `next` 原样传为 `before` 获取下一页，保持筛选和搜索词一致。每页默认 50、最多 200。`counts` 按搜索范围给出 `total`、`unread`、`attention`、`failed`、`syncFailed`、`protected`。`attention` 合并命名失败、同步失败及可采用的 Orca 保护记录，重叠只计一条。`unread` 仅计其中未读的提醒。原生标题锁定仅在历史中说明。记录的 `canAdopt` 表示受保护的 Orca 记录仍匹配当前原生标题和绑定，执行时仍需实时核验。
+
+桌面进入「记录」页时调用 `records.open`，参数和返回格式与 `records.list` 相同。在同一事务中先将所有现有提醒标为已读，再按筛选和分页返回历史。后台读取、搜索、翻页和刷新均调用只读的 `records.list`。新出现的失败仍会产生未读提醒。
 
 事件的 `reason` 为可选固定码。模型保留包含 `model_keep_goal`（延续目标）、`model_keep_progress`（已有工作内的步骤或进展）、`model_keep_unspecified`（具体依据无法确认）及历史 `model_keep`（具体依据未记录）。标题保护使用 `manual_locked` 或 `unknown_protected`。其它原因有 `empty_title`、`no_content`、`confirmation_only`、`throttled`、`duplicate_turn`、`title_collision`、`same_title`。历史没有记录原因时省略。失败信息可通过 `failure` 返回当时的长度和上限。记录不返回对话、模型原始理由或密钥。
 

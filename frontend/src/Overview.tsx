@@ -17,7 +17,6 @@ import {
   rpc,
   type Daily,
   type Plugin,
-  type RecordCounts,
   type Settings,
 } from './rpc';
 import { toast } from './toast';
@@ -44,14 +43,14 @@ export function Overview({
   revision,
   plugins,
   settings,
-  counts,
+  unread,
   onNavigate,
   onRefreshShell,
 }: {
   revision: number;
   plugins: Plugin[];
   settings?: Settings;
-  counts: RecordCounts;
+  unread: number;
   onNavigate: (page: 'agents' | 'models' | 'records', recordFilter?: 'attention') => void;
   onRefreshShell: () => void;
 }) {
@@ -109,25 +108,20 @@ export function Overview({
         : `自定义 API · ${settings.apiModel || '未填模型'}`
     : '读取中…';
 
-  const attnParts: string[] = [];
-  if (counts.failed > 0) attnParts.push(`${counts.failed} 条命名失败`);
-  if (counts.syncFailed > 0) attnParts.push(`${counts.syncFailed} 条同步至 Orca 失败`);
-  if (counts.protected > 0) attnParts.push(`${counts.protected} 条 Orca 标题受保护`);
-
   const scope = selectedAgent ?? value;
   const usageMetrics = computeScopeTokens(scope, agents, value);
   const maxRenamed = Math.max(...agents.map((a) => a.renames), 1);
 
   return (
     <main className="main">
-      {attnParts.length > 0 && (
+      {unread > 0 && (
         <div className="alert-strip" role="status">
           <span className="alert-strip-left">
             <AlertCircle size={15} aria-hidden="true" />
-            <span>待处理：{attnParts.join('，')}</span>
+            <span>{unread} 条新提醒</span>
           </span>
           <button type="button" className="alert-link" onClick={() => onNavigate('records', 'attention')}>
-            前往处理 →
+            查看记录 →
           </button>
         </div>
       )}
