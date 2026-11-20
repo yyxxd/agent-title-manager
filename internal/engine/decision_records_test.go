@@ -185,12 +185,64 @@ func TestEmptyTitleAndNoContentHaveDifferentDecisionReasons(t *testing.T) {
 	}
 }
 
+func TestConfirmationAfterValidationFailureWaitsForSubstantiveTurn(t *testing.T) {
+	e := engineAt(t, t.TempDir(), nil)
+	var clock atomic.Int64
+	var calls atomic.Int32
+	clock.Store(time.Now().UnixMilli())
+	e.now = func() time.Time { return time.UnixMilli(clock.Load()) }
+	e.generate = func(_ context.Context, _ attemptRequest, start func() error) modelResult {
+		if err := start(); err != nil {
+			t.Error(err)
+			return modelResult{status: "failed"}
+		}
+		switch calls.Add(1) {
+		case 2, 3:
+			return modelResult{status: "completed", decision: decision{Action: "rename", Title: "🧩 项目｜" + strings.Repeat("长", 24)}}
+		default:
+			return modelResult{status: "completed", decision: decision{Action: "rename", Title: goodTitle}}
+		}
+	}
+	p := event("initial", "")
+	call[accepted](t, e, "event.submit", p)
+	eventually(t, func() bool { return revisionRecord(t, e, p.Revision).Status == "candidate" })
+	c := call[claimResponse](t, e, "title.claim", claimRequest{p.Agent, p.SessionID, "", p.Revision}).Candidate
+	if c == nil || !call[accepted](t, e, "title.ack", ackRequest{p.Agent, p.SessionID, c.ID, c.Title}).Accepted {
+		t.Fatal("could not establish managed title")
+	}
+	p.CurrentTitle = c.Title
+	clock.Add(recheckCooldown.Milliseconds())
+	p.Revision = "invalid"
+	p.Turns = append(p.Turns, turn{"user", "实现新需求"}, turn{"assistant", "整理了实现步骤"})
+	call[accepted](t, e, "event.submit", p)
+	eventually(t, func() bool { return revisionRecord(t, e, p.Revision).Status == "failed" })
+	for i, text := range []string{"好的", "收到", "可以", "谢谢", "嗯嗯"} {
+		p.Revision, p.ConfirmationOnly = fmt.Sprintf("confirm-%d", i), true
+		p.Turns = append(p.Turns, turn{"user", text}, turn{"assistant", "收到"})
+		p.Turns = p.Turns[max(0, len(p.Turns)-8):]
+		call[accepted](t, e, "event.submit", p)
+		got := revisionRecord(t, e, p.Revision)
+		if got.Reason != decisionConfirmation || len(got.Attempts) != 0 || calls.Load() != 3 {
+			t.Fatalf("confirmation should preserve a pending review: %+v, calls=%d", got, calls.Load())
+		}
+	}
+	p.Revision, p.ConfirmationOnly, p.SubstantiveActivity = "tool-progress", false, true
+	p.Turns = append(p.Turns[2:], turn{"user", "继续"}, turn{"assistant", "工具已完成校验"})
+	call[accepted](t, e, "event.submit", p)
+	eventually(t, func() bool { return revisionRecord(t, e, p.Revision).Reason == decisionSame })
+	if got := revisionRecord(t, e, p.Revision); len(got.Attempts) != 1 || calls.Load() != 4 {
+		t.Fatalf("tool progress should trigger one immediate review: %+v, calls=%d", got, calls.Load())
+	}
+}
+
 func TestRecordsCountAndSearchAllHistoryWithoutRepeatingPages(t *testing.T) {
 	e := engineAt(t, t.TempDir(), nil)
 	now := e.now().UnixMilli()
 	for i := range 67 {
 		id := fmt.Sprintf("record-%d", i)
 		status, sync, reason := "kept", "", decisionModelKeep
+		orcaID, sessionOrcaID := "", ""
+		var orcaBase *string
 		switch i {
 		case 0:
 			status, sync = "failed", "failed"
@@ -200,8 +252,17 @@ func TestRecordsCountAndSearchAllHistoryWithoutRepeatingPages(t *testing.T) {
 			reason = decisionProtected
 		case 3:
 			sync = "protected"
+			reason = decisionManual
+			orcaID, sessionOrcaID = "orca-current", "orca-current"
+			old := "Orca 原标题"
+			orcaBase = &old
 		case 4:
 			status = "failed"
+		case 5:
+			sync = "protected"
+			orcaID, sessionOrcaID = "orca-old", "orca-new"
+			old := "Orca 旧绑定标题"
+			orcaBase = &old
 		}
 		if status == "failed" {
 			reason = ""
@@ -236,6 +297,9 @@ func TestRecordsCountAndSearchAllHistoryWithoutRepeatingPages(t *testing.T) {
 				t.Fatalf("repeated %s", item.ID)
 			}
 			seen[item.ID] = true
+			if item.ID == "record-3" && (!item.CanAdopt || item.Reason != decisionManual) {
+				t.Fatalf("native lock hid actionable Orca protection: %+v", item)
+			}
 		}
 		next = page.Next
 		if next == nil {
@@ -245,25 +309,11 @@ func TestRecordsCountAndSearchAllHistoryWithoutRepeatingPages(t *testing.T) {
 	if len(seen) != wantCounts.Attention {
 		t.Fatalf("missing records: %v", seen)
 	}
+	if !seen["record-0"] || !seen["record-3"] || !seen["record-4"] {
+		t.Fatalf("wrong pending records: %v", seen)
+	}
 	found := call[recordList](t, e, "records.list", listRequest{Filter: "attention", Query: "Old-Resolved-Model"})
 	if len(found.Items) != 1 || found.Items[0].ID != "record-0" || len(found.Items[0].Attempts) != 1 || found.Counts.Attention != 1 {
 		t.Fatalf("search across all history: %+v", found)
 	}
 }
-		orcaID, sessionOrcaID := "", ""
-		var orcaBase *string
-			reason = decisionManual
-			orcaID, sessionOrcaID = "orca-current", "orca-current"
-			old := "Orca 原标题"
-			orcaBase = &old
-		case 5:
-			sync = "protected"
-			orcaID, sessionOrcaID = "orca-old", "orca-new"
-			old := "Orca 旧绑定标题"
-			orcaBase = &old
-			if item.ID == "record-3" && (!item.CanAdopt || item.Reason != decisionManual) {
-				t.Fatalf("native lock hid actionable Orca protection: %+v", item)
-			}
-	if !seen["record-0"] || !seen["record-3"] || !seen["record-4"] {
-		t.Fatalf("wrong pending records: %v", seen)
-	}

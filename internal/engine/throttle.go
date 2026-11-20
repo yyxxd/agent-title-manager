@@ -24,20 +24,40 @@ func hashTurnWindow(turns []turn) []string {
 	return hashes
 }
 
-func followsTurnWindow(previous, next []string) bool {
+func turnWindowOverlap(previous, next []string) int {
 	if len(next) >= len(previous) && slices.Equal(previous, next[:len(previous)]) {
-		return true
+		return len(previous)
 	}
 	if len(previous) < 4 || len(next) < 4 {
-		return false
+		return 0
 	}
 	// 旧窗口的后缀须与新窗口的前缀重叠，且新窗口须包含新增消息。
 	for overlap := min(len(previous), len(next)) - 1; overlap >= 2; overlap-- {
 		if slices.Equal(previous[len(previous)-overlap:], next[:overlap]) {
-			return true
+			return overlap
 		}
 	}
-	return false
+	return 0
+}
+
+type titleReview struct {
+	row, when        int64
+	validationFailed bool
+}
+
+func latestTitleReview(ctx context.Context, tx *sql.Tx, p submission) (titleReview, error) {
+	var review titleReview
+	err := tx.QueryRowContext(ctx, `SELECT e.rowid,COALESCE(e.finalized,e.updated),
+		e.status='failed' AND (e.failure_code IN ('title_too_long','title_category','title_separator','title_format')
+			OR (e.failure_code='' AND (SELECT status FROM attempts WHERE event_id=e.id ORDER BY id DESC LIMIT 1)='completed'))
+		FROM events e
+		WHERE e.agent=? AND e.session_id=? AND e.native_only=0
+		  AND (e.base=? OR (e.status='applied' AND e.title=?))
+		  AND e.status IN ('applied','kept','failed','candidate','claimed')
+		  AND EXISTS(SELECT 1 FROM attempts a WHERE a.event_id=e.id AND a.status='completed')
+		ORDER BY e.rowid DESC LIMIT 1`, p.Agent, p.SessionID, p.CurrentTitle, p.CurrentTitle).
+		Scan(&review.row, &review.when, &review.validationFailed)
+	return review, err
 }
 
 func throttleNaming(ctx context.Context, tx *sql.Tx, p submission, s session, now int64, hashes []string, goalHash string) (keep bool, skippedTurn int, err error) {
@@ -67,7 +87,7 @@ func throttleNaming(ctx context.Context, tx *sql.Tx, p submission, s session, no
 		identical = count == len(p.Turns)
 	case previousGoal == goalHash:
 		previous := strings.Split(previousHashes, ",")
-		if !followsTurnWindow(previous, hashes) {
+		if turnWindowOverlap(previous, hashes) == 0 {
 			return false, 0, nil
 		}
 		identical = slices.Equal(previous, hashes)
@@ -80,29 +100,19 @@ func throttleNaming(ctx context.Context, tx *sql.Tx, p submission, s session, no
 	if p.ConfirmationOnly && !p.SubstantiveActivity {
 		return false, 0, nil
 	}
-	var reviewed, when int64
-	var validationFailed bool
-	err = tx.QueryRowContext(ctx, `SELECT e.rowid,COALESCE(e.finalized,e.updated),
-		e.status='failed' AND (e.failure_code IN ('title_too_long','title_category','title_separator','title_format')
-			OR (e.failure_code='' AND (SELECT status FROM attempts WHERE event_id=e.id ORDER BY id DESC LIMIT 1)='completed'))
-		FROM events e
-		WHERE e.agent=? AND e.session_id=? AND e.native_only=0
-		  AND (e.base=? OR (e.status='applied' AND e.title=?))
-		  AND e.status IN ('applied','kept','failed','candidate','claimed')
-		  AND EXISTS(SELECT 1 FROM attempts a WHERE a.event_id=e.id AND a.status='completed')
-		ORDER BY e.rowid DESC LIMIT 1`, p.Agent, p.SessionID, p.CurrentTitle, p.CurrentTitle).Scan(&reviewed, &when, &validationFailed)
+	review, err := latestTitleReview(ctx, tx, p)
 	if errors.Is(err, sql.ErrNoRows) {
 		return false, 0, nil
 	}
 	if err != nil {
 		return false, 0, err
 	}
-	if validationFailed || now-when >= recheckCooldown.Milliseconds() {
+	if review.validationFailed || now-review.when >= recheckCooldown.Milliseconds() {
 		return false, 0, nil
 	}
 	var skipped int
 	err = tx.QueryRowContext(ctx, `SELECT COALESCE(SUM(throttle_skips),0) FROM events
-		WHERE agent=? AND session_id=? AND base=? AND native_only=0 AND rowid>?`, p.Agent, p.SessionID, p.CurrentTitle, reviewed).
+		WHERE agent=? AND session_id=? AND base=? AND native_only=0 AND rowid>?`, p.Agent, p.SessionID, p.CurrentTitle, review.row).
 		Scan(&skipped)
 	if err != nil {
 		return false, 0, err
