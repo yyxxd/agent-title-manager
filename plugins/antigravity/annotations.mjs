@@ -1,81 +1,110 @@
-import { closeSync, existsSync, fstatSync, fsyncSync, lstatSync, openSync, readFileSync, realpathSync, renameSync, mkdirSync, writeFileSync } from "node:fs";
-import { homedir } from "node:os";
-import { dirname, isAbsolute, join, relative, resolve } from "node:path";
+import { randomUUID } from "node:crypto";
+import { closeSync, fsyncSync, mkdirSync, openSync, readFileSync, renameSync, unlinkSync, writeFileSync } from "node:fs";
+import { dirname, join } from "node:path";
+import { diagnostic } from "./diagnostics.mjs";
+import { safeID, safeStat } from "./paths.mjs";
+import { readStored, updateSummaries } from "./summaries.mjs";
 
 const MAX = 64 * 1024;
-const rootDir = () => resolve(process.env.ANTIGRAVITY_DATA_DIR || join(homedir(), ".gemini", "antigravity-cli"));
-export function annotationPath(appDataDir, id) { return join(appDataDir, "annotations", id + ".pbtxt"); }
-function quote(value) { return JSON.stringify(value).slice(1, -1).replace(/\u0008/g, "\\b").replace(/\u000c/g, "\\f"); }
-function unquote(value) { try { return JSON.parse('"' + value.replace(/\\([\s\S])/g, (_, c) => c === '"' ? '\\"' : '\\' + c) + '"'); } catch { return value; } }
-function safePath(file, base) {
-  const realBase = realpathSync(base);
-  const real = realpathSync(file);
-  const rel = relative(realBase, real);
-  return rel && !rel.startsWith("..") && !isAbsolute(rel) ? real : undefined;
-}
-export function readTitle(appDataDir, id) {
-  if (!/^[A-Za-z0-9_-]{1,120}$/.test(id)) return "";
-  const file = annotationPath(appDataDir, id);
-  try { if (existsSync(file) && !safePath(file, appDataDir)) throw new Error("annotation file escaped"); } catch (error) { if (error.code !== "ENOENT") throw error; }
-  try {
-    const real = safePath(file, appDataDir);
-    if (!real) return "";
-    const fd = openSync(real, "r");
-    const stat = fstatSync(fd);
-    closeSync(fd);
-    if (stat.size > MAX) return "";
-    const text = readFileSync(real, "utf8");
-    const match = text.match(/^\s*title\s*:\s*"((?:\\.|[^"\\])*)"\s*$/m);
-    return match ? unquote(match[1]) : "";
-  } catch (error) { if (error.code === "ENOENT") return ""; return ""; }
-}
-export function writeTitle(appDataDir, id, title) {
-  if (!/^[A-Za-z0-9_-]{1,120}$/.test(id) || typeof title !== "string" || title.length > 256 || /[\u0000-\u001f\u007f]/.test(title)) throw new Error("invalid annotation");
-  const dir = join(appDataDir, "annotations");
-  mkdirSync(dir, { recursive: true });
-  if (!safePath(dir, appDataDir)) throw new Error("annotation path escaped");
-  const file = annotationPath(appDataDir, id);
-  try { if (lstatSync(file).isSymbolicLink()) throw new Error("annotation file symlink"); } catch (error) { if (error.code !== "ENOENT") throw error; }
-  let prior = "";
-  try { prior = readFileSync(file, "utf8"); } catch (error) { if (error.code !== "ENOENT") throw error; }
-  const lines = prior ? prior.split(/\r?\n/).filter(line => !/^\s*title\s*:/.test(line)) : [];
-  while (lines.at(-1) === "") lines.pop();
-  lines.push(`title:"${quote(title)}"`, "");
-  const temp = file + `.tmp-${process.pid}-${Date.now()}`;
-  const fd = openSync(temp, "wx", 0o600);
-  try { writeFileSync(fd, lines.join("\n"), "utf8"); fsyncSync(fd); } finally { closeSync(fd); }
-  renameSync(temp, file);
-  updateSummary(appDataDir, id, title);
-  return readTitle(appDataDir, id) === title;
-}
-function updateSummary(appDataDir, id, title) {
-  try {
-    const dbPath = join(appDataDir, "conversation_summaries.db");
-    if (!existsSync(dbPath) || lstatSync(dbPath).isSymbolicLink()) return;
-    const builtin = process.getBuiltinModule?.("node:sqlite");
-    if (!builtin?.DatabaseSync) return;
-    const db = new builtin.DatabaseSync(dbPath);
-    try {
-      db.prepare("UPDATE conversation_summaries SET title=?, preview=? WHERE conversation_id=?").run(title, title, id);
-      const row = db.prepare("SELECT raw_summary FROM conversation_summaries WHERE conversation_id=?").get(id);
-      const raw = row?.raw_summary;
-      const updated = raw && replaceSummary(raw, title);
-      if (updated) db.prepare("UPDATE conversation_summaries SET raw_summary=? WHERE conversation_id=?").run(updated, id);
-      db.prepare("UPDATE conversations_fts SET title=? WHERE conversation_id=? AND chunk_index=-1").run(title, id);
-    } finally { db.close(); }
-  } catch { /* pbtxt remains authoritative */ }
+const utf8 = new TextDecoder("utf-8", { fatal: true, ignoreBOM: true });
+const annotationPath = (dir, id) => join(dir, "annotations", id + ".pbtxt");
+const token = /#[^\n]*|"(?:\\[\s\S]|[^"\\])*"|'(?:\\[\s\S]|[^'\\])*'|[A-Za-z_][\w]*|[^\s]/g;
+const escapeBytes = { a: 7, b: 8, f: 12, n: 10, r: 13, t: 9, v: 11, "\\": 92, "'": 39, '"': 34, "?": 63 };
+
+function decodeString(token) {
+  const bytes = [];
+  const body = token.slice(1, -1);
+  for (const match of body.matchAll(/\\(x[0-9a-f]{1,2}|[0-7]{1,3}|u[0-9a-f]{4}|U[0-9a-f]{8}|.)|[^\\]+|\\/gis)) {
+    const escape = match[1];
+    if (!escape) {
+      if (match[0] === "\\") throw new Error("Invalid Antigravity annotation escape");
+      bytes.push(Buffer.from(match[0]));
+    } else if (escape in escapeBytes) {
+      bytes.push(Buffer.of(escapeBytes[escape]));
+    } else if (/^[0-7]+$/.test(escape) && Number.parseInt(escape, 8) <= 255) {
+      bytes.push(Buffer.of(Number.parseInt(escape, 8)));
+    } else if (escape[0] === "x" && escape.length > 1) {
+      bytes.push(Buffer.of(Number.parseInt(escape.slice(1), 16)));
+    } else if (/^[uU]/.test(escape) && escape.length > 1) {
+      bytes.push(Buffer.from(String.fromCodePoint(Number.parseInt(escape.slice(1), 16))));
+    } else {
+      throw new Error("Invalid Antigravity annotation escape");
+    }
+  }
+  return Buffer.concat(bytes);
 }
 
-function varint(bytes, offset) { let value = 0, shift = 0; for (let i = offset; i < bytes.length && shift < 64; i++, shift += 7) { const b = bytes[i]; value += (b & 0x7f) * 2 ** shift; if (!(b & 0x80)) return [value, i + 1]; } return undefined; }
-function encodeVarint(value) { const out = []; do { let b = value % 128; value = Math.floor(value / 128); if (value) b |= 128; out.push(b); } while (value); return Uint8Array.from(out); }
-function replaceMessage(bytes, title) {
-  const out = [], encoder = new TextEncoder(); let i = 0, found = false;
-  while (i < bytes.length) { const start = i, tag = varint(bytes, i); if (!tag) return undefined; i = tag[1]; const field = tag[0] >> 3, wire = tag[0] & 7; if (wire !== 2) { if (wire === 0) { const v = varint(bytes, i); if (!v) return undefined; i = v[1]; } else return undefined; out.push(bytes.slice(start, i)); continue; } const len = varint(bytes, i); if (!len || i + len[0] > bytes.length) return undefined; i = len[1]; const payload = bytes.slice(i, i + len[0]); i += len[0]; if (field === 1) { const value = encoder.encode(title); out.push(Uint8Array.from([0x0a]), encodeVarint(value.length), value); found = true; } else out.push(bytes.slice(start, i)); }
-  return found ? Uint8Array.from(out.flatMap(part => [...part])) : undefined;
+function titleField(text) {
+  const fields = Array.from(text.matchAll(token)).filter(match => !match[0].startsWith("#"));
+  const stack = [];
+  let title;
+  for (let i = 0; i < fields.length; i++) {
+    const value = fields[i][0];
+    if ("{[<".includes(value)) stack.push({ "{": "}", "[": "]", "<": ">" }[value]);
+    else if ("}]>".includes(value)) {
+      if (stack.pop() !== value) throw new Error("Malformed Antigravity annotation");
+    } else if (value === '"' || value === "'") {
+      throw new Error("Unterminated Antigravity annotation string");
+    } else if (!stack.length && value === "title" && fields[i + 1]?.[0] === ":") {
+      const strings = [];
+      for (let j = i + 2; /^["'].*["']$/s.test(fields[j]?.[0] ?? ""); j++) strings.push(fields[j]);
+      if (title || !strings.length) throw new Error("Invalid Antigravity title field");
+      title = {
+        value: utf8.decode(Buffer.concat(strings.map(match => decodeString(match[0])))), strings,
+      };
+      i += 1 + strings.length;
+    }
+  }
+  if (stack.length) throw new Error("Malformed Antigravity annotation");
+  return title;
 }
-function replaceSummary(raw, title) {
-  const bytes = raw instanceof Uint8Array ? raw : Buffer.from(raw); const out = [], encoder = new TextEncoder(); let i = 0, changed = false;
-  while (i < bytes.length) { const start = i, tag = varint(bytes, i); if (!tag) return undefined; i = tag[1]; const field = tag[0] >> 3, wire = tag[0] & 7; if (wire !== 2) { if (wire === 0) { const v = varint(bytes, i); if (!v) return undefined; i = v[1]; } else return undefined; out.push(bytes.slice(start, i)); continue; } const len = varint(bytes, i); if (!len || i + len[0] > bytes.length) return undefined; i = len[1]; const payload = bytes.slice(i, i + len[0]); i += len[0]; let replacement = payload; if (field === 1) { replacement = encoder.encode(title); changed = true; } else if (field === 15) { replacement = replaceMessage(payload, title) || payload; changed = changed || replacement !== payload; } const changedField = field === 1 || (field === 15 && replacement !== payload); const prefix = changedField ? Uint8Array.from([((field << 3) | 2), ...encodeVarint(replacement.length)]) : bytes.slice(start, i - payload.length); out.push(prefix, replacement); }
-  return changed ? Uint8Array.from(out.flatMap(part => [...part])) : undefined;
+
+export function readTitle(dir, id) {
+  if (!safeID(id)) throw new Error("Invalid Antigravity session ID");
+  const text = readStored(dir, annotationPath(dir, id), MAX);
+  return text === undefined ? "" : titleField(utf8.decode(text))?.value ?? "";
 }
-export { rootDir };
+
+export function replaceStored(file, bytes, prior) {
+  const temp = file + "." + randomUUID() + ".tmp";
+  const fd = openSync(temp, "wx", 0o600);
+  let installed = false;
+  try {
+    try { writeFileSync(fd, bytes); fsyncSync(fd); } finally { closeSync(fd); }
+    const current = readStored(dirname(file), file, Math.max(64 * 1024, prior?.length ?? 0));
+    if (prior === undefined ? current !== undefined : !current?.equals(prior)) return false;
+    renameSync(temp, file);
+    installed = true;
+    return true;
+  } finally {
+    if (!installed) unlinkSync(temp);
+  }
+}
+
+export function writeTitle(dir, id, title, expected) {
+  if (!safeID(id) || typeof title !== "string" || !title.trim() || title.length > 256 || /[\u0000-\u001f\u007f]/.test(title)) {
+    throw new Error("Invalid Antigravity annotation");
+  }
+  if (!safeStat(dir, dir)?.isDirectory()) throw new Error("Missing Antigravity data root");
+  const file = annotationPath(dir, id);
+  const prior = readStored(dir, file, MAX);
+  const text = prior ? utf8.decode(prior) : "";
+  const field = titleField(text);
+  if (expected !== undefined && expected !== (field?.value ?? "")) return false;
+  const encoded = JSON.stringify(title);
+  const newline = text.includes("\r\n") ? "\r\n" : "\n";
+  let next = text;
+  if (field) {
+    // 只替换字符串 token，保留内联字段、注释、换行和原始格式。
+    for (const [index, match] of [...field.strings.entries()].reverse()) {
+      next = next.slice(0, match.index) + (index === 0 ? encoded : "") + next.slice(match.index + match[0].length);
+    }
+  } else {
+    next += (text && !text.endsWith("\n") ? newline : "") + "title:" + encoded + newline;
+  }
+  mkdirSync(join(dir, "annotations"), { recursive: true });
+  if (!safeStat(dir, join(dir, "annotations"))?.isDirectory() || !replaceStored(file, next, prior)) return false;
+  if (readTitle(dir, id) !== title) return false;
+  updateSummaries(dir, id, title, replaceStored, diagnostic);
+  return true;
+}
