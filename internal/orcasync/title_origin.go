@@ -121,10 +121,17 @@ func readNameRecord(ctx context.Context, db *sql.DB, id string) (nameRecord, boo
 }
 
 func (r nameRecord) origin(agent, displayed string) string {
+	if agent == "antigravity" && r.sourceType.String == "text" && r.source.String == "user" {
+		return titleManual
+	}
 	if r.nameType.String == "text" && r.sourceType.String == "text" && r.name.String == displayed {
 		if r.source.String == "user" {
 			return titleManual
 		}
+	}
+	if agent == "antigravity" && r.nameType.String == "text" && r.name.String != "" && r.name.String == displayed &&
+		(!r.sourceType.Valid || r.sourceType.String == "text" && r.source.String == "auto") {
+		return titleAuto
 	}
 	if !r.nameType.Valid && !r.sourceType.Valid && displayed != "" && displayed == defaultTitles[agent] {
 		return titleAuto
