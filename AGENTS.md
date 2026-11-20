@@ -18,7 +18,7 @@
 5. **条理清晰且排版紧凑**：
    - 每条以 `- **要点短语**：具体说明` 编写，支持 `` `代码` `` 标记；
    - **同组条目之间和分类之间均不留空行**，保证在应用内更新卡片与 GitHub Release 页面都层次分明、紧凑易扫视。
-6. **通过 annotated tag 传入说明**：Git commit 仍遵循英文 Conventional Commits；发版打标签时必须使用 annotated tag（例如 `git tag -a v0.4.1 -F release-notes.txt`），把中文更新说明写入 tag 正文。`.github/workflows/release.yml` 会优先读取 annotated tag 正文，同步写入签名清单 `update-manifest.json` 与 GitHub Release。
+6. **通过 annotated tag 传入说明**：Git commit 仍遵循英文 Conventional Commits；发版打标签时必须使用 annotated tag（例如 `git tag -a vX.Y.Z --cleanup=verbatim -F release-notes.txt`），保留中文正文中的 Markdown 标题。`.github/workflows/release.yml` 校验远端标签及说明后，同步写入签名清单 `update-manifest.json` 与 GitHub Release。
 
 示例格式：
 
