@@ -1,6 +1,10 @@
 import { ChevronDown, ChevronRight, RefreshCw, Search } from 'lucide-react';
 import { useEffect, useState } from 'react';
-import { agentName, formatTime, num, providerName, rpc, token, type Attempt, type RecordItem } from './rpc';
+import {
+  agentName, canAdoptTitle, formatTime, needsAttention, num, recordCounts, rpc,
+  type RecordCursor, type RecordItem, type RecordList,
+} from './rpc';
+import { AttemptRow } from './RecordAttempt';
 import { toast } from './toast';
 import { ConfirmDialog, StatusNotice, useAction, useLoad } from './ui';
 
@@ -12,7 +16,7 @@ const states: Record<string, string> = {
   candidate: '候选待领取',
   claimed: '待读回',
   applied: '已改名',
-  kept: '保留原标题',
+  kept: '已跳过改名',
   stale: '已过期',
   failed: '生成失败',
   interrupted: '已中断',
@@ -56,6 +60,24 @@ const failureMessages: Record<string, string> = {
   unrecorded: '具体失败原因未记录。',
 };
 
+const decisionMessages: Record<string, string> = {
+  manual_locked: '手动重命名锁定',
+  unknown_protected: '已有标题来源未确认，已保留。',
+  model_keep: '模型选择保留原标题，具体依据未记录。',
+  model_keep_goal: '模型判断本轮延续原标题的目标。',
+  model_keep_progress: '模型判断本轮是已有工作的步骤或进展。',
+  model_keep_unspecified: '模型未提供可确认的更具体依据。',
+  empty_title: '模型未生成标题。',
+  confirmation_only: '本轮仅确认，沿用现有标题。',
+  throttled: '尚未达到重新评估的轮数或时间间隔。',
+  duplicate_turn: '本轮内容与上一轮相同。',
+  no_content: '本轮没有可用于命名的内容。',
+  title_collision: '候选标题与同项目中的会话重名。',
+  same_title: '模型给出的标题与原标题相同。',
+};
+
+const modelKeepReasons = new Set(['model_keep', 'model_keep_goal', 'model_keep_progress', 'model_keep_unspecified']);
+
 function failureText(item: RecordItem): string | undefined {
   const failure = item.failure;
   if (!failure || (item.status !== 'failed' && item.status !== 'interrupted')) return undefined;
@@ -74,12 +96,20 @@ function titlePillClass(status: string): string {
 }
 
 function attemptSummary(item: RecordItem) {
-  const last = item.attempts?.length ? item.attempts[item.attempts.length - 1] : undefined;
-  if (!last) return { model: '', totalTokens: null as number | null };
-  const model = last.actualModel || last.model || '';
-  const hasKnown = typeof last.inputTokens === 'number' || typeof last.outputTokens === 'number';
-  const totalTokens = hasKnown ? (last.inputTokens ?? 0) + (last.outputTokens ?? 0) : null;
-  return { model, totalTokens };
+  const attempts = item.attempts ?? [];
+  const last = attempts.at(-1);
+  const model = last?.actualModel || last?.model || '';
+  let known = 0;
+  let total = 0;
+  for (const attempt of attempts) {
+    for (const value of [attempt.inputTokens, attempt.outputTokens]) {
+      if (typeof value === 'number') {
+        known++;
+        total += value;
+      }
+    }
+  }
+  return { model, count: attempts.length, totalTokens: known ? total : null, partial: known < attempts.length * 2 };
 }
 
 export function Records({
@@ -94,25 +124,28 @@ export function Records({
   const [refresh, setRefresh] = useState(0);
   const [filter, setFilter] = useState<RecordFilter>(initialFilter);
   const [query, setQuery] = useState('');
+  const [cursors, setCursors] = useState<RecordCursor[]>([]);
   const [expandedId, setExpandedId] = useState<string | null>(null);
   const [confirmItem, setConfirmItem] = useState<RecordItem | null>(null);
 
   useEffect(() => {
     setFilter(initialFilter);
+    setCursors([]);
   }, [initialFilter, filterKey]);
 
+  const before = cursors.at(-1);
   const { value, error, loading } = useLoad(
-    () => rpc<{ items: RecordItem[]; testAttempts?: Attempt[] }>('records.list', { limit: 50 }),
-    refresh,
+    () => rpc<RecordList>('records.list', { limit: 50, filter, query: query.trim(), before }),
+    `${refresh}:${filter}:${before?.updated}:${before?.rowId}:${query.trim()}`,
   );
   const action = useAction();
 
   const items = value?.items ?? [];
-  const attnCount = items.filter((r) => r.syncStatus === 'failed' || r.syncStatus === 'protected').length;
+  const counts = value?.counts ?? recordCounts(items);
   const q = query.trim().toLowerCase();
 
-  const filtered = items.filter((item) => {
-    if (filter === 'attention' && item.syncStatus !== 'failed' && item.syncStatus !== 'protected') return false;
+  const filtered = value?.counts ? items : items.filter((item) => {
+    if (filter === 'attention' && !needsAttention(item)) return false;
     if (
       (filter === 'codex' || filter === 'claude' || filter === 'antigravity' || filter === 'pi') &&
       item.agent !== filter
@@ -127,11 +160,17 @@ export function Records({
     return true;
   });
 
+  function selectFilter(next: RecordFilter) {
+    setFilter(next);
+    setCursors([]);
+  }
+
   function sync(id: string, verb: 'adopt' | 'retry') {
     void action.run(async () => {
       const result = await rpc<{ accepted: boolean }>(`sync.${verb}`, { id });
       if (!result.accepted) throw new Error('记录状态已更新，请刷新后查看。');
       setConfirmItem(null);
+      setCursors([]);
       setRefresh((n) => n + 1);
       onChanged();
       return verb === 'adopt' ? '已采用新标题并同步至 Orca' : '已重新同步至 Orca';
@@ -145,42 +184,42 @@ export function Records({
           <button
             type="button"
             className={`seg-btn ${filter === 'all' ? 'active' : ''}`}
-            onClick={() => setFilter('all')}
+            onClick={() => selectFilter('all')}
           >
-            全部 ({items.length})
+            全部 ({counts.total})
           </button>
           <button
             type="button"
             className={`seg-btn ${filter === 'attention' ? 'active' : ''}`}
-            onClick={() => setFilter('attention')}
+            onClick={() => selectFilter('attention')}
           >
-            待处理{attnCount > 0 ? ` (${attnCount})` : ''}
+            待处理{counts.attention > 0 ? ` (${counts.attention})` : ''}
           </button>
           <button
             type="button"
             className={`seg-btn ${filter === 'codex' ? 'active' : ''}`}
-            onClick={() => setFilter('codex')}
+            onClick={() => selectFilter('codex')}
           >
             Codex
           </button>
           <button
             type="button"
             className={`seg-btn ${filter === 'claude' ? 'active' : ''}`}
-            onClick={() => setFilter('claude')}
+            onClick={() => selectFilter('claude')}
           >
             Claude
           </button>
           <button
             type="button"
             className={`seg-btn ${filter === 'antigravity' ? 'active' : ''}`}
-            onClick={() => setFilter('antigravity')}
+            onClick={() => selectFilter('antigravity')}
           >
             Antigravity
           </button>
           <button
             type="button"
             className={`seg-btn ${filter === 'pi' ? 'active' : ''}`}
-            onClick={() => setFilter('pi')}
+            onClick={() => selectFilter('pi')}
           >
             Pi
           </button>
@@ -196,7 +235,11 @@ export function Records({
               className="input"
               placeholder="搜索会话标题或模型…"
               value={query}
-              onChange={(e) => setQuery(e.target.value)}
+              maxLength={500}
+              onChange={(e) => {
+                setQuery(e.target.value);
+                setCursors([]);
+              }}
             />
           </div>
           <button
@@ -206,6 +249,7 @@ export function Records({
             aria-label="刷新记录"
             onClick={() => {
               setRefresh((n) => n + 1);
+              setCursors([]);
               onChanged();
               toast.success('处理记录已刷新');
             }}
@@ -227,7 +271,7 @@ export function Records({
             <div className="record-list">
               {filtered.map((item) => {
                 const expanded = expandedId === item.id;
-                const { model, totalTokens } = attemptSummary(item);
+                const { model, count, totalTokens, partial } = attemptSummary(item);
                 const reason = failureText(item);
                 const syncError = item.syncError?.trim() || undefined;
                 const syncMeta = item.syncStatus ? syncStates[item.syncStatus] : undefined;
@@ -240,8 +284,20 @@ export function Records({
                   reasons.push({ text: syncError });
                 } else if (reason) {
                   reasons.push({ text: reason });
-                } else if (protectedWarn) {
-                  reasons.push({ text: 'Orca 中存在手动编辑的标题，已自动保护未覆盖。', warn: true });
+                }
+                if (protectedWarn) reasons.push({
+                  text: item.orcaTitleOrigin === 'manual'
+                    ? 'Orca 手动重命名锁定'
+                    : 'Orca 现有标题的来源未确认，已保留。',
+                  warn: true,
+                });
+                if (item.reason && Object.hasOwn(decisionMessages, item.reason)) {
+                  reasons.push({
+                    text: decisionMessages[item.reason],
+                    warn: item.reason === 'manual_locked' || item.reason === 'unknown_protected',
+                  });
+                } else if (item.status === 'kept') {
+                  reasons.push({ text: '历史原因未记录。' });
                 }
 
                 return (
@@ -263,11 +319,14 @@ export function Records({
                               <span className="mono">{model}</span>
                             </>
                           )}
-                          {totalTokens !== null && (
-                            <>
-                              <span>·</span>
-                              <span>{num(totalTokens)} Token</span>
-                            </>
+                          <span>· {count ? `${num(count)} 次调用` : '未调用模型'}</span>
+                          {count > 0 && (
+                            <span>· {totalTokens === null
+                              ? 'Token 未回报'
+                              : partial
+                                ? `已知 ${num(totalTokens)} Token（部分回报）`
+                                : `${num(totalTokens)} Token`}
+                            </span>
                           )}
                         </div>
                         {reasons.length > 0 && (
@@ -283,7 +342,7 @@ export function Records({
 
                       <div className="record-right">
                         <span className={`pill ${titlePillClass(item.status)}`}>
-                          {states[item.status] ?? item.status}
+                          {item.reason && modelKeepReasons.has(item.reason) ? '保留原标题' : states[item.status] ?? item.status}
                         </span>
                         {item.syncStatus && (
                           <span className={`pill ${syncMeta?.pill ?? 'pill-neutral'}`}>
@@ -300,7 +359,7 @@ export function Records({
                             重试同步
                           </button>
                         )}
-                        {item.syncStatus === 'protected' && (
+                        {canAdoptTitle(item) && (
                           <button
                             type="button"
                             className="btn btn-sm"
@@ -336,7 +395,7 @@ export function Records({
                     {expanded && !!item.attempts?.length && (
                       <div className="record-detail tabular">
                         {item.attempts.map((attempt, index) => (
-                          <AttemptRow key={index} attempt={attempt} />
+                          <AttemptRow key={index} attempt={attempt} status={states[attempt.status] ?? attempt.status} />
                         ))}
                       </div>
                     )}
@@ -349,7 +408,7 @@ export function Records({
               <span>
                 {loading
                   ? '正在读取处理记录…'
-                  : items.length === 0
+                    : counts.total === 0 && !query
                     ? '还没有处理记录'
                     : '当前筛选条件下没有处理记录。'}
               </span>
@@ -358,13 +417,27 @@ export function Records({
                   type="button"
                   className="btn btn-sm btn-ghost"
                   onClick={() => {
-                    setFilter('all');
+                    selectFilter('all');
                     setQuery('');
                   }}
                 >
                   显示全部
                 </button>
               )}
+            </div>
+          )}
+          {(before || value?.next) && (
+            <div className="card-header">
+              <span className="card-sub">第 {cursors.length + 1} 页</span>
+              <div className="view-actions">
+                <button type="button" className="btn btn-sm" disabled={!before || loading}
+                  onClick={() => setCursors((old) => old.slice(0, -1))}>上一页</button>
+                <button type="button" className="btn btn-sm" disabled={!value?.next || loading}
+                  onClick={() => {
+                    const next = value?.next;
+                    if (next) setCursors((old) => old.at(-1) === next ? old : [...old, next]);
+                  }}>下一页</button>
+              </div>
             </div>
           )}
         </section>
@@ -377,7 +450,7 @@ export function Records({
             </div>
             <div className="record-detail tabular" style={{ borderTop: 0, background: 'transparent' }}>
               {value.testAttempts.map((attempt, index) => (
-                <AttemptRow key={index} attempt={attempt} />
+                <AttemptRow key={index} attempt={attempt} status={states[attempt.status] ?? attempt.status} />
               ))}
             </div>
           </section>
@@ -386,7 +459,7 @@ export function Records({
 
       {confirmItem && (
         <ConfirmDialog
-          title="覆盖 Orca 中的手动标题？"
+          title="覆盖 Orca 中受保护的标题？"
           confirmLabel="确认覆盖"
           busy={action.busy}
           error={action.error}
@@ -400,49 +473,5 @@ export function Records({
         </ConfirmDialog>
       )}
     </main>
-  );
-}
-
-function AttemptRow({ attempt }: { attempt: Attempt }) {
-  const actualTier = attempt.actualTier && attempt.actualTier !== 'unknown' ? attempt.actualTier : '未回报';
-  const modelLabel = attempt.actualModel || attempt.model || '未知模型';
-
-  return (
-    <div className="record-attempt-row">
-      <span className="detail-kv">
-        <span className="detail-k">来源</span>
-        <strong>{providerName(attempt.provider)}</strong>
-      </span>
-      <span className="detail-kv">
-        <span className="detail-k">模型</span>
-        <code className="mono">{modelLabel}</code>
-        {attempt.provider === 'claude' && attempt.actualModel && attempt.model && attempt.actualModel !== attempt.model && (
-          <span className="card-sub">（请求 {attempt.model}）</span>
-        )}
-      </span>
-      <span className="detail-kv">
-        <span className="detail-k">状态</span>
-        <span>{states[attempt.status] ?? attempt.status}</span>
-      </span>
-      <span className="detail-kv">
-        <span className="detail-k">档位</span>
-        <span>
-          请求 {attempt.requestedTier || '默认'} → 实际 {actualTier}
-        </span>
-      </span>
-      <span className="detail-kv">
-        <span className="detail-k">Token</span>
-        <span>
-          输入 {token(attempt.inputTokens)} · 输出 {token(attempt.outputTokens)} · 缓存{' '}
-          {token(attempt.cachedTokens)}
-        </span>
-      </span>
-      {attempt.startedAt && (
-        <span className="detail-kv">
-          <span className="detail-k">时间</span>
-          <span>{formatTime(attempt.startedAt)}</span>
-        </span>
-      )}
-    </div>
   );
 }

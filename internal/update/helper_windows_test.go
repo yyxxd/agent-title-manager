@@ -6,7 +6,10 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
+	"reflect"
 	"testing"
+
+	"golang.org/x/sys/windows/registry"
 )
 
 func TestRestoreInstallFilesHandlesLegacyMissingFiles(t *testing.T) {
@@ -53,14 +56,76 @@ func TestRestoreInstallFilesHandlesLegacyMissingFiles(t *testing.T) {
 	}
 }
 
+func TestRollbackRestoresOwnedWindowsRegistrationValues(t *testing.T) {
+	path := `Software\AgentTitleManagerTests\` + filepath.Base(t.TempDir())
+	dir := t.TempDir()
+	key, existing, err := registry.CreateKey(registry.CURRENT_USER, path, registry.ALL_ACCESS|registry.WOW64_32KEY)
+	if err != nil || existing {
+		t.Fatalf("temporary key: %v, existing=%v", err, existing)
+	}
+	defer registry.DeleteKey(registry.CURRENT_USER, path)
+	defer key.Close()
+	for _, err := range []error{
+		key.SetStringValue("InstallLocation", dir),
+		key.SetStringValue("DisplayVersion", "0.4.0"),
+		key.SetDWordValue("NoModify", 7),
+		key.SetStringValue("Unrelated", "keep"),
+	} {
+		if err != nil {
+			t.Fatal(err)
+		}
+	}
+	restore, want, err := snapshotUninstallKey(path, dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, err := range []error{
+		key.SetStringValue("DisplayVersion", "0.4.1"),
+		key.SetDWordValue("NoModify", 1),
+		key.SetStringValue("DisplayName", "new value"),
+	} {
+		if err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := restore(); err != nil {
+		t.Fatal(err)
+	}
+	got, err := readUninstallValues(key)
+	unrelated, _, unrelatedErr := key.GetStringValue("Unrelated")
+	if err != nil || !reflect.DeepEqual(got, want) || unrelatedErr != nil || unrelated != "keep" {
+		t.Fatalf("registration rollback: %+v %v, unrelated=%q %v", got, err, unrelated, unrelatedErr)
+	}
+	h := NewWindowsHelper(Handoff{Isolated: true})
+	if err := h.verifyRegistryVersion(dir, "0.4.1"); err != nil {
+		t.Fatalf("isolated version unexpectedly checked the formal registration: %v", err)
+	}
+}
+
 func TestHelperDepsUseInjectedPublicKey(t *testing.T) {
 	dir := fixtureWithSignedInstaller(t)
 	key := publicHexFromFixture(t, dir)
 	h := handoffFixture(dir, key)
+	t.Setenv("ATM_UPDATE_ISOLATED", "1")
 	previous := updatePublicKey
 	updatePublicKey = key
 	defer func() { updatePublicKey = previous }()
 	if err := NewWindowsHelper(h).Deps(PublicKey()).verify(); err != nil {
 		t.Fatalf("helper did not receive the injected public key: %v", err)
+	}
+}
+
+func TestHelperRejectsIsolationModeMismatch(t *testing.T) {
+	dir := fixtureWithSignedInstaller(t)
+	key := publicHexFromFixture(t, dir)
+	h := handoffFixture(dir, key)
+	t.Setenv("ATM_UPDATE_ISOLATED", "")
+	if err := NewWindowsHelper(h).Deps(key).verify(); err == nil {
+		t.Fatal("accepted an isolated handoff from a normal launch")
+	}
+	t.Setenv("ATM_UPDATE_ISOLATED", "1")
+	h.Isolated = false
+	if err := NewWindowsHelper(h).Deps(key).verify(); err == nil {
+		t.Fatal("accepted a normal handoff from an isolated launch")
 	}
 }

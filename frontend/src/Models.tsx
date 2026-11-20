@@ -8,7 +8,7 @@ import { InlineActionError, StatusNotice, Switch, useAction, useLoad } from './u
 import { effortFor, nativeChoice, useSubscriptionDraft } from './useSubscription';
 
 const titleLengthOptions = [
-  { value: 15, label: '简短（≤ 15 字）', example: '🧩 会话标题｜自动命名' },
+  { value: 15, label: '简短（≤ 20 字）', example: '🧩 会话标题｜自动命名' },
   { value: 30, label: '详细（≤ 30 字）', example: '🧩 会话标题｜自动命名并同步到 Orca' },
 ] as const;
 
@@ -260,6 +260,7 @@ function ModelForm({
                       }))}
                       disabled={actions.busy}
                       dropdownDisabled={subDisabled}
+                      refreshDisabled={false}
                       busy={catalog.loading}
                       error={catalog.error}
                       emptyMessage="此 CLI 当前没有可见模型。"

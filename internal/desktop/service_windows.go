@@ -19,6 +19,7 @@ import (
 type Backend struct {
 	Engine             ipc.Handler
 	Plugins            ipc.Handler
+	ObserveCodexHook   func(context.Context, json.RawMessage) (any, error)
 	AutoUpdateBuiltins func(context.Context) (any, error)
 	Enabled            func(context.Context, string) (bool, error)
 	OrcaEnabled        func(context.Context, string) bool

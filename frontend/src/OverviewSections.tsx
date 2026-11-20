@@ -84,15 +84,21 @@ export function KpiGrid({
   onOpenAgents: () => void;
 }) {
   const namingAttempts = value.attempts - (value.testAttempts ?? 0);
-  const usageRows = (value.testAttempts ? agents : [value]).filter((row) => row.attempts > 0);
-  const fields = usageRows.flatMap((row) => [tokenField(row, 'input'), tokenField(row, 'output')]);
+  const usageRows = (value.namingUsage ? [value.namingUsage] : value.testAttempts ? agents : [value])
+    .filter((row) => row.attempts > 0);
+  const inputFields = usageRows.map((row) => tokenField(row, 'input'));
+  const outputFields = usageRows.map((row) => tokenField(row, 'output'));
+  const fields = [...inputFields, ...outputFields];
   const known = fields.filter((f) => f.value !== null);
-  const totalTok = known.reduce((sum, f) => sum + (f.value ?? 0), 0);
+  const sumKnown = (entries: typeof fields) => entries.some((field) => field.value !== null)
+    ? entries.reduce((sum, field) => sum + (field.value ?? 0), 0)
+    : null;
+  const totalTok = sumKnown(fields);
   const partial =
     usageRows.reduce((sum, row) => sum + row.attempts, 0) !== namingAttempts ||
-    fields.some((f) => f.value === null || (f.known !== undefined && !f.complete));
-  const inputVal = tokenField(value, 'input').value;
-  const outputVal = tokenField(value, 'output').value;
+    fields.some((f) => !f.complete);
+  const inputVal = sumKnown(inputFields);
+  const outputVal = sumKnown(outputFields);
   const cacheVal = tokenField(value, 'cached').value;
 
   return (
@@ -105,14 +111,18 @@ export function KpiGrid({
           {num(value.renames)}
           <span className="kpi-unit">次</span>
         </div>
-        <div className="kpi-foot tabular">保留原标题 {num(value.kept)} 次</div>
+        <div className="kpi-foot tabular">
+          {value.modelKept === undefined
+            ? `跳过改名 ${num(value.kept)} 次`
+            : `模型判定保留原标题 ${num(value.modelKept)} 次`}
+        </div>
       </div>
 
       <div className="card kpi-card">
         <div className="kpi-label">
           <span>命名用量</span>
           {partial && known.length > 0 && (
-            <span className="pill pill-neutral" title={`有 ${value.unknownUsage} 次调用未回报完整 Token`}>
+            <span className="pill pill-neutral" title="部分命名请求未回报输入或输出 Token">
               部分回报
             </span>
           )}
@@ -120,7 +130,7 @@ export function KpiGrid({
         <div className="kpi-value tabular">
           {!namingAttempts || known.length > 0 ? (
             <>
-              {num(totalTok)}
+              {num(totalTok ?? 0)}
               <span className="kpi-unit">Token</span>
             </>
           ) : (

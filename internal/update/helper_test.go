@@ -91,9 +91,9 @@ func TestRunHandoffFailuresRestoreAndRestartOld(t *testing.T) {
 		wantSteps []string
 		breakStep func(*helperDeps)
 	}{
-		{"install", []string{"verify", "wait", "backup", "restore", "version:0.1.6", "restart"},
+		{"install", []string{"verify", "wait", "backup", "restore", "version:0.1.6", "registry:0.1.6", "restart"},
 			func(d *helperDeps) { d.install = func(string, string, bool) error { return errors.New("boom") } }},
-		{"version", []string{"verify", "wait", "backup", "install", "restore", "restart"},
+		{"version", []string{"verify", "wait", "backup", "install", "restore", "registry:0.1.6", "restart"},
 			func(d *helperDeps) {
 				d.checkVersion = func(_, version string) error {
 					if version == "0.1.7" {
@@ -102,8 +102,20 @@ func TestRunHandoffFailuresRestoreAndRestartOld(t *testing.T) {
 					return nil
 				}
 			}},
-		{"data", []string{"verify", "wait", "backup", "install", "version:0.1.7", "restore", "version:0.1.6", "restart"},
+		{"data", []string{"verify", "wait", "backup", "install", "version:0.1.7", "restore", "version:0.1.6", "registry:0.1.6", "restart"},
 			func(d *helperDeps) { d.verifyData = func(string) error { return errors.New("lost") } }},
+		{"registry", []string{"verify", "wait", "backup", "install", "version:0.1.7", "data", "registry:0.1.7",
+			"restore", "version:0.1.6", "registry:0.1.6", "restart"},
+			func(d *helperDeps) {
+				verify := d.verifyVersion
+				d.verifyVersion = func(dir, version string) error {
+					_ = verify(dir, version)
+					if version == "0.1.7" {
+						return errors.New("registration mismatch")
+					}
+					return nil
+				}
+			}},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -115,6 +127,18 @@ func TestRunHandoffFailuresRestoreAndRestartOld(t *testing.T) {
 				t.Fatalf("failure not recovered: %+v %v", status, steps)
 			}
 		})
+	}
+}
+
+func TestRunHandoffWrongRestoredRegistrationDoesNotRestart(t *testing.T) {
+	var steps []string
+	deps := okDeps(&steps)
+	deps.install = func(string, string, bool) error { return errors.New("failed install") }
+	deps.verifyVersion = func(string, string) error { return errors.New("registration mismatch") }
+	status := runHandoff(testHandoff(t), deps)
+	if status.OK || !strings.Contains(status.Message, "旧安装登记核对失败") ||
+		strings.Contains(strings.Join(steps, ","), "restart") {
+		t.Fatalf("unexpected recovery result: %+v %v", status, steps)
 	}
 }
 

@@ -118,7 +118,7 @@ func correctionFeedback(result modelResult, base string, limit int) *titleRetry 
 		return nil
 	}
 	title := result.decision.Title
-	reason := titleFailure(title, limit)
+	reason := titleFailure(title, acceptedTitleLength(limit))
 	if reason.Code == "" {
 		return nil
 	}

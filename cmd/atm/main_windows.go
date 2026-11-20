@@ -56,6 +56,7 @@ func run() error {
 		}
 		return desktop.Backend{
 			Engine: core.Handle, Plugins: plugins.Handle, Enabled: plugins.Enabled,
+			ObserveCodexHook:   plugins.ObserveCodexHook,
 			AutoUpdateBuiltins: func(ctx context.Context) (any, error) { return plugins.AutoUpdateBuiltins(ctx) },
 			OrcaEnabled:        orca.Active, ResolveTitleOrigin: orca.ResolveTitleOrigin,
 			RetryBinding: orca.RetryBinding, NativeTitleMatches: orca.NativeTitleMatches,

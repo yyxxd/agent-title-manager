@@ -94,6 +94,11 @@ ALTER TABLE events ADD COLUMN turn_hashes TEXT NOT NULL DEFAULT '';
 ALTER TABLE events ADD COLUMN goal_hash TEXT NOT NULL DEFAULT '';
 PRAGMA user_version=9;`
 
+const schemaV10 = `
+ALTER TABLE sessions ADD COLUMN protection_reason TEXT NOT NULL DEFAULT '';
+ALTER TABLE events ADD COLUMN decision_reason TEXT NOT NULL DEFAULT '';
+PRAGMA user_version=10;`
+
 func initialize(db *sql.DB) error {
 	for _, pragmas := range []string{"PRAGMA busy_timeout=2500", "PRAGMA foreign_keys=ON", "PRAGMA journal_mode=WAL", "PRAGMA secure_delete=ON"} {
 		if _, err := db.Exec(pragmas); err != nil {
@@ -159,6 +164,11 @@ func initialize(db *sql.DB) error {
 		}
 		fallthrough
 	case 9:
+		if _, err = tx.Exec(schemaV10); err != nil {
+			return err
+		}
+		fallthrough
+	case 10:
 	default:
 		return fmt.Errorf("无法读取数据库版本 %d", version)
 	}

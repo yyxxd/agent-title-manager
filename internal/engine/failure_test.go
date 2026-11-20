@@ -106,7 +106,7 @@ func checkFailureRecord(t *testing.T, r record, original, private string, code f
 			t.Fatal(r.Failure)
 		}
 	} else if r.Failure.Length == nil || *r.Failure.Length != length ||
-		r.Failure.Limit == nil || *r.Failure.Limit != 15 {
+		r.Failure.Limit == nil || *r.Failure.Limit != 20 {
 		t.Fatal(r.Failure)
 	}
 	if code == failureTooLong || code == failureResponse {
@@ -154,7 +154,7 @@ INSERT INTO attempts(event_id,agent,provider,model,source,requested_tier,status,
 	}
 	e := engineAt(t, dir, nil)
 	var version int
-	if err := e.db.QueryRow("PRAGMA user_version").Scan(&version); err != nil || version != 9 {
+	if err := e.db.QueryRow("PRAGMA user_version").Scan(&version); err != nil || version != 10 {
 		t.Fatal(version, err)
 	}
 	checkLegacyFailureRecords(t, call[recordList](t, e, "records.list", listRequest{}).Items)

@@ -1,6 +1,7 @@
 package pluginmgr
 
 import (
+	"crypto/rand"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -78,6 +79,9 @@ func (m *Manager) hostEntry(id string, rel release) (string, error) {
 		if err != nil {
 			return "", err
 		}
+	}
+	if id == "codex" && !newerVersion("0.2.1", rel.Manifest.Version) {
+		result += " " + codexHookRegistrationPrefix + rand.Text()
 	}
 	return result, m.writeRuntime(dir)
 }

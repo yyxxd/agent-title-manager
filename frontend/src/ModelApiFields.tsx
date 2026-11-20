@@ -65,12 +65,13 @@ export function ModelApiFields({
 
   const generationUrl = listing.value && (apiModel ? generation.value?.generationUrl : listing.value.generationUrl);
   const modelsUrl = listing.value?.modelsUrl;
+  const canListModels = !!modelsUrl;
   const listingUnavailable = modelsUrl === '';
   const canUseSavedKey = hasApiKey && !addressChanged;
   const keyNeedsAttention = hasApiKey && addressChanged && !keyValue.trim() && !removeKey;
 
   function fetchModels(notify = false) {
-    if (!hasAddress || listingUnavailable) return;
+    if (!canListModels) return;
     void modelsAction.run(async () => {
       const result = await rpc<{ items: ApiModel[] }>('providers.models', { ...target, apiKey });
       setModels(result.items ?? []);
@@ -178,7 +179,7 @@ export function ModelApiFields({
             options={(models ?? []).map((item) => ({ id: item.id, name: item.name }))}
             allowCustomInput
             disabled={busy}
-            dropdownDisabled={!hasAddress || listingUnavailable}
+            dropdownDisabled={!canListModels}
             busy={modelsAction.busy}
             error={modelsAction.error ? `${modelsAction.error} 可手动输入模型 ID。` : undefined}
             emptyMessage="模型列表为空，可手动输入模型 ID。"

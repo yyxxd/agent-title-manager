@@ -30,16 +30,24 @@ export async function stopContext(call, thread, revision) {
     if (turn.status === "completed") {
       const beginning = paginated ? await page(call, thread.id, 8, "asc", "full").catch(() => []) : history;
       const userMessages = users(turn);
+      const substantiveActivity = (turn.items ?? []).some(item => !isConfirmationItem(item));
       return {
         turns: recentTurns(messages(history.slice(-5))),
         originalGoal: firstGoal(beginning),
         confirmationOnly: (full(turn) && userMessages.length > 0 &&
-          userMessages.every(item => isTextConfirmation(item.content))) || undefined,
+          userMessages.every(item => isTextConfirmation(item.content)) && !substantiveActivity) || undefined,
+        substantiveActivity: (full(turn) && substantiveActivity) || undefined,
       };
     }
     if (turn.status !== "inProgress" || Date.now() >= deadline) return undefined;
     await delay(300);
   } while (true);
+}
+
+function isConfirmationItem(item) {
+  if (item.type === "userMessage" || item.type === "reasoning") return true;
+  if (item.type !== "agentMessage" || (item.phase != null && item.phase !== "final_answer")) return false;
+  return isTextConfirmation(item.text) || /^已处理[。！.!]?$/u.test(textOf(item.text));
 }
 
 function firstGoal(history) {

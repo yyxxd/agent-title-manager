@@ -151,6 +151,10 @@ func (e *Engine) finishModel(job *modelJob, r modelResult) error {
 			return false, err
 		}
 		title, status, finalized, reason := modelOutcome(base, current, r, job.settings.MaxTitleLength, now)
+		decisionReason := ""
+		if status == "kept" {
+			decisionReason = keptDecision(base, r)
+		}
 		if status == "candidate" {
 			conflict, err := titleConflict(ctx, tx, job.id, title)
 			if err != nil {
@@ -158,11 +162,12 @@ func (e *Engine) finishModel(job *modelJob, r modelResult) error {
 			}
 			if conflict {
 				title, status, finalized = base, "kept", &now
+				decisionReason = decisionCollision
 			}
 		}
 		_, err = tx.ExecContext(ctx, `UPDATE events SET status=?,title=?,updated=?,finalized=?,
-			failure_code=?,failure_length=?,failure_limit=? WHERE id=? AND status='running'`,
-			status, title, now, finalized, reason.Code, reason.Length, reason.Limit, job.id)
+			failure_code=?,failure_length=?,failure_limit=?,decision_reason=? WHERE id=? AND status='running'`,
+			status, title, now, finalized, reason.Code, reason.Length, reason.Limit, decisionReason, job.id)
 		return true, err
 	})
 	return err
@@ -184,7 +189,7 @@ func modelOutcome(base string, current bool, r modelResult, maxLength int, now i
 	case r.decision.Action == "keep" || r.decision.Title == base:
 		return base, "kept", &now, failureReason{}
 	}
-	if reason := titleFailure(r.decision.Title, maxLength); reason.Code != "" {
+	if reason := titleFailure(r.decision.Title, acceptedTitleLength(maxLength)); reason.Code != "" {
 		return base, "failed", nil, reason
 	}
 	return r.decision.Title, "candidate", nil, failureReason{}

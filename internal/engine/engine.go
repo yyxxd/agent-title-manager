@@ -14,8 +14,6 @@ import (
 	"sync"
 	"time"
 	"unicode/utf8"
-
-	_ "modernc.org/sqlite"
 )
 
 type Engine struct {

@@ -17,6 +17,7 @@ import {
   rpc,
   type Daily,
   type Plugin,
+  type RecordCounts,
   type Settings,
 } from './rpc';
 import { toast } from './toast';
@@ -43,16 +44,14 @@ export function Overview({
   revision,
   plugins,
   settings,
-  failedCount,
-  protectedCount,
+  counts,
   onNavigate,
   onRefreshShell,
 }: {
   revision: number;
   plugins: Plugin[];
   settings?: Settings;
-  failedCount: number;
-  protectedCount: number;
+  counts: RecordCounts;
   onNavigate: (page: 'agents' | 'models' | 'records', recordFilter?: 'attention') => void;
   onRefreshShell: () => void;
 }) {
@@ -99,7 +98,8 @@ export function Overview({
   const selectedAgent = agentFilter === 'all' ? undefined : agents.find((row) => row.agent === agentFilter);
   const models = value?.byModel ?? [];
 
-  const enabledPlugins = plugins.filter((p) => p.enabled && p.kind !== 'integration');
+  const agentPlugins = plugins.filter((p) => p.kind !== 'integration' && p.id !== 'orca');
+  const enabledPlugins = agentPlugins.filter((p) => p.enabled);
   const enabledNames = enabledPlugins.map((p) => agentDescriptions[p.id] ?? p.name);
   const sourceLabel = settings
     ? settings.provider === 'codex'
@@ -110,8 +110,9 @@ export function Overview({
     : '读取中…';
 
   const attnParts: string[] = [];
-  if (failedCount > 0) attnParts.push(`${failedCount} 条同步至 Orca 失败`);
-  if (protectedCount > 0) attnParts.push(`${protectedCount} 条受保护标题待确认`);
+  if (counts.failed > 0) attnParts.push(`${counts.failed} 条命名失败`);
+  if (counts.syncFailed > 0) attnParts.push(`${counts.syncFailed} 条同步至 Orca 失败`);
+  if (counts.protected > 0) attnParts.push(`${counts.protected} 条 Orca 标题受保护`);
 
   const scope = selectedAgent ?? value;
   const usageMetrics = computeScopeTokens(scope, agents, value);
@@ -232,7 +233,7 @@ export function Overview({
             value={value}
             agents={agents}
             enabledCount={enabledPlugins.length}
-            totalCount={plugins.length}
+            totalCount={agentPlugins.length}
             enabledNames={enabledNames}
             onOpenAgents={() => onNavigate('agents')}
           />

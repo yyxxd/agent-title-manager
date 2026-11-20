@@ -57,6 +57,28 @@ test("Codex 拒绝旧 Stop 以及候选到达期间更新的原标题", async ()
   assert.equal(title, "手动更名");
 });
 
+test("Codex 只将无命令、工具或具体进展的继续请求标记为纯确认", async t => {
+  const user = { type: "userMessage", content: [{ type: "text", text: "继续" }] };
+  const ack = { type: "agentMessage", phase: "final_answer", text: "收到。" };
+  const cases = [
+    ["纯确认", [user, { type: "reasoning", summary: [] }, ack], true],
+    ["命令", [user, { type: "commandExecution", command: "fixture command", status: "completed" }, ack], false],
+    ["工具", [user, { type: "mcpToolCall", server: "fixture", tool: "lookup", status: "completed" }, ack], false],
+    ["具体进展", [user, { ...ack, text: "已补齐版本校验，接下来验证回滚。" }], false],
+  ];
+  for (const [name, items, confirmation] of cases) await t.test(name, async () => {
+    const thread = { id: sessionId, name: "会话标题", turns: [{ ...latest, items }] };
+    const rpc = async (method, params) => {
+      assert.equal(method, "event.submit");
+      assert.equal(params.confirmationOnly, confirmation || undefined);
+      assert.equal(params.substantiveActivity, !confirmation || undefined);
+      assert.doesNotMatch(JSON.stringify(params), /fixture command|lookup/);
+      return { accepted: false };
+    };
+    await handleCodex("stop", { session_id: sessionId, turn_id: turnId }, rpc, native(async () => ({ thread })));
+  });
+});
+
 test("Codex 打开已命名会话时只发送可验证的原生标题", async () => {
   const calls = [];
   const rpc = async (method, params) => { calls.push({ method, params }); };
@@ -71,6 +93,7 @@ test("Codex 打开已命名会话时只发送可验证的原生标题", async ()
   assert.equal(calls[0].params.nativeTitleOnly, true);
   assert.deepEqual(calls[0].params.turns, []);
   assert.equal(calls[0].params.currentTitle, "原生标题");
+  assert.equal(calls[0].params.titleOrigin, "unknown");
 });
 
 async function claudeFixture(t, records = []) {
@@ -396,7 +419,7 @@ test("四个发布包都有独立 manifest 和运行入口", async () => {
     assert.equal(manifest.kind, "agent");
     assert.match(await readFile(new URL(manifest.entry, root), "utf8"), /from "\.\/client\.mjs"/);
     if (host !== "external") {
-      assert.equal(manifest.version, id === "antigravity" ? "0.3.0" : "0.2.0");
+      assert.equal(manifest.version, { antigravity: "0.3.0", codex: "0.2.1" }[id] ?? "0.2.0");
       for (const helper of ["orca.mjs", "orca-binding.mjs"]) {
         await assert.rejects(readFile(new URL(helper, root)), { code: "ENOENT" });
       }

@@ -74,7 +74,7 @@ func New(dataDir, bundledDir string) *Manager {
 
 func (m *Manager) SetBuildVersion(version string) { m.version = version }
 
-// Enabled is a read-only gate for the three bridge methods. It never takes the
+// Enabled is a read-only gate for the session bridge methods. It never takes the
 // management lock, so a package download does not delay a native hook.
 func (m *Manager) Enabled(ctx context.Context, id string) (bool, error) {
 	if isIntegration(id) || !pluginID.MatchString(id) {
@@ -264,6 +264,25 @@ func (m *Manager) describeBuiltin(id string, item *Item, r record) {
 }
 
 func (m *Manager) describeEnabled(id string, item *Item, r record) {
+	if err := m.checkRegistration(id, r); err != nil {
+		item.Status, item.Detail = "action_required", "宿主注册或适配器文件已改变，请停用后重新启用。"
+		return
+	}
+	switch id {
+	case "codex":
+		if m.codexHookObserved(r) {
+			item.Detail = "当前版本的 Codex Hook 已运行。"
+		} else {
+			item.Status, item.Detail = "action_required", "Hook 已注册。请在 Codex 的 /hooks 中审核并信任，然后打开会话或完成一轮对话。"
+		}
+	case "claude", "pi":
+		item.Detail = "已写入宿主设置。请重启宿主以加载适配器。"
+	case "antigravity":
+		item.Detail = "已登记命令行 Hook。请重启 agy 加载配置。桌面端由后台观察，诊断日志位于插件目录。"
+	}
+}
+
+func (m *Manager) checkRegistration(id string, r record) error {
 	h, err := resolveHost(id)
 	if err == nil && len(r.Registration) != 0 && r.Registration[0].File == h.settings {
 		var cur snapshot
@@ -278,18 +297,14 @@ func (m *Manager) describeEnabled(id string, item *Item, r record) {
 	} else {
 		err = errors.New("宿主配置目录已改变")
 	}
-	if _, manifestErr := readManifest(m.packageDir(r.release)); err != nil || manifestErr != nil {
-		item.Status, item.Detail = "action_required", "宿主注册或适配器文件已改变，请停用后重新启用。"
-		return
+	if err != nil {
+		return err
 	}
-	switch id {
-	case "codex":
-		item.Status, item.Detail = "action_required", "Hook 已注册。首次使用或脚本更新后，请在 Codex 的 /hooks 中审核并信任；当前信任状态由 Codex 管理。"
-	case "claude", "pi":
-		item.Detail = "已写入宿主设置。请重启宿主以加载适配器。"
-	case "antigravity":
-		item.Detail = "已登记命令行 Hook。请重启 agy 加载配置。桌面端由后台观察，诊断日志位于插件目录。"
+	manifest, err := readManifest(m.packageDir(r.release))
+	if err == nil && manifest != r.Manifest {
+		return errors.New("适配器清单已改变")
 	}
+	return err
 }
 
 func (m *Manager) packageDir(rel release) string {

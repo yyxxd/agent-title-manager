@@ -30,6 +30,9 @@ type idRequest struct {
 	ID string `json:"id"`
 }
 
+const currentSyncSession = `EXISTS(SELECT 1 FROM sessions s WHERE s.agent=e.agent
+	AND s.session_id=e.session_id AND s.title=e.title AND s.orca_id=e.orca_id)`
+
 func syncPolicy(id string, expected *string, origin, managed, title string) string {
 	switch {
 	case id == "" || expected == nil:
@@ -122,13 +125,12 @@ func (e *Engine) resync(ctx context.Context, p idRequest, adopt bool) (accepted,
 	if p.ID == "" || !validString(p.ID, 128) {
 		return accepted{}, errors.New("记录 ID 无效")
 	}
-	status := "failed"
+	eligible := `e.sync_status='failed' AND ` + currentSyncSession
 	if adopt {
-		status = "protected"
+		eligible = recordAdoptable
 	}
-	result, err := e.db.ExecContext(ctx, `UPDATE events SET sync_status='pending', sync_error='', updated=?
-		WHERE id=? AND sync_status=? AND EXISTS(SELECT 1 FROM sessions s WHERE s.agent=events.agent
-		AND s.session_id=events.session_id AND s.title=events.title AND s.orca_id=events.orca_id)`, e.now().UnixMilli(), p.ID, status)
+	result, err := e.db.ExecContext(ctx, `UPDATE events AS e SET sync_status='pending', sync_error='', updated=?
+		WHERE id=? AND `+eligible, e.now().UnixMilli(), p.ID)
 	if err != nil {
 		return accepted{}, err
 	}

@@ -41,6 +41,7 @@ export type UsageSummary = TokenUsage & {
 export type Counts = UsageSummary & {
   renames: number;
   kept: number;
+  modelKept?: number;
 };
 
 export type ModelUsage = UsageSummary & {
@@ -53,6 +54,7 @@ export type Daily = Counts & {
   since?: string;
   byAgent: (Counts & { agent: string })[] | null;
   byModel?: ModelUsage[] | null;
+  namingUsage?: UsageSummary;
 };
 
 export type ApiProtocol = 'chat' | 'responses' | 'anthropic' | 'gemini';
@@ -127,6 +129,9 @@ export type Attempt = TokenUsage & {
 };
 
 export type RecordItem = {
+  reason?: string;
+  orcaTitleOrigin?: string;
+  canAdopt?: boolean;
   id: string;
   agent: string;
   sessionId: string;
@@ -138,6 +143,28 @@ export type RecordItem = {
   failure?: { code: string; length?: number; limit?: number };
   attempts: Attempt[] | null;
 };
+
+export type RecordCursor = { updated: number; rowId: number };
+export type RecordCounts = { total: number; attention: number; failed: number; syncFailed: number; protected: number };
+export type RecordList = { items: RecordItem[]; counts?: RecordCounts; next?: RecordCursor; testAttempts?: Attempt[] };
+
+export function recordCounts(items: RecordItem[]): RecordCounts {
+  return {
+    total: items.length,
+    attention: items.filter(needsAttention).length,
+    failed: items.filter((item) => item.status === 'failed').length,
+    syncFailed: items.filter((item) => item.syncStatus === 'failed').length,
+    protected: items.filter(canAdoptTitle).length,
+  };
+}
+
+export function canAdoptTitle(item: RecordItem) {
+  return item.syncStatus === 'protected' && (item.canAdopt ?? true);
+}
+
+export function needsAttention(item: RecordItem) {
+  return item.status === 'failed' || item.syncStatus === 'failed' || canAdoptTitle(item);
+}
 
 export type Preferences = { startup: boolean; startupAvailable: boolean };
 

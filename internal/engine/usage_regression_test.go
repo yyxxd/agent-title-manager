@@ -47,4 +47,10 @@ func TestPartialTokensAndConnectionTestReconcile(t *testing.T) {
 		!hasCount(stats.ByModel[0].CachedTokens, 0) || !hasCount(stats.CachedTokens, 0) {
 		t.Fatalf("known zero: %+v", stats)
 	}
+	naming := stats.NamingUsage
+	if stats.Attempts != 3 || stats.TestAttempts != 2 || !hasCount(stats.InputTokens, 100) ||
+		naming.Attempts != 1 || naming.TestAttempts != 0 || !hasCount(naming.InputTokens, 50) ||
+		!hasCount(naming.OutputTokens, 8) || naming.CachedTokens != nil {
+		t.Fatalf("naming usage mixed with connection tests: %+v", stats)
+	}
 }

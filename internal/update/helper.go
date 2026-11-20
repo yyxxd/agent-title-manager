@@ -72,6 +72,11 @@ func recover(h Handoff, deps helperDeps, restore func() error, reason string, ca
 	if err := deps.checkVersion(h.InstallDir, h.PreviousVersion); err != nil {
 		return Status{Version: h.Version, Message: message + fmt.Sprintf("；旧版本核对失败: %v，未重启", err)}
 	}
+	if deps.verifyVersion != nil {
+		if err := deps.verifyVersion(h.InstallDir, h.PreviousVersion); err != nil {
+			return Status{Version: h.Version, Message: message + fmt.Sprintf("；旧安装登记核对失败: %v，未重启", err)}
+		}
+	}
 	return withRestart(Status{Version: h.PreviousVersion, Message: message + "；旧版本已恢复"}, deps.restart, h.Restart, writeStatus)
 }
 

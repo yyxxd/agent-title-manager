@@ -51,8 +51,9 @@ export async function handleCodex(mode, input, rpc, withNative, polling) {
   });
 }
 
-function launch(mode, payload) {
-  const child = spawn(process.execPath, [fileURLToPath(import.meta.url), "observe-" + mode], {
+function launch(mode, payload, registration) {
+  const args = registration ? [registration, "observe-" + mode] : ["observe-" + mode];
+  const child = spawn(process.execPath, [fileURLToPath(import.meta.url), ...args], {
     detached: true, windowsHide: true, stdio: ["pipe", "ignore", "ignore"],
   });
   const report = () => process.stderr.write("标题管理器未能启动 Codex 后台标题处理。\n");
@@ -64,18 +65,25 @@ function launch(mode, payload) {
 
 async function main() {
   try {
-    const command = process.argv[2] ?? "";
+    const [first, second] = process.argv.slice(2);
+    const registration = /^atm-registration-[A-Z2-7]{26}$/.test(first) ? first : "";
+    const command = (registration ? second : first) ?? "";
     const worker = command.startsWith("observe-");
     const mode = worker ? command.slice("observe-".length) : command;
     const payload = await readInput();
     const event = mode === "start" ? "SessionStart" : mode === "stop" ? "Stop" : undefined;
     if (!event || payload.hook_event_name !== event || !safeID(payload.session_id) || process.env.ATM_CODEX_ADAPTER ||
         (mode === "stop" && (!safeID(payload.turn_id) || payload.stop_hook_active === true))) return;
-    if (!worker) { launch(mode, payload); return; }
+    if (!worker) { launch(mode, payload, registration); return; }
     const config = readRuntime(import.meta.url);
+    const rpc = bridge(config);
+    if (registration) {
+      try { await rpc("hook.observed", { registration }); }
+      catch { process.stderr.write("标题管理器未能记录 Codex Hook 运行状态。\n"); }
+    }
     const binary = findCodex(config.codexPath);
     const withNative = action => withAppServer(binary, action);
-    await handleCodex(mode, payload, bridge(config), withNative);
+    await handleCodex(mode, payload, rpc, withNative);
   } catch {
     process.stderr.write("标题管理器未完成 Codex 标题处理。\n");
   } finally {

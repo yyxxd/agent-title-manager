@@ -106,15 +106,22 @@ func checkPresetRequest(t *testing.T, request chatRequest, settings Settings, pa
 func TestTitlePresetValidationBoundaries(t *testing.T) {
 	const prefix = "⚙️ 代理｜"
 	for _, limit := range []int{shortTitleLength, detailedTitleLength} {
-		title := prefix + strings.Repeat("改", limit-utf8.RuneCountInString(prefix))
-		for _, delta := range []int{0, 1} {
-			result := modelResult{status: "completed", decision: decision{Action: "rename", Title: title + strings.Repeat("改", delta)}}
+		maxAccepted := 30
+		if limit == shortTitleLength {
+			maxAccepted = 20
+		}
+		for _, length := range []int{15, 16, 20, 21, 30, 31} {
+			title := prefix + strings.Repeat("改", length-utf8.RuneCountInString(prefix))
+			result := modelResult{status: "completed", decision: decision{Action: "rename", Title: title}}
 			_, status, _, reason := modelOutcome("原名", true, result, limit, time.Now().UnixMilli())
-			if delta == 0 && (status != "candidate" || reason.Code != "") {
-				t.Fatal(limit, status, reason)
-			}
-			if delta == 1 && (status != "failed" || reason.Code != failureTooLong || *reason.Length != limit+1 || *reason.Limit != limit) {
-				t.Fatal(limit, status, reason)
+			feedback := correctionFeedback(result, "原名", limit)
+			if length <= maxAccepted {
+				if status != "candidate" || reason.Code != "" || feedback != nil {
+					t.Fatal(limit, length, status, reason, feedback)
+				}
+			} else if status != "failed" || reason.Code != failureTooLong || *reason.Length != length || *reason.Limit != maxAccepted ||
+				feedback == nil || feedback.MaxTitleLength != limit || feedback.ActualLength != length {
+				t.Fatal(limit, length, status, reason, feedback)
 			}
 		}
 		original := prefix + strings.Repeat("留", 35)
@@ -156,7 +163,7 @@ func TestTitlePresetMigration(t *testing.T) {
 				t.Fatal(s)
 			}
 			var version int
-			if err := e.db.QueryRow("PRAGMA user_version").Scan(&version); err != nil || version != 9 {
+			if err := e.db.QueryRow("PRAGMA user_version").Scan(&version); err != nil || version != 10 {
 				t.Fatal(version, err)
 			}
 			r := latest(t, e)

@@ -10,9 +10,11 @@ import { syncPluginAutoUpdate, usePluginAutoUpdateEvents } from './pluginAutoUpd
 import { Records, type RecordFilter } from './Records';
 import {
   rpc,
+  recordCounts,
   type Plugin,
   type PluginListResponse,
-  type RecordItem,
+  type RecordCounts,
+  type RecordList,
   type Settings as SettingsData,
 } from './rpc';
 import { Settings } from './Settings';
@@ -43,19 +45,17 @@ function App() {
   const [shell, setShell] = useState<{
     plugins: Plugin[];
     settings?: SettingsData;
-    failedCount: number;
-    protectedCount: number;
+    counts: RecordCounts;
   }>({
     plugins: [],
-    failedCount: 0,
-    protectedCount: 0,
+    counts: recordCounts([]),
   });
 
   const refreshShell = useCallback(() => {
     void Promise.allSettled([
       rpc<PluginListResponse>('plugins.list'),
       rpc<SettingsData>('settings.get'),
-      rpc<{ items: RecordItem[] }>('records.list', { limit: 50 }),
+      rpc<RecordList>('records.list', { limit: 50 }),
     ]).then(([pluginsRes, settingsRes, recordsRes]) => {
       if (pluginsRes.status === 'fulfilled') {
         syncPluginAutoUpdate(pluginsRes.value.autoUpdate);
@@ -63,10 +63,10 @@ function App() {
       setShell((prev) => {
         const plugins = pluginsRes.status === 'fulfilled' ? pluginsRes.value.items ?? [] : prev.plugins;
         const settings = settingsRes.status === 'fulfilled' ? settingsRes.value : prev.settings;
-        const records = recordsRes.status === 'fulfilled' ? recordsRes.value.items ?? [] : undefined;
-        const failedCount = records ? records.filter((r) => r.syncStatus === 'failed').length : prev.failedCount;
-        const protectedCount = records ? records.filter((r) => r.syncStatus === 'protected').length : prev.protectedCount;
-        return { plugins, settings, failedCount, protectedCount };
+        const counts = recordsRes.status === 'fulfilled'
+          ? recordsRes.value.counts ?? recordCounts(recordsRes.value.items)
+          : prev.counts;
+        return { plugins, settings, counts };
       });
     });
   }, []);
@@ -99,9 +99,10 @@ function App() {
     commitNav(next, filter);
   }
 
-  const attnCount = shell.failedCount + shell.protectedCount;
-  const enabledCount = shell.plugins.filter((p) => p.enabled).length;
-  const totalCount = shell.plugins.length;
+  const attnCount = shell.counts.attention;
+  const agents = shell.plugins.filter((p) => p.kind !== 'integration' && p.id !== 'orca');
+  const enabledCount = agents.filter((p) => p.enabled).length;
+  const totalCount = agents.length;
   const isDark = appearance.state?.theme === 'dark';
 
   return (
@@ -172,9 +173,7 @@ function App() {
                 <span className={`status-dot ${enabledCount > 0 ? 'ok' : 'off'}`} />
                 <span>
                   {totalCount > 0
-                    ? enabledCount > 0
-                      ? `运行中 · ${enabledCount}/${totalCount}`
-                      : '已暂停'
+                    ? `Agent ${enabledCount}/${totalCount}`
                     : '读取中'}
                 </span>
               </button>
@@ -209,8 +208,7 @@ function App() {
           revision={revision}
           plugins={shell.plugins}
           settings={shell.settings}
-          failedCount={shell.failedCount}
-          protectedCount={shell.protectedCount}
+          counts={shell.counts}
           onNavigate={navigateTo}
           onRefreshShell={refreshShell}
         />

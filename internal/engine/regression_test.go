@@ -74,11 +74,17 @@ func TestConfirmationNeedsCurrentManagedTitleAndIntactPrefix(t *testing.T) {
 	if c := call[claimResponse](t, e, "title.claim", claimRequest{"codex", p.SessionID, goodTitle, p.Revision}); c.Status != "kept" || c.Candidate != nil || calls.Load() != 1 {
 		t.Fatal(c, calls.Load())
 	}
+	if got := latest(t, e); got.Reason != decisionConfirmation || len(got.Attempts) != 0 {
+		t.Fatalf("pure confirmation: %+v", got)
+	}
 	p.Revision = "changed-baseline"
 	p.Turns[0].Text = "此前用户目标被编辑"
 	p.Turns = append(p.Turns, turn{"user", "好的"})
 	call[accepted](t, e, "event.submit", p)
 	eventually(t, func() bool { return latest(t, e).Status == "kept" && calls.Load() == 2 })
+	if got := latest(t, e); got.Reason != decisionSame || len(got.Attempts) != 1 {
+		t.Fatalf("same title after model call: %+v", got)
+	}
 }
 
 func TestProjectDuplicatesIncludeReservedCandidates(t *testing.T) {
@@ -93,6 +99,9 @@ func TestProjectDuplicatesIncludeReservedCandidates(t *testing.T) {
 		p.SessionID, p.Project = fmt.Sprintf("session-%d", i), tc.project
 		call[accepted](t, e, "event.submit", p)
 		eventually(t, func() bool { return latest(t, e).SessionID == p.SessionID && latest(t, e).Status == tc.status })
+		if got := latest(t, e); tc.status == "kept" && (got.Reason != decisionCollision || len(got.Attempts) != 1) {
+			t.Fatalf("title collision: %+v", got)
+		}
 	}
 	if s := call[dailyStats](t, e, "stats.daily", dateRequest{}); s.Attempts != 3 || s.Kept != 1 {
 		t.Fatal(s)

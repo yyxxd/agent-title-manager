@@ -197,6 +197,9 @@ func TestNamingThrottleCountsOnlyEligibleFollowUpsAndRespectsBypasses(t *testing
 			persisted != skip || calls.Load() != count {
 			t.Fatalf("%s: %d model calls, %d skipped, %v", revision, calls.Load(), persisted, err)
 		}
+		if got := revisionRecord(t, e, revision); skip > 0 && (got.Reason != decisionThrottle || len(got.Attempts) != 0) {
+			t.Fatalf("throttled event: %+v", got)
+		}
 	}
 	p.ConfirmationOnly = true
 	submit("confirmation", "好的", 1, 0)
