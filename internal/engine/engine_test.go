@@ -131,6 +131,32 @@ func TestConcurrentSubmissionAndReadback(t *testing.T) {
 	}
 }
 
+func TestAntigravityPriorAutoTitleAllowsLaterTurnsButManualChangeIsProtected(t *testing.T) {
+	e := engineAt(t, t.TempDir(), nil)
+	var requests atomic.Int64
+	httpProvider(t, e, func(w http.ResponseWriter, _ *http.Request) {
+		requests.Add(1)
+		_, _ = w.Write([]byte(usageReply))
+	})
+	p := event("first", "")
+	p.Agent, p.TitleOrigin = "antigravity", "auto"
+	call[accepted](t, e, "event.submit", p)
+	eventually(t, func() bool { return latest(t, e).Status == "candidate" })
+	c := call[claimResponse](t, e, "title.claim", claimRequest{p.Agent, p.SessionID, "", p.Revision}).Candidate
+	if c == nil || !call[accepted](t, e, "title.ack", ackRequest{p.Agent, p.SessionID, c.ID, c.Title}).Accepted {
+		t.Fatal("initial automatic title was not applied")
+	}
+	p.Revision, p.CurrentTitle, p.TitleOrigin = "second", c.Title, "unknown"
+	p.Turns = []turn{{"user", "different task"}, {"assistant", "done"}}
+	call[accepted](t, e, "event.submit", p)
+	eventually(t, func() bool { return requests.Load() == 2 })
+	p.Revision, p.CurrentTitle = "manual", "my manual title"
+	call[accepted](t, e, "event.submit", p)
+	if c := call[claimResponse](t, e, "title.claim", claimRequest{p.Agent, p.SessionID, p.CurrentTitle, p.Revision}); c.Status != "kept" || c.Candidate != nil {
+		t.Fatalf("manual title was not protected: %+v", c)
+	}
+}
+
 func hasCount(count *int64, expected int64) bool {
 	return count != nil && *count == expected
 }

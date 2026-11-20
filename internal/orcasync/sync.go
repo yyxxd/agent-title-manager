@@ -60,7 +60,8 @@ func syncVerified(ctx context.Context, run runCLI, id, expected, title, agent, s
 		if !bound || at.Title == nil {
 			return fmt.Errorf("%w：无法重新核验原生会话与 Orca 聊天的绑定", ErrNativePending)
 		}
-		if *at.Title != *prior.Title || at.Agent != prior.Agent {
+		if *at.Title != *prior.Title || at.Agent != prior.Agent || at.Kind != prior.Kind ||
+			(at.Kind == "terminal" && (at.Handle != prior.Handle || at.PaneKey != prior.PaneKey)) {
 			return fmt.Errorf("%w：原生核验期间 Orca 聊天已改变", ErrSkipped)
 		}
 		observed, err := reader(ctx, agent, session, handle)
@@ -69,6 +70,16 @@ func syncVerified(ctx context.Context, run runCLI, id, expected, title, agent, s
 		}
 		if observed != title {
 			return ErrNativeStale
+		}
+		if agent == "antigravity" && at.Kind == "terminal" {
+			live, err := terminalLayout(ctx, run, strings.TrimPrefix(at.ID, idPrefix), at)
+			if err != nil || *live.Title != *at.Title || live.Handle != at.Handle || live.PaneTitle != at.PaneTitle {
+				return fmt.Errorf("%w: Antigravity terminal title or layout changed", ErrSkipped)
+			}
+		}
+		if agent == "antigravity" && at.Kind == "chat" && *at.Title != title &&
+			titleOrigin(ctx, orcaDatabase(), agent, strings.TrimPrefix(at.ID, idPrefix), *at.Title) != titleAuto {
+			return fmt.Errorf("%w: Antigravity chat title origin is protected", ErrSkipped)
 		}
 		return nil
 	})
@@ -175,6 +186,13 @@ func observeTerminal(ctx context.Context, run runCLI, id, agent string) (place, 
 	if err != nil {
 		return place{}, err
 	}
+	return terminalLayout(ctx, run, id, bound)
+}
+
+func terminalLayout(ctx context.Context, run runCLI, id string, bound place) (place, error) {
+	if bound.PaneKey == "" {
+		return place{}, fmt.Errorf("%w: terminal binding", ErrSkipped)
+	}
 	var result struct {
 		Truncated bool            `json:"truncated"`
 		Terminals []terminalEntry `json:"terminals"`
@@ -255,6 +273,17 @@ func verifyPlace(ctx context.Context, run runCLI, id string, listed place) (plac
 }
 
 func showChat(ctx context.Context, run runCLI, id string) (place, error) {
+	at, err := showAgentPlace(ctx, run, id)
+	if err != nil {
+		return place{}, err
+	}
+	if at.Kind != "chat" {
+		return place{}, fmt.Errorf("%w: Orca chat location", ErrSkipped)
+	}
+	return at, nil
+}
+
+func showAgentPlace(ctx context.Context, run runCLI, id string) (place, error) {
 	var shown struct {
 		ID     string  `json:"orcaSessionId"`
 		Kind   string  `json:"kind"`
@@ -263,11 +292,11 @@ func showChat(ctx context.Context, run runCLI, id string) (place, error) {
 	if err := call(ctx, run, &shown, "agent", "show", idPrefix+id); err != nil {
 		return place{}, errors.Join(ErrUnavailable, err)
 	}
-	if strings.TrimPrefix(shown.ID, idPrefix) != id || shown.Kind != "chat" || len(shown.Places) != 1 {
+	if strings.TrimPrefix(shown.ID, idPrefix) != id || len(shown.Places) != 1 {
 		return place{}, fmt.Errorf("%w：Orca 会话位置不明确", ErrSkipped)
 	}
 	at := shown.Places[0]
-	if at.Kind != "chat" || at.HostID != "local" || strings.TrimPrefix(at.ID, idPrefix) != id {
+	if (at.Kind != "chat" && at.Kind != "terminal") || at.Kind != shown.Kind || at.HostID != "local" || strings.TrimPrefix(at.ID, idPrefix) != id {
 		return place{}, fmt.Errorf("%w：详情无法确认本机聊天", ErrSkipped)
 	}
 	return at, nil

@@ -56,6 +56,7 @@ func run() error {
 			Engine: core.Handle, Plugins: plugins.Handle, Enabled: plugins.Enabled,
 			AutoUpdateBuiltins: func(ctx context.Context) (any, error) { return plugins.AutoUpdateBuiltins(ctx) },
 			ResolveTitleOrigin: orcasync.ResolveTitleOrigin, Close: core.Close,
+			ObserveAntigravity: plugins.RunAntigravityObserver,
 		}, nil
 	})
 	// NewUpdateController(appDir, dataDir, ...): helper lives beside the app;

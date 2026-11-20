@@ -33,6 +33,12 @@ func boundChat(ctx context.Context, run runCLI, agent, sessionId, nativeHandle, 
 	if !sessionID.MatchString(id) || !nativeID.MatchString(sessionId) {
 		return place{}, false
 	}
+	if agent == "antigravity" {
+		if nativeHandle != sessionId {
+			return place{}, false
+		}
+		return boundAntigravity(ctx, run, sessionId, id)
+	}
 	ctx, cancel := context.WithTimeout(ctx, 1500*time.Millisecond)
 	defer cancel()
 	switch agent {
@@ -44,23 +50,55 @@ func boundChat(ctx context.Context, run runCLI, agent, sessionId, nativeHandle, 
 		if !validPiSession(ctx, sessionId, nativeHandle) {
 			return place{}, false
 		}
-	case "antigravity":
-		if nativeHandle != sessionId {
-			return place{}, false
-		}
 	default:
 		return place{}, false
 	}
 	if !hasProviderMapping(ctx, run, nativeHandle, id) {
 		return place{}, false
 	}
-	if agent == "pi" || agent == "antigravity" {
+	if agent == "pi" {
 		if terminal, terminalErr := observeTerminal(ctx, run, id, agent); terminalErr == nil {
 			return terminal, true
 		}
 	}
 	at, err := showChat(ctx, run, id)
 	return at, err == nil && at.Agent == agent
+}
+
+func boundAntigravity(ctx context.Context, run runCLI, native, id string) (place, bool) {
+	for i, delay := range []time.Duration{0, 250 * time.Millisecond, 500 * time.Millisecond} {
+		if delay > 0 {
+			select {
+			case <-ctx.Done():
+				return place{}, false
+			case <-time.After(delay):
+			}
+		}
+		timeout := 1500 * time.Millisecond
+		if i == 0 {
+			timeout = 900 * time.Millisecond
+		}
+		probe, cancel := context.WithTimeout(ctx, timeout)
+		bound := hasProviderMapping(probe, run, native, id)
+		cancel()
+		if !bound {
+			continue
+		}
+		probe, cancel = context.WithTimeout(ctx, 1500*time.Millisecond)
+		at, err := showAgentPlace(probe, run, id)
+		if err == nil && at.Agent == "antigravity" {
+			if at.Kind == "terminal" {
+				at, err = terminalLayout(probe, run, id, at)
+			}
+			cancel()
+			if err == nil && at.Title != nil {
+				return at, true
+			}
+		} else {
+			cancel()
+		}
+	}
+	return place{}, false
 }
 
 func hasProviderMapping(ctx context.Context, run runCLI, handle, id string) bool {

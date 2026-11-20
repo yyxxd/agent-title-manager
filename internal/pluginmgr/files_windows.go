@@ -19,7 +19,7 @@ var kernel = syscall.NewLazyDLL("kernel32.dll")
 var shellExecutable = regexp.MustCompile(`^[A-Za-z]:/[\pL\pN_./-]+$`)
 
 func platformHookEntry(id, node, entry, direct string) (string, error) {
-	if id != "codex" {
+	if id != "codex" && id != "antigravity" {
 		return direct, nil
 	}
 	systemDir, err := windows.GetSystemDirectory()
@@ -27,6 +27,12 @@ func platformHookEntry(id, node, entry, direct string) (string, error) {
 		return "", err
 	}
 	powershell := filepath.ToSlash(filepath.Join(systemDir, "WindowsPowerShell", "v1.0", "powershell.exe"))
+	if id == "antigravity" {
+		if !shellExecutable.MatchString(powershell) || strings.ContainsAny(node+entry, "\"\r\n\x00") {
+			return "", fmt.Errorf("Antigravity Hook 路径包含无法安全传给 Windows Shell 的字符")
+		}
+		return powershell + antigravityLauncher + antigravityPathLiteral(node) + " " + antigravityPathLiteral(entry) + `"`, nil
+	}
 	if !shellExecutable.MatchString(powershell) || strings.ContainsAny(node+entry, "‘’“”") {
 		return "", fmt.Errorf("Codex Hook 路径包含 Windows Shell 无法安全引用的字符")
 	}
@@ -34,6 +40,25 @@ func platformHookEntry(id, node, entry, direct string) (string, error) {
 	node = strings.ReplaceAll(filepath.ToSlash(node), "'", "''")
 	entry = strings.ReplaceAll(filepath.ToSlash(entry), "'", "''")
 	return powershell + ` -NoProfile -NonInteractive -Command "& '` + node + "' '" + entry + `'"`, nil
+}
+
+func antigravityPathLiteral(path string) string {
+	// cmd.exe 会在双引号内展开 % 和 !，PowerShell 也会把弯引号解释为引号。
+	// 只在 PowerShell 内还原这些字符，其余路径以单引号字面量传递。
+	var literal strings.Builder
+	literal.WriteString("('")
+	for _, r := range path {
+		switch r {
+		case '%', '!', '\u2018', '\u2019', '\u201a', '\u201b', '\u201c', '\u201d', '\u201e', '\u201f':
+			fmt.Fprintf(&literal, "'+[char]%d+'", r)
+		case '\'':
+			literal.WriteString("''")
+		default:
+			literal.WriteRune(r)
+		}
+	}
+	literal.WriteString("')")
+	return literal.String()
 }
 
 func hideProcess(cmd *exec.Cmd) {

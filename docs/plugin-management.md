@@ -8,7 +8,7 @@
 | --- | --- | --- |
 | Codex | 在 `CODEX_HOME` 或 `~/.codex` 的 `hooks.json` 添加 `SessionStart` 和 `Stop` | 首次使用或 Hook 变更后，在 Codex CLI 的 `/hooks` 中审核和信任；重启宿主后再次查看。 [Codex Hook 文档](https://developers.openai.com/codex/hooks) |
 | Claude Code | 在 `CLAUDE_CONFIG_DIR` 或 `~/.claude` 的 `settings.json` 添加 `SessionStart`、`UserPromptSubmit` 和 `Stop` | 重启宿主。 [Claude Code Hook 文档](https://code.claude.com/docs/en/hooks) |
-| Antigravity | `ANTIGRAVITY_CONFIG_DIR` 下的 `hooks.json` 命名钩子组 | `SessionStart`、`PreInvocation`、`Stop`，数据目录可由 `ANTIGRAVITY_DATA_DIR` 覆盖 |
+| Antigravity | CLI 注册 `SessionStart`、`PreInvocation`、`Stop`。桌面端和 Orca Chat 由应用观察本地完成事件 | 重启 agy 加载 Hook。自定义 CLI 配置和数据根分别使用 `ANTIGRAVITY_CONFIG_DIR` 和 `ANTIGRAVITY_DATA_DIR` |
 | Pi | 在 `PI_CODING_AGENT_DIR` 或 `~/.pi/agent` 的 `settings.json` 添加适配器入口到 `extensions` | 重启宿主。 [Pi 扩展文档](https://github.com/badlogic/pi-mono/blob/main/packages/coding-agent/docs/extensions.md) |
 | Orca | 开启桌面的标题同步 | 在 Orca 设置中关闭 **Name chats automatically**，避免两个应用同时改名。 |
 
@@ -68,3 +68,11 @@
 
 
 Antigravity 和 Pi 的本机终端标签同步仅作用于 Orca kind == `terminal` 的单窗格本地会话，写入后会回读 orca terminal list --include-visual-layouts 验证；Codex 和 Claude 仍只同步 kind == `chat`。
+
+## Antigravity 标题回写
+
+桌面端以本地会话摘要的空闲状态确认回合完成。Orca Chat 通过只读的 Orca 会话记录确认本机 ACP 回合已成功结束，再用 Orca CLI 核对会话位置。Orca Chat 的标题通过 `orca chat rename` 更新，标记为 `user` 的标题受保护，包括与默认标题完全一样的手动命名。当前 Orca 的公开命令采用手动命名语义，若它将标题标记为 `user`，后续轮次继续保护该 Orca 标题。
+
+原生写回以 `annotations/<id>.pbtxt` 为准，也会更新可识别的 SQLite 和 protobuf 摘要标题，保留预览内容。Antigravity 已有的非空标题缺少可供插件验证的来源，ATM 会保留它，除非它与 ATM 记录的上次标题一致。外部写回可确认磁盘上的标题，宿主正在打开的列表是否即时刷新取决于宿主，重新打开会话后可检查结果。
+
+插件目录下的 `antigravity-diagnostics.log` 记录阶段和已知错误码，适合从 Hook、转录读取、标题申请、原生读回、Orca 同步逐步定位。SQLite 观察和摘要更新依赖 Node.js 22.13+ 的 `node:sqlite`。

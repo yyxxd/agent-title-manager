@@ -26,6 +26,9 @@ func (m *Manager) readNativeTitle(ctx context.Context, agent, sessionID, handle 
 	if agent != "codex" && agent != "claude" && agent != "antigravity" {
 		return "", orcasync.ErrNativePending
 	}
+	if agent == "antigravity" && sessionID != handle {
+		return "", orcasync.ErrNativePending
+	}
 	state, err := m.load()
 	if err != nil {
 		return "", err

@@ -20,6 +20,7 @@ type Backend struct {
 	AutoUpdateBuiltins func(context.Context) (any, error)
 	Enabled            func(context.Context, string) (bool, error)
 	ResolveTitleOrigin func(context.Context, string, string, string, string) (string, string, bool)
+	ObserveAntigravity func(context.Context)
 	Close              func() error
 }
 
@@ -36,6 +37,7 @@ type Service struct {
 	emit              func(string, any)
 	pendingAutoUpdate any
 	updater           *updateController
+	stopObserver      func()
 }
 
 func (s *Service) bindEmitter(emit func(string, any)) {
@@ -96,12 +98,24 @@ func (s *Service) ServiceStartup(ctx context.Context, _ application.ServiceOptio
 			log.Printf("bridge: %v", err)
 		}
 	}()
+	if backend.ObserveAntigravity != nil {
+		observerCtx, cancel := context.WithCancel(ctx)
+		done := make(chan struct{})
+		go func() {
+			defer close(done)
+			backend.ObserveAntigravity(observerCtx)
+		}()
+		s.stopObserver = func() { cancel(); <-done }
+	}
 	return nil
 }
 
 func (s *Service) ServiceShutdown() error {
 	if s.listener == nil {
 		return nil
+	}
+	if s.stopObserver != nil {
+		s.stopObserver()
 	}
 	err := s.listener.Close()
 	<-s.done

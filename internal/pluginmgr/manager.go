@@ -123,7 +123,11 @@ func (m *Manager) SyncVerified(ctx context.Context, id, expectedTitle, newTitle,
 	if !enabled {
 		return fmt.Errorf("%w：桌面已关闭 Orca 同步", orcasync.ErrSkipped)
 	}
-	return orcasync.SyncVerified(ctx, id, expectedTitle, newTitle, agent, sessionID, nativeHandle, m.readNativeTitle)
+	err = orcasync.SyncVerified(ctx, id, expectedTitle, newTitle, agent, sessionID, nativeHandle, m.readNativeTitle)
+	if agent == "antigravity" {
+		m.recordAntigravitySync(err)
+	}
+	return err
 }
 
 // UninstallReady checks recorded registrations without editing
@@ -294,7 +298,7 @@ func (m *Manager) describeEnabled(id string, item *Item, r record) {
 	case "claude", "pi":
 		item.Detail = "已写入宿主设置。请重启宿主以加载适配器。"
 	case "antigravity":
-		item.Detail = "已写入 Antigravity hooks.json。请重启 Antigravity 以加载适配器。"
+		item.Detail = "已登记命令行 Hook。请重启 agy 加载配置。桌面端和 Orca 聊天由后台观察，诊断日志位于插件目录。"
 	}
 }
 

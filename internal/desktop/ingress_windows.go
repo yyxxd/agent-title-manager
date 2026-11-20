@@ -139,7 +139,11 @@ func (event pendingEvent) forward(ctx context.Context, backend Backend) error {
 	agent := event.key.agent
 	var bound bool
 	if event.needsBinding() && backend.ResolveTitleOrigin != nil {
-		bindingCtx, cancel := context.WithTimeout(ctx, 2*time.Second)
+		timeout := 2 * time.Second
+		if agent == "antigravity" {
+			timeout = 4500 * time.Millisecond
+		}
+		bindingCtx, cancel := context.WithTimeout(ctx, timeout)
 		handle := fieldString(event.fields, "orcaNativeHandle")
 		orcaID := fieldString(event.fields, "orcaSessionId")
 		title, origin, approved := backend.ResolveTitleOrigin(bindingCtx, agent, event.key.session, handle, orcaID)
