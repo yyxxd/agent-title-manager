@@ -171,8 +171,19 @@
     clip-path: inset(50%);
   }
   .topnav { gap: 1px; padding: 1px; }
-  .nav-btn { padding: 0 7px; }
-  .topbar-right .status-chip { min-width: 28px; justify-content: center; gap: 4px; padding: 0 5px; }
+  .nav-btn { padding: 0 6px; }
+  .topbar-right .status-chip {
+    min-width: 28px;
+    max-width: 44px;
+    justify-content: center;
+    gap: 4px;
+    padding: 0 5px;
+  }
+  .status-chip > span:not(.status-dot) {
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
 }
 
 .status-chip {
