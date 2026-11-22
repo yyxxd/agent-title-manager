@@ -21,8 +21,6 @@
   align-items: center;
 }
 
-.titlebar-start { padding-left: 12px; }
-
 .titlebar-space {
   flex: 1 0 8px;
   align-self: stretch;
@@ -37,6 +35,7 @@
   display: inline-flex;
   align-self: stretch;
   align-items: center;
+  margin-inline-start: 12px;
   gap: 9px;
   min-width: 0;
   user-select: none;
@@ -152,8 +151,7 @@
 .window-close { --wails-non-client-region: close; }
 
 @media (max-width: 940px) {
-  .titlebar-start { padding-left: 8px; }
-  .brand { gap: 5px; }
+  .brand { gap: 5px; margin-inline-start: 8px; }
   .brand-name { font-size: 12px; }
   .topbar-right { gap: 2px; padding-right: 4px; }
   .topbar-right .settings-trigger { justify-content: center; width: 32px; padding: 0; }
