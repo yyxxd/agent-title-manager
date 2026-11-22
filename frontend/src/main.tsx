@@ -17,10 +17,13 @@ import {
   type Settings as SettingsData,
 } from './rpc';
 import { Settings } from './Settings';
+import { Segmented } from './Segmented';
 import { Toaster } from './toast';
+import { WindowControls, type DesktopWindow } from './WindowControls';
 import { ConfirmDialog } from './ui';
 import { useUpdateEvents } from './Update';
 import './tokens.css';
+import './titlebar.css';
 import './components.css';
 import './overlays.css';
 import './pages.css';
@@ -29,7 +32,7 @@ import './records-settings.css';
 
 type Page = 'overview' | 'agents' | 'models' | 'records' | 'settings';
 
-function App() {
+function App({ desktopWindow }: { desktopWindow?: DesktopWindow }) {
   useUpdateEvents();
   const appearance = useAppearance();
   const [page, setPage] = useState<Page>('overview');
@@ -109,17 +112,21 @@ function App() {
     <>
       <header className="topbar">
         <div className="topbar-inner">
-          <div className="brand">
-            <span className="brand-mark">
-              <ZheerLogo size={24} />
-            </span>
-            <span className="brand-name">Agent Title Manager</span>
+          <div className="titlebar-start">
+            <div className="brand" title="Agent Title Manager">
+              <span className="brand-mark">
+                <ZheerLogo size={24} />
+              </span>
+              <span className="brand-name">Agent Title Manager</span>
+            </div>
+            <div className="titlebar-space" aria-hidden="true" />
           </div>
 
-          <nav className="topnav" aria-label="主导航">
+          <Segmented as="nav" className="topnav" aria-label="主导航" value={page === 'settings' ? undefined : page}>
             <button
               type="button"
-              className={`nav-btn ${page === 'overview' ? 'active' : ''}`}
+              data-segment="overview"
+              className="nav-btn"
               aria-current={page === 'overview' ? 'page' : undefined}
               onClick={() => navigateTo('overview')}
             >
@@ -127,7 +134,8 @@ function App() {
             </button>
             <button
               type="button"
-              className={`nav-btn ${page === 'agents' ? 'active' : ''}`}
+              data-segment="agents"
+              className="nav-btn"
               aria-current={page === 'agents' ? 'page' : undefined}
               onClick={() => navigateTo('agents')}
             >
@@ -135,7 +143,8 @@ function App() {
             </button>
             <button
               type="button"
-              className={`nav-btn ${page === 'models' ? 'active' : ''}`}
+              data-segment="models"
+              className="nav-btn"
               aria-current={page === 'models' ? 'page' : undefined}
               onClick={() => navigateTo('models')}
             >
@@ -143,90 +152,95 @@ function App() {
             </button>
             <button
               type="button"
-              className={`nav-btn ${page === 'records' ? 'active' : ''}`}
+              data-segment="records"
+              className="nav-btn"
               aria-current={page === 'records' ? 'page' : undefined}
               onClick={() => navigateTo('records')}
             >
               <span>记录</span>
               {unread > 0 && <span className="nav-count">{unread}</span>}
             </button>
-          </nav>
+          </Segmented>
 
-          <div className="topbar-right">
-            {unread > 0 ? (
+          <div className="titlebar-end">
+            <div className="titlebar-space" aria-hidden="true" />
+            <div className="topbar-right">
+              {unread > 0 ? (
+                <button
+                  type="button"
+                  className="status-chip warn"
+                  title="查看新提醒"
+                  onClick={() => navigateTo('records', 'attention')}
+                >
+                  <span className="status-dot warn" />
+                  <span>{unread}<span className="status-detail"> 条新提醒</span></span>
+                </button>
+              ) : (
+                <button
+                  type="button"
+                  className="status-chip"
+                  title="查看已启用的 Agent"
+                  onClick={() => navigateTo('agents')}
+                >
+                  <span className={`status-dot ${enabledCount > 0 ? 'ok' : 'off'}`} />
+                  {totalCount > 0 ? (
+                    <span><span className="status-detail">Agent </span>{enabledCount}/{totalCount}</span>
+                  ) : <span className="status-detail">读取中</span>}
+                </button>
+              )}
+
               <button
                 type="button"
-                className="status-chip warn"
-                title="查看新提醒"
-                onClick={() => navigateTo('records', 'attention')}
+                className="icon-btn"
+                title="切换浅色/深色外观"
+                aria-label="切换浅色或深色外观"
+                onClick={() => void appearance.toggleLightDark()}
               >
-                <span className="status-dot warn" />
-                <span>{unread} 条新提醒</span>
+                {isDark ? <Sun size={16} aria-hidden="true" /> : <Moon size={16} aria-hidden="true" />}
               </button>
-            ) : (
+
               <button
                 type="button"
-                className="status-chip"
-                title="查看已启用的 Agent"
-                onClick={() => navigateTo('agents')}
+                className={`settings-trigger ${page === 'settings' ? 'active' : ''}`}
+                aria-current={page === 'settings' ? 'page' : undefined}
+                aria-label="应用设置"
+                onClick={() => navigateTo('settings')}
               >
-                <span className={`status-dot ${enabledCount > 0 ? 'ok' : 'off'}`} />
-                <span>
-                  {totalCount > 0
-                    ? `Agent ${enabledCount}/${totalCount}`
-                    : '读取中'}
-                </span>
+                <SettingsIcon size={15} aria-hidden="true" />
+                <span>设置</span>
               </button>
-            )}
-
-            <button
-              type="button"
-              className="icon-btn"
-              title="切换浅色/深色外观"
-              aria-label="切换浅色或深色外观"
-              onClick={() => void appearance.toggleLightDark()}
-            >
-              {isDark ? <Sun size={16} aria-hidden="true" /> : <Moon size={16} aria-hidden="true" />}
-            </button>
-
-            <button
-              type="button"
-              className={`settings-trigger ${page === 'settings' ? 'active' : ''}`}
-              aria-current={page === 'settings' ? 'page' : undefined}
-              aria-label="应用设置"
-              onClick={() => navigateTo('settings')}
-            >
-              <SettingsIcon size={15} aria-hidden="true" />
-              <span>设置</span>
-            </button>
+            </div>
+            {desktopWindow && <WindowControls desktopWindow={desktopWindow} />}
           </div>
         </div>
       </header>
 
-      {page === 'overview' && (
-        <Overview
-          revision={revision}
-          plugins={shell.plugins}
-          settings={shell.settings}
-          unread={unread}
-          onNavigate={navigateTo}
-          onRefreshShell={refreshShell}
-        />
-      )}
-      {page === 'agents' && <Agents onChanged={refreshShell} />}
-      {page === 'models' && <Models onSaved={refreshShell} onDirtyChange={setModelsDirty} />}
-      {page === 'records' && (
-        <Records
-          key={recordFilter.key}
-          initialFilter={recordFilter.filter}
-          onOpened={(count) => {
-            ++countsRequest.current;
-            setUnread(count);
-          }}
-          onChanged={refreshShell}
-        />
-      )}
-      {page === 'settings' && <Settings appearance={appearance} />}
+      <div className="app-content">
+        {page === 'overview' && (
+          <Overview
+            revision={revision}
+            plugins={shell.plugins}
+            settings={shell.settings}
+            unread={unread}
+            onNavigate={navigateTo}
+            onRefreshShell={refreshShell}
+          />
+        )}
+        {page === 'agents' && <Agents onChanged={refreshShell} />}
+        {page === 'models' && <Models onSaved={refreshShell} onDirtyChange={setModelsDirty} />}
+        {page === 'records' && (
+          <Records
+            key={recordFilter.key}
+            initialFilter={recordFilter.filter}
+            onOpened={(count) => {
+              ++countsRequest.current;
+              setUnread(count);
+            }}
+            onChanged={refreshShell}
+          />
+        )}
+        {page === 'settings' && <Settings appearance={appearance} />}
+      </div>
 
       <Toaster />
 
@@ -253,6 +267,6 @@ function App() {
 const runtimePath = '/wails/runtime.js';
 void import(/* @vite-ignore */ runtimePath)
   .catch(() => undefined)
-  .finally(() => {
-    createRoot(document.getElementById('root')!).render(<App />);
+  .then((runtime: { Window: DesktopWindow } | undefined) => {
+    createRoot(document.getElementById('root')!).render(<App desktopWindow={runtime?.Window} />);
   });

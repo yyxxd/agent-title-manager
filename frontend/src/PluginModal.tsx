@@ -1,6 +1,7 @@
 import { X } from 'lucide-react';
 import { useEffect, useState, type FormEvent } from 'react';
 import { rpc, type Plugin } from './rpc';
+import { Segmented } from './Segmented';
 import { StatusNotice, useAction } from './ui';
 
 export type PluginModalState = { mode: 'install' } | { mode: 'update'; plugin: Plugin };
@@ -75,11 +76,13 @@ export function PluginModal({
         <form onSubmit={submit}>
           <div className="modal-body form-fields">
             <div className="field">
-              <span className="field-label">安装来源</span>
-              <div className="segmented" style={{ width: 'fit-content' }}>
+              <span className="field-label" id="plugin-source-label">安装来源</span>
+              <Segmented role="group" aria-labelledby="plugin-source-label" value={source} style={{ width: 'fit-content' }}>
                 <button
                   type="button"
-                  className={`seg-btn ${source === 'local' ? 'active' : ''}`}
+                  data-segment="local"
+                  aria-pressed={source === 'local'}
+                  className="seg-btn"
                   disabled={action.busy}
                   onClick={() => setSource('local')}
                 >
@@ -87,13 +90,15 @@ export function PluginModal({
                 </button>
                 <button
                   type="button"
-                  className={`seg-btn ${source === 'github' ? 'active' : ''}`}
+                  data-segment="github"
+                  aria-pressed={source === 'github'}
+                  className="seg-btn"
                   disabled={action.busy}
                   onClick={() => setSource('github')}
                 >
                   GitHub 仓库
                 </button>
-              </div>
+              </Segmented>
             </div>
 
             {source === 'local' ? (

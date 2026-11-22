@@ -5,6 +5,7 @@ import {
   type RecordCounts, type RecordCursor, type RecordItem, type RecordList,
 } from './rpc';
 import { AttemptRow } from './RecordAttempt';
+import { Segmented } from './Segmented';
 import { toast } from './toast';
 import { ConfirmDialog, StatusNotice, useAction, useLoad } from './ui';
 
@@ -190,50 +191,62 @@ export function Records({
   return (
     <main className="main">
       <div className="filter-bar">
-        <div className="segmented" role="group" aria-label="记录筛选">
+        <Segmented role="group" aria-label="记录筛选" value={filter}>
           <button
             type="button"
-            className={`seg-btn ${filter === 'all' ? 'active' : ''}`}
+            data-segment="all"
+            aria-pressed={filter === 'all'}
+            className="seg-btn"
             onClick={() => selectFilter('all')}
           >
             全部 ({counts.total})
           </button>
           <button
             type="button"
-            className={`seg-btn ${filter === 'attention' ? 'active' : ''}`}
+            data-segment="attention"
+            aria-pressed={filter === 'attention'}
+            className="seg-btn"
             onClick={() => selectFilter('attention')}
           >
             提醒记录
           </button>
           <button
             type="button"
-            className={`seg-btn ${filter === 'codex' ? 'active' : ''}`}
+            data-segment="codex"
+            aria-pressed={filter === 'codex'}
+            className="seg-btn"
             onClick={() => selectFilter('codex')}
           >
             Codex
           </button>
           <button
             type="button"
-            className={`seg-btn ${filter === 'claude' ? 'active' : ''}`}
+            data-segment="claude"
+            aria-pressed={filter === 'claude'}
+            className="seg-btn"
             onClick={() => selectFilter('claude')}
           >
             Claude
           </button>
           <button
             type="button"
-            className={`seg-btn ${filter === 'antigravity' ? 'active' : ''}`}
+            data-segment="antigravity"
+            aria-pressed={filter === 'antigravity'}
+            className="seg-btn"
             onClick={() => selectFilter('antigravity')}
           >
             Antigravity
           </button>
           <button
             type="button"
-            className={`seg-btn ${filter === 'pi' ? 'active' : ''}`}
+            data-segment="pi"
+            aria-pressed={filter === 'pi'}
+            className="seg-btn"
             onClick={() => selectFilter('pi')}
           >
             Pi
           </button>
-        </div>
+        </Segmented>
 
         <div className="view-actions">
           <div className="search-box">
