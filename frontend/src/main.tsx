@@ -23,6 +23,7 @@ import { WindowControls, type DesktopWindow } from './WindowControls';
 import { ConfirmDialog } from './ui';
 import { useUpdateEvents } from './Update';
 import './tokens.css';
+import './titlebar.css';
 import './components.css';
 import './overlays.css';
 import './pages.css';
