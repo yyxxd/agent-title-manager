@@ -84,13 +84,17 @@ export function Overview({
           ? { start: ALL_TIME_START, end: today }
           : customRange;
 
-  const { value, error, loading } = useLoad(
-    () =>
-      activeRange.start === activeRange.end
+  const { value: snapshot, error, loading } = useLoad(
+    async () => ({
+      range: activeRange,
+      stats: await (activeRange.start === activeRange.end
         ? rpc<Daily>('stats.daily', { date: activeRange.start })
-        : rpc<Daily>('stats.range', activeRange),
+        : rpc<Daily>('stats.range', activeRange)),
+    }),
     `${activeRange.start}:${activeRange.end}:${refresh}:${revision}`,
+    { retainValue: true },
   );
+  const value = snapshot?.stats;
 
   const rows = value?.byAgent ?? [];
   const agents: AgentUsage[] = [...rows.filter((row) => row.agent !== 'test')].sort(
@@ -115,7 +119,7 @@ export function Overview({
   const maxRenamed = Math.max(...agents.map((a) => a.renames), 1);
 
   return (
-    <main className="main">
+    <main className="main" aria-busy={loading}>
       {unread > 0 && (
         <div className="alert-strip" role="status">
           <span className="alert-strip-left">
@@ -203,7 +207,7 @@ export function Overview({
               )}
             </div>
           </Segmented>
-          <span className="card-sub tabular">{formatRangeLabel(activeRange)}</span>
+          <span className="card-sub tabular">{formatRangeLabel(snapshot?.range ?? activeRange)}</span>
         </div>
 
         <div className="view-actions">
