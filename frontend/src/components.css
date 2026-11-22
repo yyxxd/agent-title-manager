@@ -48,10 +48,12 @@
 .app-content {
   flex: 1;
   overflow: auto;
+  /* 内容滚动条避开 Windows 的窗口缩放命中区。 */
+  margin-inline-end: 8px;
 }
 
 .app-content::-webkit-scrollbar {
-  width: 16px;
+  width: 10px;
 }
 
 .app-content::-webkit-scrollbar-track:vertical {
@@ -62,9 +64,8 @@
   min-height: 28px;
   background: color-mix(in srgb, var(--text-muted) 78%, var(--bg));
   background-clip: padding-box;
-  border: 3px solid transparent;
-  /* 右侧留给 Windows 的窗口缩放命中区，滑块与点击区域靠内。 */
-  border-width: 3px 8px 3px 2px;
+  border: solid transparent;
+  border-width: 3px 2px;
   border-radius: 999px;
 }
 

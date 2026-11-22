@@ -21,6 +21,10 @@
   align-items: center;
 }
 
+.titlebar-start {
+  min-width: 40px;
+}
+
 .titlebar-space {
   flex: 1 0 8px;
   align-self: stretch;
@@ -160,9 +164,7 @@
   .window-controls button { width: 38px; }
 }
 
-@media (max-width: 560px) {
-  .brand-name,
-  .nav-count,
+@media (max-width: 600px) {
   .status-detail {
     position: absolute;
     width: 1px;
@@ -170,8 +172,6 @@
     overflow: hidden;
     clip-path: inset(50%);
   }
-  .topnav { gap: 1px; padding: 1px; }
-  .nav-btn { padding: 0 6px; }
   .topbar-right .status-chip {
     min-width: 28px;
     max-width: 44px;
@@ -184,6 +184,19 @@
     overflow: hidden;
     text-overflow: ellipsis;
   }
+}
+
+@media (max-width: 560px) {
+  .brand-name,
+  .nav-count {
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    overflow: hidden;
+    clip-path: inset(50%);
+  }
+  .topnav { gap: 1px; padding: 1px; }
+  .nav-btn { padding: 0 6px; }
 }
 
 .status-chip {
