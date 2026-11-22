@@ -71,11 +71,15 @@ func Run(dir string, assets fs.FS, service *Service) error {
 	})
 	initial := preference.snapshot()
 	background, foreground := initial.colours()
+	windowOptions := appearanceWindowOptions(initial, background, foreground)
+	// 组合托管让 Wails 能将网页标题栏交给 Windows 做原生命中检测和贴靠。
+	windowOptions.WebView2CompositionHosting = true
 	window := app.Window.NewWithOptions(application.WebviewWindowOptions{
 		Title: versionedAppName(), Width: 1080, Height: 780, MinWidth: 450, MinHeight: 450,
-		URL: "/", Hidden: slices.Contains(os.Args[1:], "--background"),
+		Frameless: true,
+		URL:       "/", Hidden: slices.Contains(os.Args[1:], "--background"),
 		BackgroundColour: background,
-		Windows:          appearanceWindowOptions(initial, background, foreground),
+		Windows:          windowOptions,
 	})
 	primary.Store(window)
 	window.RegisterHook(events.Common.WindowClosing, func(event *application.WindowEvent) {

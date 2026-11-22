@@ -18,6 +18,7 @@ import {
 } from './rpc';
 import { Settings } from './Settings';
 import { Toaster } from './toast';
+import { WindowControls, type DesktopWindow } from './WindowControls';
 import { ConfirmDialog } from './ui';
 import { useUpdateEvents } from './Update';
 import './tokens.css';
@@ -29,7 +30,7 @@ import './records-settings.css';
 
 type Page = 'overview' | 'agents' | 'models' | 'records' | 'settings';
 
-function App() {
+function App({ desktopWindow }: { desktopWindow?: DesktopWindow }) {
   useUpdateEvents();
   const appearance = useAppearance();
   const [page, setPage] = useState<Page>('overview');
@@ -109,13 +110,14 @@ function App() {
     <>
       <header className="topbar">
         <div className="topbar-inner">
-          <div className="brand">
+          <div className="brand" title="Agent Title Manager">
             <span className="brand-mark">
               <ZheerLogo size={24} />
             </span>
             <span className="brand-name">Agent Title Manager</span>
           </div>
 
+          <div className="titlebar-space" aria-hidden="true" />
           <nav className="topnav" aria-label="主导航">
             <button
               type="button"
@@ -152,6 +154,7 @@ function App() {
             </button>
           </nav>
 
+          <div className="titlebar-space" aria-hidden="true" />
           <div className="topbar-right">
             {unread > 0 ? (
               <button
@@ -161,7 +164,7 @@ function App() {
                 onClick={() => navigateTo('records', 'attention')}
               >
                 <span className="status-dot warn" />
-                <span>{unread} 条新提醒</span>
+                <span>{unread}<span className="status-detail"> 条新提醒</span></span>
               </button>
             ) : (
               <button
@@ -171,11 +174,9 @@ function App() {
                 onClick={() => navigateTo('agents')}
               >
                 <span className={`status-dot ${enabledCount > 0 ? 'ok' : 'off'}`} />
-                <span>
-                  {totalCount > 0
-                    ? `Agent ${enabledCount}/${totalCount}`
-                    : '读取中'}
-                </span>
+                {totalCount > 0 ? (
+                  <span><span className="status-detail">Agent </span>{enabledCount}/{totalCount}</span>
+                ) : <span className="status-detail">读取中</span>}
               </button>
             )}
 
@@ -200,33 +201,36 @@ function App() {
               <span>设置</span>
             </button>
           </div>
+          {desktopWindow && <WindowControls desktopWindow={desktopWindow} />}
         </div>
       </header>
 
-      {page === 'overview' && (
-        <Overview
-          revision={revision}
-          plugins={shell.plugins}
-          settings={shell.settings}
-          unread={unread}
-          onNavigate={navigateTo}
-          onRefreshShell={refreshShell}
-        />
-      )}
-      {page === 'agents' && <Agents onChanged={refreshShell} />}
-      {page === 'models' && <Models onSaved={refreshShell} onDirtyChange={setModelsDirty} />}
-      {page === 'records' && (
-        <Records
-          key={recordFilter.key}
-          initialFilter={recordFilter.filter}
-          onOpened={(count) => {
-            ++countsRequest.current;
-            setUnread(count);
-          }}
-          onChanged={refreshShell}
-        />
-      )}
-      {page === 'settings' && <Settings appearance={appearance} />}
+      <div className="app-content">
+        {page === 'overview' && (
+          <Overview
+            revision={revision}
+            plugins={shell.plugins}
+            settings={shell.settings}
+            unread={unread}
+            onNavigate={navigateTo}
+            onRefreshShell={refreshShell}
+          />
+        )}
+        {page === 'agents' && <Agents onChanged={refreshShell} />}
+        {page === 'models' && <Models onSaved={refreshShell} onDirtyChange={setModelsDirty} />}
+        {page === 'records' && (
+          <Records
+            key={recordFilter.key}
+            initialFilter={recordFilter.filter}
+            onOpened={(count) => {
+              ++countsRequest.current;
+              setUnread(count);
+            }}
+            onChanged={refreshShell}
+          />
+        )}
+        {page === 'settings' && <Settings appearance={appearance} />}
+      </div>
 
       <Toaster />
 
@@ -253,6 +257,6 @@ function App() {
 const runtimePath = '/wails/runtime.js';
 void import(/* @vite-ignore */ runtimePath)
   .catch(() => undefined)
-  .finally(() => {
-    createRoot(document.getElementById('root')!).render(<App />);
+  .then((runtime: { Window: DesktopWindow } | undefined) => {
+    createRoot(document.getElementById('root')!).render(<App desktopWindow={runtime?.Window} />);
   });
