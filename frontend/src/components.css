@@ -7,11 +7,21 @@
 }
 
 .topbar-inner {
-  height: 42px;
-  padding-left: 12px;
+  height: 52px;
   display: flex;
   align-items: center;
 }
+
+.titlebar-start,
+.titlebar-end {
+  flex: 1 0 0;
+  min-width: min-content;
+  align-self: stretch;
+  display: flex;
+  align-items: center;
+}
+
+.titlebar-start { padding-left: 12px; }
 
 .titlebar-space {
   flex: 1 0 8px;
@@ -58,6 +68,7 @@
 }
 
 .topnav {
+  flex: none;
   display: inline-flex;
   align-items: center;
   gap: 3px;
@@ -80,7 +91,7 @@
   color: var(--text-secondary);
   font-size: 13.5px;
   font-weight: 500;
-  transition: background 0.14s ease, color 0.14s ease, box-shadow 0.14s ease;
+  transition: color 0.14s ease;
   white-space: nowrap;
 }
 
@@ -88,11 +99,8 @@
   color: var(--text);
 }
 
-.nav-btn.active {
-  background: var(--surface);
+.nav-btn[aria-current="page"] {
   color: var(--text);
-  font-weight: 600;
-  box-shadow: var(--shadow-xs);
 }
 
 .nav-count {
@@ -143,8 +151,8 @@
 .window-maximise { --wails-non-client-region: maximize; }
 .window-close { --wails-non-client-region: close; }
 
-@media (max-width: 690px) {
-  .topbar-inner { padding-left: 8px; }
+@media (max-width: 940px) {
+  .titlebar-start { padding-left: 8px; }
   .brand { gap: 5px; }
   .brand-name { font-size: 12px; }
   .topbar-right { gap: 2px; padding-right: 4px; }
@@ -445,6 +453,30 @@
   gap: 2px;
 }
 
+.segment-group {
+  position: relative;
+}
+
+.segment-marker {
+  position: absolute;
+  top: 0;
+  left: 0;
+  pointer-events: none;
+  background: var(--surface);
+  border-radius: 7px;
+  box-shadow: var(--shadow-xs);
+  transform: translate(var(--segment-x, 0), var(--segment-y, 0));
+  transition: transform 160ms ease-out, width 160ms ease-out, height 160ms ease-out;
+}
+
+.segment-group [data-segment] {
+  position: relative;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .segment-marker { transition: none; }
+}
+
 .seg-btn {
   display: inline-flex;
   align-items: center;
@@ -457,7 +489,7 @@
   color: var(--text-secondary);
   font-size: 12.5px;
   font-weight: 500;
-  transition: all 0.14s ease;
+  transition: color 0.14s ease;
   white-space: nowrap;
 }
 
@@ -465,11 +497,14 @@
   color: var(--text);
 }
 
-.seg-btn.active {
-  background: var(--surface);
+.seg-btn[aria-pressed="true"],
+.seg-btn[aria-checked="true"] {
   color: var(--text);
-  font-weight: 600;
-  box-shadow: var(--shadow-xs);
+}
+
+.seg-btn[aria-disabled="true"] {
+  cursor: not-allowed;
+  opacity: 0.55;
 }
 
 .pill {

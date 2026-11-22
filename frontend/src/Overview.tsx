@@ -20,6 +20,7 @@ import {
   type Settings,
 } from './rpc';
 import { toast } from './toast';
+import { Segmented } from './Segmented';
 import { StatusNotice, useLoad } from './ui';
 
 type DatePreset = 'today' | '7d' | 'all' | 'custom';
@@ -61,6 +62,7 @@ export function Overview({
   const [refresh, setRefresh] = useState(0);
   const [agentFilter, setAgentFilter] = useState<string>('all');
   const popoverAnchorRef = useRef<HTMLDivElement>(null);
+  const customButtonRef = useRef<HTMLButtonElement>(null);
 
   useEffect(() => {
     if (!popoverOpen) return;
@@ -128,10 +130,12 @@ export function Overview({
 
       <div className="view-bar">
         <div className="view-actions">
-          <div className="segmented" role="group" aria-label="统计周期">
+          <Segmented role="group" aria-label="统计周期" value={preset}>
             <button
               type="button"
-              className={`seg-btn ${preset === 'today' ? 'active' : ''}`}
+              data-segment="today"
+              aria-pressed={preset === 'today'}
+              className="seg-btn"
               onClick={() => {
                 setPreset('today');
                 setPopoverOpen(false);
@@ -141,7 +145,9 @@ export function Overview({
             </button>
             <button
               type="button"
-              className={`seg-btn ${preset === '7d' ? 'active' : ''}`}
+              data-segment="7d"
+              aria-pressed={preset === '7d'}
+              className="seg-btn"
               onClick={() => {
                 setPreset('7d');
                 setPopoverOpen(false);
@@ -151,7 +157,9 @@ export function Overview({
             </button>
             <button
               type="button"
-              className={`seg-btn ${preset === 'all' ? 'active' : ''}`}
+              data-segment="all"
+              aria-pressed={preset === 'all'}
+              className="seg-btn"
               onClick={() => {
                 setPreset('all');
                 setPopoverOpen(false);
@@ -162,7 +170,10 @@ export function Overview({
             <div className="popover-anchor" ref={popoverAnchorRef}>
               <button
                 type="button"
-                className={`seg-btn ${preset === 'custom' ? 'active' : ''}`}
+                ref={customButtonRef}
+                data-segment="custom"
+                aria-pressed={preset === 'custom'}
+                className="seg-btn"
                 aria-expanded={popoverOpen}
                 onClick={() => setPopoverOpen((open) => !open)}
               >
@@ -184,11 +195,14 @@ export function Overview({
                     setPreset('custom');
                   }}
                   onSelectToday={() => setPreset('today')}
-                  onClose={() => setPopoverOpen(false)}
+                  onClose={() => {
+                    setPopoverOpen(false);
+                    customButtonRef.current?.focus();
+                  }}
                 />
               )}
             </div>
-          </div>
+          </Segmented>
           <span className="card-sub tabular">{formatRangeLabel(activeRange)}</span>
         </div>
 

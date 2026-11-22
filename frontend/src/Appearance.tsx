@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { errorText, rpc } from './rpc';
+import { Segmented } from './Segmented';
 import { toast } from './toast';
 import { StatusNotice, useAction } from './ui';
 
@@ -75,15 +76,35 @@ export function AppearanceRow({ state, setMode, loadError }: AppearanceControl) 
           </span>
           <span className="setting-desc">默认跟随 Windows 系统深浅色设置</span>
         </div>
-        <div className="segmented" role="radiogroup" aria-labelledby="appearance-label">
+        <Segmented
+          role="radiogroup"
+          aria-labelledby="appearance-label"
+          value={state?.mode}
+          onKeyDown={(event) => {
+            const keys = ['ArrowLeft', 'ArrowUp', 'ArrowRight', 'ArrowDown'];
+            const arrow = keys.indexOf(event.key);
+            if (arrow < 0 || !state || action.busy) return;
+            const radios = event.currentTarget.querySelectorAll<HTMLButtonElement>('[role="radio"]');
+            const current = [...radios].findIndex((radio) => radio === event.target);
+            if (current < 0) return;
+            event.preventDefault();
+            const direction = arrow < 2 ? -1 : 1;
+            const next = radios[(current + direction + radios.length) % radios.length];
+            next.focus();
+            next.click();
+          }}
+        >
           {appearanceModes.map(([mode, label]) => (
             <button
               key={mode}
               type="button"
               role="radio"
+              data-segment={mode}
               aria-checked={state?.mode === mode}
-              className={`seg-btn ${state?.mode === mode ? 'active' : ''}`}
-              disabled={!state || action.busy}
+              aria-disabled={action.busy || undefined}
+              className="seg-btn"
+              disabled={!state}
+              tabIndex={state?.mode === mode ? 0 : -1}
               onClick={() => {
                 if (state?.mode === mode || action.busy) return;
                 void action.run(async () => {
@@ -94,7 +115,7 @@ export function AppearanceRow({ state, setMode, loadError }: AppearanceControl) 
               {label}
             </button>
           ))}
-        </div>
+        </Segmented>
       </div>
       {loadError && (
         <div style={{ padding: '0 18px 14px' }}>
