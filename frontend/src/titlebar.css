@@ -146,6 +146,7 @@
 }
 
 .window-controls svg { width: 14px; height: 14px; stroke-width: 1.6; }
+.window-maximise svg { stroke-width: 1; }
 .window-controls button:hover { background: var(--surface-subtle); }
 .window-controls button:active { background: var(--surface-hover); }
 .window-controls button:focus-visible { outline-offset: -3px; }

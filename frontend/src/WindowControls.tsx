@@ -1,4 +1,4 @@
-import { Copy, Minus, Square, X } from 'lucide-react';
+import { Minus, X } from 'lucide-react';
 import { useEffect, useState } from 'react';
 import { errorText } from './rpc';
 import { toast } from './toast';
@@ -43,7 +43,14 @@ export function WindowControls({ desktopWindow }: { desktopWindow: DesktopWindow
         <Minus aria-hidden="true" />
       </button>
       <button type="button" className="window-maximise" aria-label={maximiseLabel} title={maximiseLabel} onClick={() => perform(() => desktopWindow.ToggleMaximise())}>
-        {maximised ? <Copy aria-hidden="true" /> : <Square aria-hidden="true" />}
+        <svg viewBox="0 0 14 14" fill="none" stroke="currentColor" aria-hidden="true">
+          {maximised ? (
+            <>
+              <rect x="3.5" y="5.5" width="5" height="5" />
+              <path d="M5.5 5.5v-2h5v5h-2" />
+            </>
+          ) : <rect x="3.5" y="3.5" width="7" height="7" />}
+        </svg>
       </button>
       <button type="button" className="window-close" aria-label="关闭窗口" title="关闭窗口" onClick={() => perform(() => desktopWindow.Close())}>
         <X aria-hidden="true" />
