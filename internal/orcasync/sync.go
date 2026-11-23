@@ -279,7 +279,7 @@ func verifyPlace(ctx context.Context, run runCLI, id string, listed place) (plac
 		return place{}, fmt.Errorf("%w：Orca 列表和详情中的会话或标题不一致", ErrSkipped)
 	}
 	listed.ID = id
-	return listed, nil
+	return botTitlePlace(ctx, run, listed)
 }
 
 func showChat(ctx context.Context, run runCLI, id string) (place, error) {

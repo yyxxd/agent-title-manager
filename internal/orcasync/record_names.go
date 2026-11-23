@@ -31,13 +31,13 @@ func (i *Integration) RecordNames(ctx context.Context, identities []engine.Recor
 	}
 	run := i.command(agent)
 	var wg sync.WaitGroup
-	var bots map[string]string
+	var bots map[string]botChat
 	wg.Go(func() { _ = call(ctx, run, &local, "agent", "list") })
-	wg.Go(func() { bots = localBotNames(ctx, run, allowed) })
+	wg.Go(func() { bots, _ = localBotChats(ctx, run, func(id string) bool { _, ok := allowed[id]; return ok }) })
 	wg.Wait()
-	for id, name := range bots {
-		if name != "" && i.Active(ctx, allowed[id].Agent) {
-			names[id] = engine.RecordName{Kind: "bot", Name: name}
+	for id, chat := range bots {
+		if chat.name != "" && i.Active(ctx, allowed[id].Agent) {
+			names[id] = engine.RecordName{Kind: "bot", Name: chat.name}
 		}
 	}
 	for _, candidate := range local.Agents {
@@ -54,47 +54,61 @@ func (i *Integration) RecordNames(ctx context.Context, identities []engine.Recor
 	return names
 }
 
-func localBotNames(ctx context.Context, run runCLI, allowed map[string]engine.RecordIdentity) map[string]string {
+type botChat struct {
+	name  string
+	title *string
+}
+
+func localBotChats(ctx context.Context, run runCLI, allowed func(string) bool) (map[string]botChat, bool) {
 	var roster struct {
 		Bots []struct {
 			ID, Name string
 		}
 	}
 	if call(ctx, run, &roster, "bot", "list") != nil || len(roster.Bots) > 12 {
-		return nil
+		return nil, false
 	}
 	var namesMu sync.Mutex
 	var workers sync.WaitGroup
-	names := make(map[string]string)
-	owners := make(map[string]string)
+	chats := make(map[string]botChat)
+	complete := true
 	for _, bot := range roster.Bots {
 		if !sessionID.MatchString(bot.ID) || !validRecordName(bot.Name) {
+			namesMu.Lock()
+			complete = false
+			namesMu.Unlock()
 			continue
 		}
 		workers.Go(func() {
 			var history struct {
-				Chats []struct{ ID string }
+				Chats []struct {
+					ID    string
+					Title *string
+				}
 			}
 			if call(ctx, run, &history, "bot", "chats", "--bot", bot.ID, "--all") != nil {
+				namesMu.Lock()
+				complete = false
+				namesMu.Unlock()
 				return
 			}
 			namesMu.Lock()
 			defer namesMu.Unlock()
 			for _, chat := range history.Chats {
 				id := strings.TrimPrefix(chat.ID, idPrefix)
-				if _, ok := allowed[id]; !ok {
+				if !allowed(id) {
 					continue
 				}
-				if prior, found := owners[id]; found && prior != bot.ID {
-					names[id] = ""
+				if _, found := chats[id]; found {
+					chats[id] = botChat{}
 				} else {
-					owners[id], names[id] = bot.ID, bot.Name
+					chats[id] = botChat{name: bot.Name, title: chat.Title}
 				}
 			}
 		})
 	}
 	workers.Wait()
-	return names
+	return chats, complete
 }
 
 func validRecordName(name string) bool {

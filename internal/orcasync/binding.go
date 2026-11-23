@@ -50,7 +50,7 @@ func mappedPlace(ctx context.Context, run runCLI, agent, id string) (place, erro
 		empty := ""
 		at.Title = &empty
 	}
-	return at, nil
+	return botTitlePlace(ctx, run, at)
 }
 
 func discover(ctx context.Context, run runCLI, validate NativeHandleValidator, agent, session, handle, hint, kind string, delays []time.Duration) (place, bool) {

@@ -84,6 +84,63 @@ func TestCodexRecoveryRequiresNativeAckAndLiveIdentity(t *testing.T) {
 	}
 }
 
+func TestBotSideChatUsesItsOwnTitleInsteadOfBotName(t *testing.T) {
+	root := t.TempDir()
+	t.Setenv("ORCA_USER_DATA_PATH", root)
+	db := makeACPDatabase(t, root)
+	record := fmt.Sprintf(`{"schemaVersion":2,"sessionId":%q,"provider":"codex","location":{"executionHostId":"local","workspaceKind":"folder"}}`, acpChat)
+	if _, err := db.Exec(`INSERT INTO agent_session_records VALUES (?,?)`, acpChat, record); err != nil {
+		t.Fatal(err)
+	}
+	bots, err := sql.Open("sqlite", filepath.Join(root, "orchestration.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer bots.Close()
+	if _, err = bots.Exec(`CREATE TABLE bot_conversation_acts_for(session_id TEXT);
+		INSERT INTO bot_conversation_acts_for VALUES (?)`, acpChat); err != nil {
+		t.Fatal(err)
+	}
+	botName, current := "Fixture Bot", "Old topic title"
+	at := place{ID: acpChat, Agent: "codex", Kind: "chat", HostID: "local", Title: &botName}
+	writes := 0
+	run := func(_ context.Context, args ...string) ([]byte, error) {
+		switch args[0] + " " + args[1] {
+		case "agent show":
+			if args[2] == acpNative {
+				return providerMapping(acpChat)
+			}
+			return replyPlace(at)
+		case "agent list":
+			return json.Marshal(map[string]any{"ok": true, "result": map[string]any{"agents": []place{at}, "truncated": false}})
+		case "bot list":
+			return []byte(`{"ok":true,"result":{"bots":[{"id":"fixture-bot","name":"Fixture Bot"}]}}`), nil
+		case "bot chats":
+			chats := []map[string]string{{"id": acpChat, "title": current}, {"id": manualChat, "title": "Sibling title"}}
+			return json.Marshal(map[string]any{"ok": true, "result": map[string]any{"chats": chats}})
+		case "chat rename":
+			if args[3] != acpChat {
+				t.Fatalf("sibling or Bot renamed: %v", args)
+			}
+			writes++
+			current = args[5]
+			return []byte(`{"ok":true}`), nil
+		}
+		return nil, fmt.Errorf("unexpected command %v", args)
+	}
+	i := Integration{Enabled: alwaysEnabled, run: run, ReadNative: func(context.Context, string, string, string) (string, error) {
+		return "Confirmed native title", nil
+	}}
+	binding, ok := i.ResolveTitleOrigin(t.Context(), "codex", acpNative, acpNative, acpChat)
+	if !ok || binding.Title != current || binding.Kind != "bot" {
+		t.Fatalf("Bot topic bound to displayed Bot name: %+v", binding)
+	}
+	if err := i.SyncVerified(t.Context(), acpChat, current, "Confirmed native title", "codex", acpNative, acpNative); err != nil ||
+		writes != 1 || current != "Confirmed native title" || botName != "Fixture Bot" {
+		t.Fatalf("wrong Bot title sync: title=%q, writes=%d, err=%v", current, writes, err)
+	}
+}
+
 func TestCodexSettlementsGiveEachConversationItsOwnLatestNativeTurn(t *testing.T) {
 	root := t.TempDir()
 	t.Setenv("ORCA_USER_DATA_PATH", root)
