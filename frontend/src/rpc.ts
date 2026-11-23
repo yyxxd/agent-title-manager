@@ -152,7 +152,7 @@ export type RecordItem = {
   identityName?: string;
   checkedAt?: string;
   suggestedTitle?: string;
-  changes?: { id: string; from: string; title: string; source: 'auto' | 'manual' | 'observed'; at?: string; found?: boolean }[];
+  changes?: { id: string; from: string; title: string; source: 'auto' | 'manual' | 'observed'; at?: string; found?: boolean; side?: string }[];
 };
 
 export type RecordCursor = { updated: number; rowId: number };

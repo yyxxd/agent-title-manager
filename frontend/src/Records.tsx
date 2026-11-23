@@ -426,7 +426,7 @@ export function Records({
                           <div className="record-change" key={change.id}>
                             <span className="record-change-title">{change.from || '未命名'} → {change.title}</span>
                             <span className="record-meta">
-                              {change.source === 'manual' ? '手动改名' : change.source === 'observed' ? '发现改名' : '自动改名'}
+                              {change.side === 'orca' ? '发现 Orca 改名' : change.source === 'manual' ? '手动改名' : change.source === 'observed' ? '发现改名' : '自动改名'}
                               {change.at ? <time dateTime={change.at}>{change.found ? '发现于 ' : ''}{formatTime(change.at)}</time> : <span>时间未记录</span>}
                             </span>
                           </div>

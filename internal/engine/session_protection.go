@@ -40,6 +40,7 @@ type ProtectionTarget struct {
 	Epoch                                            int64
 	Baseline                                         string
 	Locked                                           bool
+	OrcaBaseline                                     *string
 }
 
 func (e *Engine) protectionTarget(ctx context.Context, p idRequest) (ProtectionTarget, error) {
@@ -48,9 +49,14 @@ func (e *Engine) protectionTarget(ctx context.Context, p idRequest) (ProtectionT
 		SELECT s.agent,s.session_id,s.orca_id,s.revision,s.protection_epoch,s.title,s.protection_reason='manual_locked',
 			coalesce((SELECT native_handle FROM events
 				WHERE agent=s.agent AND session_id=s.session_id AND orca_id=s.orca_id AND native_handle<>''
-				ORDER BY rowid DESC LIMIT 1),'')
+				ORDER BY rowid DESC LIMIT 1),''),
+			(SELECT CASE WHEN sync_status IN ('synced','unchanged') THEN title ELSE orca_base END
+				FROM events WHERE agent=s.agent AND session_id=s.session_id AND orca_id=s.orca_id
+				AND orca_id<>'' AND orca_base IS NOT NULL
+				ORDER BY CASE WHEN sync_status='synced' THEN updated ELSE created END DESC,rowid DESC LIMIT 1)
 		FROM sessions s JOIN events e USING(agent,session_id) WHERE e.id=? AND s.manual=1`, p.ID).
-		Scan(&target.Agent, &target.SessionID, &target.OrcaID, &target.Revision, &target.Epoch, &target.Baseline, &target.Locked, &target.NativeHandle)
+		Scan(&target.Agent, &target.SessionID, &target.OrcaID, &target.Revision, &target.Epoch, &target.Baseline, &target.Locked,
+			&target.NativeHandle, &target.OrcaBaseline)
 	if errors.Is(err, sql.ErrNoRows) {
 		err = errors.New("会话保护状态已更新，请刷新记录")
 	}
@@ -85,13 +91,14 @@ func (e *Engine) releaseProtection(ctx context.Context, p protectionRelease) (ac
 			return accepted{}, err
 		}
 		now := e.now().UnixMilli()
-		if p.Locked && p.Baseline != p.NativeTitle {
-			id := rand.Text()
-			if _, err := tx.ExecContext(ctx, `INSERT INTO events(id,agent,session_id,revision,native_only,base,
-				title,status,orca_id,orca_origin,native_handle,created,updated,finalized)
-				VALUES(?,?,?,?,1,?,?,'observed_change',?,'',?,?,?,?)`,
-				id, p.Agent, p.SessionID, id, p.Baseline, p.NativeTitle, p.OrcaID, p.NativeHandle, now, now, now); err != nil {
+		if p.Locked {
+			if err := recordUnlockObservation(ctx, tx, p.ProtectionTarget, p.Baseline, p.NativeTitle, "", now); err != nil {
 				return accepted{}, err
+			}
+			if p.OrcaBaseline != nil && p.OrcaTitle != nil {
+				if err := recordUnlockObservation(ctx, tx, p.ProtectionTarget, *p.OrcaBaseline, *p.OrcaTitle, "orca_observation", now); err != nil {
+					return accepted{}, err
+				}
 			}
 		}
 		_, err = tx.ExecContext(ctx, `UPDATE events SET
@@ -107,4 +114,16 @@ func (e *Engine) releaseProtection(ctx context.Context, p protectionRelease) (ac
 		e.cancelSuperseded(p.Agent, p.SessionID, false)
 	}
 	return result, err
+}
+
+func recordUnlockObservation(ctx context.Context, tx *sql.Tx, target ProtectionTarget, before, after, reason string, now int64) error {
+	if before == after {
+		return nil
+	}
+	id := rand.Text()
+	_, err := tx.ExecContext(ctx, `INSERT INTO events(id,agent,session_id,revision,native_only,base,
+		title,status,orca_id,orca_origin,native_handle,created,updated,finalized,decision_reason)
+		VALUES(?,?,?,?,1,?,?,'observed_change',?,'',?,?,?,?,?)`,
+		id, target.Agent, target.SessionID, id, before, after, target.OrcaID, target.NativeHandle, now, now, now, reason)
+	return err
 }

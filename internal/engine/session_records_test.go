@@ -97,7 +97,10 @@ func TestManualLockAndReleaseFencePendingTurns(t *testing.T) {
 		Scan(&events, &attempts, &stored); err != nil {
 		t.Fatal(err)
 	}
-	if events != 3 || attempts != 0 || stored != nextOrca || get().Locked {
+	unlocked := get()
+	if events != 4 || attempts != 0 || stored != nextOrca || unlocked.Locked || unlocked.Title != "C" ||
+		len(unlocked.Changes) != 3 || unlocked.Changes[0].Side != "orca" || unlocked.Changes[0].Source != "observed" ||
+		unlocked.Changes[0].From != orca || unlocked.Changes[0].Title != nextOrca || unlocked.CheckedAt != locked.CheckedAt {
 		t.Fatalf("skip, retry or unlock created work: events=%d attempts=%d baseline=%q", events, attempts, stored)
 	}
 }

@@ -15,6 +15,7 @@ type recordChange struct {
 	Source string `json:"source"`
 	At     string `json:"at,omitempty"`
 	Found  bool   `json:"found,omitempty"`
+	Side   string `json:"side,omitempty"`
 }
 
 const renameEvidence = `e.title<>e.base AND e.status IN ('applied','manual_change','observed_change')`
@@ -141,7 +142,7 @@ func listChanges(ctx context.Context, tx *sql.Tx, local *time.Location, items []
 		args = append(args, item.Agent, item.SessionID)
 	}
 	rows, err := tx.QueryContext(ctx, `
-		SELECT agent,session_id,id,base,title,status,`+renameTime+` AS change_time,coalesce(`+exactRenameTime+`,0) FROM events e
+		SELECT agent,session_id,id,base,title,status,decision_reason,`+renameTime+` AS change_time,coalesce(`+exactRenameTime+`,0) FROM events e
 		WHERE (agent,session_id) IN (VALUES `+strings.TrimSuffix(strings.Repeat("(?,?),", len(items)), ",")+`)
 			AND `+renameEvidence+`
 		ORDER BY change_time DESC,rowid DESC`, args...)
@@ -150,11 +151,11 @@ func listChanges(ctx context.Context, tx *sql.Tx, local *time.Location, items []
 	}
 	defer rows.Close()
 	for rows.Next() {
-		var agent, sessionID, status string
+		var agent, sessionID, status, reason string
 		var at sql.NullInt64
 		var exact bool
 		var change recordChange
-		if err := rows.Scan(&agent, &sessionID, &change.ID, &change.From, &change.Title, &status, &at, &exact); err != nil {
+		if err := rows.Scan(&agent, &sessionID, &change.ID, &change.From, &change.Title, &status, &reason, &at, &exact); err != nil {
 			return err
 		}
 		change.Source = "auto"
@@ -162,6 +163,9 @@ func listChanges(ctx context.Context, tx *sql.Tx, local *time.Location, items []
 			change.Source = "manual"
 		} else if status == "observed_change" {
 			change.Source = "observed"
+			if reason == "orca_observation" {
+				change.Side = "orca"
+			}
 		}
 		if at.Valid {
 			change.At = formatTime(at.Int64, local)
@@ -172,7 +176,7 @@ func listChanges(ctx context.Context, tx *sql.Tx, local *time.Location, items []
 			item.ChangedAt, item.ChangedFound = change.At, change.Found
 		}
 		if n := len(item.Changes); n == 0 || item.Changes[n-1].Title != change.Title ||
-			item.Changes[n-1].From != change.From {
+			item.Changes[n-1].From != change.From || item.Changes[n-1].Side != change.Side {
 			item.Changes = append(item.Changes, change)
 		}
 	}
