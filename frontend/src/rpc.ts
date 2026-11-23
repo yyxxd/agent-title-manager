@@ -148,6 +148,7 @@ export type RecordItem = {
   protected?: boolean;
   changedAt?: string;
   checkedAt?: string;
+  suggestedTitle?: string;
   changes?: { id: string; from: string; title: string; source: 'auto' | 'manual'; at?: string; found?: boolean }[];
 };
 

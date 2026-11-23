@@ -143,10 +143,10 @@ func (e *Engine) finishModel(job *modelJob, r modelResult) error {
 	now := e.now().UnixMilli()
 	_, err := transact(ctx, e.db, func(tx *sql.Tx) (bool, error) {
 		var base string
-		var current bool
-		err := tx.QueryRowContext(ctx, `SELECT e.base,`+currentModel+`
+		var current, reviewOnly bool
+		err := tx.QueryRowContext(ctx, `SELECT e.base,e.review_only,`+currentModel+`
 			FROM events e JOIN sessions s ON e.agent=s.agent AND e.session_id=s.session_id WHERE e.id=?`, job.id).
-			Scan(&base, &current)
+			Scan(&base, &reviewOnly, &current)
 		if err != nil {
 			return false, err
 		}
@@ -164,6 +164,9 @@ func (e *Engine) finishModel(job *modelJob, r modelResult) error {
 				title, status, finalized = base, "kept", &now
 				decisionReason = decisionCollision
 			}
+		}
+		if status == "candidate" && reviewOnly {
+			status, decisionReason = "needs_review", "conditional_write_unavailable"
 		}
 		_, err = tx.ExecContext(ctx, `UPDATE events SET status=?,title=?,updated=?,finalized=?,
 			failure_code=?,failure_length=?,failure_limit=?,decision_reason=? WHERE id=? AND status='running'`,

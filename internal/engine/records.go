@@ -50,29 +50,30 @@ type recordList struct {
 }
 
 type record struct {
-	ID         string          `json:"id"`
-	Agent      string          `json:"agent"`
-	SessionID  string          `json:"sessionId"`
-	Revision   string          `json:"revision"`
-	Title      string          `json:"title"`
-	BaseTitle  string          `json:"baseTitle"`
-	Status     string          `json:"status"`
-	SyncStatus string          `json:"syncStatus"`
-	SyncError  string          `json:"syncError,omitempty"`
-	OrcaOrigin string          `json:"orcaTitleOrigin,omitempty"`
-	CanAdopt   bool            `json:"canAdopt"`
-	UpdatedAt  string          `json:"updatedAt"`
-	Attempts   []attemptRecord `json:"attempts"`
-	Failure    *failureReason  `json:"failure,omitempty"`
-	Reason     string          `json:"reason,omitempty"`
-	SessionKey string          `json:"sessionKey,omitempty"`
-	Kind       string          `json:"kind,omitempty"`
-	Locked     bool            `json:"locked,omitempty"`
-	Protected  bool            `json:"protected,omitempty"`
-	ChangedAt  string          `json:"changedAt,omitempty"`
-	CheckedAt  string          `json:"checkedAt,omitempty"`
-	Changes    []recordChange  `json:"changes,omitempty"`
-	cursor     recordCursor
+	ID             string          `json:"id"`
+	Agent          string          `json:"agent"`
+	SessionID      string          `json:"sessionId"`
+	Revision       string          `json:"revision"`
+	Title          string          `json:"title"`
+	BaseTitle      string          `json:"baseTitle"`
+	Status         string          `json:"status"`
+	SyncStatus     string          `json:"syncStatus"`
+	SyncError      string          `json:"syncError,omitempty"`
+	OrcaOrigin     string          `json:"orcaTitleOrigin,omitempty"`
+	CanAdopt       bool            `json:"canAdopt"`
+	UpdatedAt      string          `json:"updatedAt"`
+	Attempts       []attemptRecord `json:"attempts"`
+	Failure        *failureReason  `json:"failure,omitempty"`
+	Reason         string          `json:"reason,omitempty"`
+	SessionKey     string          `json:"sessionKey,omitempty"`
+	Kind           string          `json:"kind,omitempty"`
+	Locked         bool            `json:"locked,omitempty"`
+	Protected      bool            `json:"protected,omitempty"`
+	ChangedAt      string          `json:"changedAt,omitempty"`
+	CheckedAt      string          `json:"checkedAt,omitempty"`
+	Changes        []recordChange  `json:"changes,omitempty"`
+	SuggestedTitle string          `json:"suggestedTitle,omitempty"`
+	cursor         recordCursor
 }
 
 type attemptRecord struct {

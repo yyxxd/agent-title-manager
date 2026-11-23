@@ -1,6 +1,7 @@
 package engine
 
 import (
+	"context"
 	"testing"
 	"time"
 )
@@ -97,5 +98,43 @@ func TestManualLockAndReleaseFencePendingTurns(t *testing.T) {
 	}
 	if events != 3 || attempts != 0 || stored != nextOrca || get().Locked {
 		t.Fatalf("skip, retry or unlock created work: events=%d attempts=%d baseline=%q", events, attempts, stored)
+	}
+}
+
+func TestObservedCodexTurnSharesDedupAndKeepsCandidatePending(t *testing.T) {
+	e := engineAt(t, t.TempDir(), nil)
+	e.generate = func(_ context.Context, _ attemptRequest, start func() error) modelResult {
+		if err := start(); err != nil {
+			t.Error(err)
+			return modelResult{status: "failed"}
+		}
+		return modelResult{status: "completed", decision: decision{Action: "rename", Title: goodTitle}}
+	}
+	p := event("completed", "")
+	title := "Codex Chat"
+	p.OrcaID, p.OrcaTitle, p.OrcaOrigin, p.ReviewOnly = "linked", &title, "auto", true
+	call[accepted](t, e, "event.submit", p)
+	eventually(t, func() bool { return revisionRecord(t, e, p.Revision).Status == "needs_review" })
+	p.ReviewOnly = false
+	call[accepted](t, e, "event.submit", p)
+	claim := call[claimResponse](t, e, "title.claim", claimRequest{Agent: p.Agent, SessionID: p.SessionID, Revision: p.Revision})
+	list := call[recordList](t, e, "records.list", listRequest{Grouped: true, Filter: "attention"})
+	if claim.Candidate != nil || len(list.Items) != 1 || len(list.Items[0].Attempts) != 1 ||
+		list.Items[0].SuggestedTitle != goodTitle || list.Items[0].Title != "" || len(list.Items[0].Changes) != 0 {
+		t.Fatalf("duplicated or applied unsafe work: %+v %+v", claim, list)
+	}
+}
+
+func TestLateClaimCannotChangeAnAlreadyAppliedTitleBaseline(t *testing.T) {
+	e := engineAt(t, t.TempDir(), nil)
+	if _, err := e.db.Exec(`INSERT INTO sessions(agent,session_id,revision,title,manual) VALUES('codex','settled','finished',?,0);
+		INSERT INTO events(id,agent,session_id,revision,base,title,status,orca_id,orca_origin,created,updated,finalized)
+		VALUES('applied','codex','settled','finished','',?,'applied','','',1,2,2)`, goodTitle, goodTitle); err != nil {
+		t.Fatal(err)
+	}
+	got := call[claimResponse](t, e, "title.claim", claimRequest{Agent: "codex", SessionID: "settled", Revision: "finished", CurrentTitle: ""})
+	state, err := loadSession(t.Context(), e.db, "codex", "settled")
+	if err != nil || got.Status != "applied" || got.Candidate != nil || state.title != goodTitle || state.manual {
+		t.Fatalf("late claim changed an applied title: %+v %+v %v", got, state, err)
 	}
 }

@@ -64,6 +64,10 @@ func (e *Engine) claim(ctx context.Context, p claimRequest) (claimResponse, erro
 		if errors.Is(err, sql.ErrNoRows) {
 			status = "none"
 		}
+		switch status {
+		case "applied", "failed", "interrupted", "stale", "disabled", "needs_review":
+			return claimResponse{Status: status}, nil
+		}
 		if s.title != p.CurrentTitle {
 			status, err = e.observeChangedTitle(ctx, tx, p, s)
 			manual = status == "stale"

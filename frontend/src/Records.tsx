@@ -76,6 +76,8 @@ const failureMessages: Record<string, string> = {
 
 const decisionMessages: Record<string, string> = {
   baseline_unverified: '当前标题或回合已经变化，候选标题未写入。',
+  conditional_write_unavailable: '当前接口无法安全写入候选标题。',
+  orca_title_protected: 'Orca 现有标题已保留。',
   manual_locked: '手动重命名锁定',
   unknown_protected: '已有标题来源未确认，已保留。',
   model_keep: '模型选择保留原标题，具体依据未记录。',
@@ -319,7 +321,6 @@ export function Records({
                           <span style={{ fontWeight: 600, color: 'var(--text-secondary)' }}>
                             {agentName(item.agent)}
                           </span>
-                          <span>·</span>
                           {item.kind && <><span>·</span><span>{item.kind === 'bot' ? 'Bot 聊天' : item.kind === 'project' ? '项目' : 'Orca'}</span></>}
                           {rowTime && <><span>·</span><time dateTime={rowTime}>{formatTime(rowTime)}</time></>}
                           {model && (
@@ -347,6 +348,7 @@ export function Records({
                             ))}
                           </div>
                         )}
+                        {item.suggestedTitle && <div className="record-meta">候选 {item.suggestedTitle}</div>}
                       </div>
 
                       <div className="record-right">
@@ -394,8 +396,8 @@ export function Records({
                             style={{ width: 28, height: 28 }}
                             aria-expanded={expanded}
                             aria-controls={`record-details-${key}`}
-                            title="查看调用详情"
-                            aria-label="查看调用详情"
+                            title="查看会话详情"
+                            aria-label={expanded ? '收起会话详情' : '展开会话详情'}
                             onClick={() => setExpandedId((cur) => (cur === key ? null : key))}
                           >
                             {expanded ? (

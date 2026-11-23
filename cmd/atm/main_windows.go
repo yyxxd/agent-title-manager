@@ -65,6 +65,14 @@ func run() error {
 			Observe: func(ctx context.Context) {
 				desktop.RunObservers(ctx, plugins.Changes,
 					desktop.Observer{Name: "Antigravity Desktop", Select: plugins.DesktopObserverEntry, Run: plugins.RunDesktopObserver},
+					desktop.Observer{Name: "Orca Codex", Select: func(ctx context.Context) (string, error) {
+						if !orca.Active(ctx, "codex") {
+							return "", nil
+						}
+						return plugins.CodexPackage(ctx)
+					}, Run: func(ctx context.Context, dir string) error {
+						return orca.RunCodexObserver(ctx, dir, plugins.NodeCommand, core.Handle)
+					}},
 					desktop.Observer{Name: "Orca Chat", Select: func(ctx context.Context) (string, error) {
 						if !orca.Active(ctx, "antigravity") {
 							return "", nil

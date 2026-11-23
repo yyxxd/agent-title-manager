@@ -9,21 +9,25 @@ import (
 type sessionRequest struct {
 	Agent     string `json:"agent"`
 	SessionID string `json:"sessionId"`
+	Revision  string `json:"revision"`
 }
 
 type titleEligibility struct {
 	Locked bool  `json:"locked"`
 	Epoch  int64 `json:"epoch"`
+	Seen   bool  `json:"seen"`
 	title  string
 }
 
 func (e *Engine) titleEligibility(ctx context.Context, q queryer, p sessionRequest) (titleEligibility, error) {
-	if !validKey(p.Agent, p.SessionID) {
+	if !validKey(p.Agent, p.SessionID) || !validString(p.Revision, 512) {
 		return titleEligibility{}, errors.New("会话 ID 无效")
 	}
 	var state titleEligibility
-	err := q.QueryRowContext(ctx, `SELECT protection_reason='manual_locked',protection_epoch,title
-		FROM sessions WHERE agent=? AND session_id=?`, p.Agent, p.SessionID).Scan(&state.Locked, &state.Epoch, &state.title)
+	err := q.QueryRowContext(ctx, `SELECT protection_reason='manual_locked',protection_epoch,title,
+		EXISTS(SELECT 1 FROM events WHERE agent=s.agent AND session_id=s.session_id AND revision=? AND native_only=0)
+		FROM sessions s WHERE agent=? AND session_id=?`, p.Revision, p.Agent, p.SessionID).
+		Scan(&state.Locked, &state.Epoch, &state.title, &state.Seen)
 	if errors.Is(err, sql.ErrNoRows) {
 		err = nil
 	}

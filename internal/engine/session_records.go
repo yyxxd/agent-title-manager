@@ -84,7 +84,8 @@ func groupedPage(ctx context.Context, tx *sql.Tx, local *time.Location, cte stri
 	rows, err := tx.QueryContext(ctx, cte+`
 		SELECT e.id,g.agent,g.session_id,e.revision,s.title,e.base,e.status,e.sync_status,e.sync_error,e.updated,
 			e.failure_code,e.failure_length,e.failure_limit,e.decision_reason,g.first_row,e.orca_origin,`+recordAdoptable+`,
-			s.orca_id,s.protection_reason,s.session_kind,g.changed,g.checked,`+order+`
+			s.orca_id,s.protection_reason,s.session_kind,g.changed,g.checked,`+order+`,
+			CASE WHEN e.status='needs_review' THEN e.title ELSE '' END
 		FROM summary g JOIN sessions s USING(agent,session_id)
 		JOIN events e ON e.rowid=(
 			SELECT rowid FROM events e WHERE e.agent=g.agent AND e.session_id=g.session_id
@@ -100,7 +101,7 @@ func groupedPage(ctx context.Context, tx *sql.Tx, local *time.Location, cte stri
 		var orcaID, protection string
 		var changed sql.NullInt64
 		var checked, sortTime int64
-		if err := scanRecord(rows, &item, local, &orcaID, &protection, &item.Kind, &changed, &checked, &sortTime); err != nil {
+		if err := scanRecord(rows, &item, local, &orcaID, &protection, &item.Kind, &changed, &checked, &sortTime, &item.SuggestedTitle); err != nil {
 			return nil, err
 		}
 		item.SessionKey = base64.RawURLEncoding.EncodeToString([]byte(item.Agent + "\x00" + item.SessionID))
