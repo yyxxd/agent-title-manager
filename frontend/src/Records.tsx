@@ -5,6 +5,7 @@ import {
   type RecordCounts, type RecordCursor, type RecordItem, type RecordList,
 } from './rpc';
 import { AttemptRow } from './RecordAttempt';
+import { Segmented } from './Segmented';
 import { toast } from './toast';
 import { ConfirmDialog, StatusNotice, useAction, useLoad } from './ui';
 
@@ -217,19 +218,20 @@ export function Records({
   return (
     <main className="main">
       <div className="filter-bar">
-        <div className="segmented" role="group" aria-label="记录筛选">
+        <Segmented role="group" aria-label="记录筛选" value={filter}>
           {recordFilters.map(({ value, label }) => (
             <button
               key={value}
               type="button"
-              className={`seg-btn ${filter === value ? 'active' : ''}`}
+              data-segment={value}
+              className="seg-btn"
               aria-pressed={filter === value}
               onClick={() => selectFilter(value)}
             >
               {value === 'all' ? `${label} (${counts.total})` : label}
             </button>
           ))}
-        </div>
+        </Segmented>
 
         <div className="view-actions">
           <div className="search-box">

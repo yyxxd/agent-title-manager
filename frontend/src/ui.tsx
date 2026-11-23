@@ -129,7 +129,11 @@ export function ConfirmDialog({
   );
 }
 
-export function useLoad<T>(load: () => Promise<T>, key: string | number): { value?: T; error?: string; loading: boolean } {
+export function useLoad<T>(
+  load: () => Promise<T>,
+  key: string | number,
+  { retainValue = false } = {},
+): { value?: T; error?: string; loading: boolean } {
   const [state, setState] = useState<{ key: string | number; value?: T; error?: string }>();
   useEffect(() => {
     let cancelled = false;
@@ -138,15 +142,23 @@ export function useLoad<T>(load: () => Promise<T>, key: string | number): { valu
         if (!cancelled) setState({ key, value });
       },
       (error) => {
-        if (!cancelled) setState({ key, error: errorText(error) });
+        if (!cancelled) {
+          setState((previous) => ({
+            key,
+            value: retainValue ? previous?.value : undefined,
+            error: errorText(error),
+          }));
+        }
       },
     );
     return () => {
       cancelled = true;
     };
-  }, [key]);
+  }, [key, retainValue]);
   const settled = state?.key === key;
-  return settled ? { value: state.value, error: state.error, loading: false } : { loading: true };
+  return settled
+    ? { value: state.value, error: state.error, loading: false }
+    : { value: retainValue ? state?.value : undefined, loading: true };
 }
 
 export class InlineActionError extends Error {}
