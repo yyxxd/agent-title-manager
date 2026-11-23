@@ -149,7 +149,14 @@ func observeSubmission(ctx context.Context, tx *sql.Tx, p submission, now int64)
 	if err != nil && !first {
 		return s, err
 	}
-	if p.TitleOrigin == "manual" {
+	manual := p.TitleOrigin == "manual"
+	if !manual && !first {
+		manual, err = confirmedExternalCodexRename(ctx, tx, p, s)
+		if err != nil {
+			return s, err
+		}
+	}
+	if manual {
 		s.manualChanged = !first && s.title != p.CurrentTitle
 		s.priorTitle = s.title
 		if s.protectionReason != decisionManual {
@@ -214,6 +221,21 @@ func observeSubmission(ctx context.Context, tx *sql.Tx, p submission, now int64)
 		p.Agent, p.SessionID, s.revision, s.title, s.manual, s.orcaID, s.orcaManaged, s.projectKey,
 		s.protection(), s.protectionEpoch, p.SessionKind, s.orcaUnlockedBase)
 	return s, err
+}
+
+func confirmedExternalCodexRename(ctx context.Context, tx *sql.Tx, p submission, s session) (bool, error) {
+	// Orca also marks the manager's own rename as user. Require a verified common
+	// baseline, and exclude this manager's current and earlier writes.
+	if p.Agent != "codex" || p.TitleOrigin == "auto" || p.OrcaID == "" || p.OrcaID != s.orcaID || p.OrcaNativeHandle != p.SessionID ||
+		p.OrcaOrigin != "manual" || p.OrcaTitle == nil || *p.OrcaTitle != p.CurrentTitle || p.CurrentTitle == "" ||
+		s.orcaManaged == "" || s.title != s.orcaManaged || p.CurrentTitle == s.title {
+		return false, nil
+	}
+	var ownWrite bool
+	err := tx.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM events WHERE agent=? AND session_id=?
+		AND title=? AND (status IN ('claimed','applied') OR sync_status IN ('writing','synced')))`,
+		p.Agent, p.SessionID, p.CurrentTitle).Scan(&ownWrite)
+	return err == nil && !ownWrite, err
 }
 
 func (e *Engine) insertSubmission(ctx context.Context, tx *sql.Tx, p submission, s session, payload []byte) error {

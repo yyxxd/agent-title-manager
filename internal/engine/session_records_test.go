@@ -106,6 +106,53 @@ func TestManualLockAndReleaseFencePendingTurns(t *testing.T) {
 	}
 }
 
+func TestExplicitCodexRenameAfterManagedSyncLocksOnlyWithMatchingEvidence(t *testing.T) {
+	for _, tc := range []struct {
+		name, orcaID, native, orca, priorStatus string
+		locked                                  bool
+	}{
+		{"external rename", "linked", "External", "External", "", true},
+		{"manager write", "linked", "Managed", "Managed", "", false},
+		{"different sides", "linked", "External", "Other", "", false},
+		{"different binding", "unexpected", "External", "External", "", false},
+		{"native claim", "linked", "External", "External", "claimed", false},
+		{"previous write", "linked", "External", "External", "applied", false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			e := engineAt(t, t.TempDir(), nil)
+			_, err := e.db.Exec(`INSERT INTO sessions(agent,session_id,revision,title,manual,orca_id,orca_managed)
+				VALUES('codex','native','previous','Managed',0,'linked','Managed')`)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if tc.priorStatus != "" {
+				_, err = e.db.Exec(`INSERT INTO events(id,agent,session_id,revision,base,title,status,orca_id,orca_origin,created,updated)
+					VALUES('prior','codex','native','prior','Managed','External',?,'linked','auto',1,1)`, tc.priorStatus)
+				if err != nil {
+					t.Fatal(err)
+				}
+			}
+			p := submission{Agent: "codex", SessionID: "native", Revision: "next", CurrentTitle: tc.native, TitleOrigin: "unknown",
+				OrcaID: tc.orcaID, OrcaNativeHandle: "native", OrcaTitle: &tc.orca, OrcaOrigin: "manual", Turns: []turn{}}
+			call[accepted](t, e, "event.submit", p)
+			p.Revision = "following"
+			call[accepted](t, e, "event.submit", p)
+			var reason string
+			var changes, following, attempts int
+			err = e.db.QueryRow(`SELECT protection_reason,
+				(SELECT count(*) FROM events WHERE status='manual_change'),
+				(SELECT count(*) FROM events WHERE revision='following'), (SELECT count(*) FROM attempts) FROM sessions`).
+				Scan(&reason, &changes, &following, &attempts)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if (reason == decisionManual) != tc.locked || tc.locked && (changes != 1 || following != 0 || attempts != 0) {
+				t.Fatalf("unexpected protection: reason=%q changes=%d following=%d attempts=%d", reason, changes, following, attempts)
+			}
+		})
+	}
+}
+
 func TestOrcaRecoveryCannotSubmitAnIndependentNamingCandidate(t *testing.T) {
 	e := engineAt(t, t.TempDir(), nil)
 	reply, err := e.Handle(t.Context(), "event.submit", []byte(`{"agent":"codex","sessionId":"session","revision":"finished","currentTitle":"",
