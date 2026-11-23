@@ -172,7 +172,7 @@ func (e *Engine) records(ctx context.Context, p listRequest, markRead bool) (rec
 		}
 		result.Items = items
 		result.TestAttempts = []attemptRecord{}
-		err = readAttempts(ctx, tx, local, attemptFields+` WHERE event_id IS NULL ORDER BY id DESC LIMIT ?`,
+		err = readAttempts(ctx, tx, local, attemptFields+` WHERE event_id IS NULL AND suggestion=0 ORDER BY id DESC LIMIT ?`,
 			[]any{limit}, func(_ string, item attemptRecord) { result.TestAttempts = append(result.TestAttempts, item) })
 		return result, err
 	})

@@ -26,7 +26,8 @@ func makePrompt(p submission) ([]byte, error) {
 		OriginalGoal string `json:"original_goal,omitempty"`
 		CurrentTitle string `json:"current_title"`
 		ProjectHint  string `json:"project_hint,omitempty"`
-	}{turns, goal, p.CurrentTitle, hint})
+		Suggestion   bool   `json:"title_suggestion,omitempty"`
+	}{turns, goal, p.CurrentTitle, hint, p.Suggestion})
 }
 
 func recentTurns(input []turn) ([]turn, bool) {

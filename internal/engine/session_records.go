@@ -68,7 +68,7 @@ func groupedRecords(ctx context.Context, tx *sql.Tx, local *time.Location, p lis
 		return recordList{}, err
 	}
 	result.Items = items
-	err = readAttempts(ctx, tx, local, attemptFields+` WHERE event_id IS NULL ORDER BY id DESC LIMIT ?`,
+	err = readAttempts(ctx, tx, local, attemptFields+` WHERE event_id IS NULL AND suggestion=0 ORDER BY id DESC LIMIT ?`,
 		[]any{limit}, func(_ string, item attemptRecord) { result.TestAttempts = append(result.TestAttempts, item) })
 	return result, err
 }

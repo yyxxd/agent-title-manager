@@ -17,6 +17,7 @@ type NativeHandleValidator func(context.Context, string, string, string) bool
 
 type Binding struct {
 	ID, Title, Origin, Handle, Kind string
+	Surface                         string
 }
 
 func supportsAgent(agent string) bool {

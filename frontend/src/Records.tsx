@@ -7,7 +7,7 @@ import {
 import { AttemptRow } from './RecordAttempt';
 import { Segmented } from './Segmented';
 import { toast } from './toast';
-import { ConfirmDialog, StatusNotice, useAction, useLoad } from './ui';
+import { ConfirmDialog, StatusNotice, copyTextToClipboard, useAction, useLoad } from './ui';
 
 export type RecordFilter = 'changes' | 'all' | 'attention' | 'locked' | 'codex' | 'claude' | 'antigravity' | 'pi';
 
@@ -147,6 +147,9 @@ export function Records({
   const [cursors, setCursors] = useState<RecordCursor[]>([]);
   const [expandedId, setExpandedId] = useState<string | null>(null);
   const [confirmItem, setConfirmItem] = useState<RecordItem | null>(null);
+  const [suggestion, setSuggestion] = useState<{ key: string; title?: string } | null>(null);
+  const suggesting = useRef(false);
+  const suggestionAction = useAction();
 
   const visit = useRef<Promise<RecordList> | null>(null);
   const before = cursors.at(-1);
@@ -218,6 +221,26 @@ export function Records({
     }, { success: 'toast', failure: 'toast' });
   }
 
+  function suggest(item: RecordItem, key: string) {
+    if (suggesting.current) return;
+    suggesting.current = true;
+    setSuggestion({ key });
+    setExpandedId(key);
+    void suggestionAction.run(async () => {
+      const result = await rpc<{ title?: string; failure?: RecordItem['failure'] }>('records.suggestTitle', { id: item.id });
+      if (!result.title) {
+        const reason = result.failure?.code && failureMessages[result.failure.code];
+        throw new Error(reason || '未生成可用的标题，请检查命名服务后重试。');
+      }
+      setSuggestion({ key, title: result.title });
+    }).finally(() => { suggesting.current = false; });
+  }
+
+  async function copySuggestion(title: string) {
+    if (await copyTextToClipboard(title)) toast.success('已复制标题建议');
+    else toast.error('无法访问剪贴板，可以选中建议文字后手动复制');
+  }
+
   return (
     <main className="main">
       <div className="filter-bar">
@@ -283,7 +306,9 @@ export function Records({
               {filtered.map((item) => {
                 const key = item.sessionKey ?? item.id;
                 const expanded = expandedId === key;
-                const details = !!item.changes?.length || !!item.attempts?.length;
+                const canSuggest = ['codex', 'claude', 'pi', 'antigravity'].includes(item.agent);
+                const result = suggestion?.key === key ? suggestion : null;
+                const details = !!item.changes?.length || !!item.attempts?.length || !!result;
                 const checkTime = filter === 'all' || filter === 'attention';
                 const rowTime = checkTime ? item.checkedAt : item.changedAt;
                 const { model, count, totalTokens, partial } = attemptSummary(item);
@@ -394,6 +419,12 @@ export function Records({
                           </button>
                         )}
                         {item.locked && <span className="pill pill-warning">已锁定</span>}
+                        {canSuggest && (
+                          <button type="button" className="btn btn-sm" disabled={suggestionAction.busy}
+                            onClick={() => suggest(item, key)}>
+                            {suggestionAction.busy && result ? '生成中…' : result?.title ? '重新生成建议' : '生成标题建议'}
+                          </button>
+                        )}
                         {(item.locked || item.protected) && (
                           <button type="button" className="btn btn-sm" disabled={action.busy} onClick={() => unlock(item.id)}>
                             {item.locked ? '解锁' : '允许自动命名'}
@@ -422,6 +453,18 @@ export function Records({
 
                     {expanded && details && (
                       <div id={`record-details-${key}`} className="record-detail tabular">
+                        {result && (
+                          <div className="record-change" aria-live="polite">
+                            {result.title ? <>
+                              <span className="record-change-title">{result.title}</span>
+                              <span className="record-meta">待手动采用 · 可在原生会话中改名</span>
+                              <button type="button" className="btn btn-sm" onClick={() => void copySuggestion(result.title!)}>
+                                复制建议
+                              </button>
+                            </> : <StatusNotice error={suggestionAction.error}
+                              message={suggestionAction.busy ? '正在生成标题建议…' : undefined} />}
+                          </div>
+                        )}
                         {item.changes?.map((change) => (
                           <div className="record-change" key={change.id}>
                             <span className="record-change-title">{change.from || '未命名'} → {change.title}</span>

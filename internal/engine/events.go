@@ -30,6 +30,7 @@ type submission struct {
 	ProtectionEpoch     *int64  `json:"protectionEpoch"`
 	SessionKind         string  `json:"sessionKind"`
 	ReviewOnly          bool    `json:"reviewOnly"`
+	Suggestion          bool    `json:"-"`
 }
 
 type turn struct {
