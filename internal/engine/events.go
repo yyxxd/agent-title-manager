@@ -27,6 +27,8 @@ type submission struct {
 	OrcaOrigin          string  `json:"orcaTitleOrigin"`
 	NativeOnly          bool    `json:"nativeTitleOnly"`
 	Turns               []turn  `json:"turns"`
+	ProtectionEpoch     *int64  `json:"protectionEpoch"`
+	SessionKind         string  `json:"sessionKind"`
 }
 
 type turn struct {
@@ -38,6 +40,10 @@ type session struct {
 	revision, title, orcaID, orcaManaged    string
 	projectKey, priorRevision, priorProject string
 	protectionReason                        string
+	priorTitle                              string
+	orcaUnlockedBase                        *string
+	protectionEpoch                         int64
+	manualChanged                           bool
 	manual                                  bool
 	supersedes, preserveInitial             bool
 }
@@ -67,6 +73,10 @@ func (p submission) validate() error {
 		(p.OrcaOrigin != "" && p.OrcaTitle == nil) || (p.OrcaNativeHandle != "" && p.OrcaID == "") {
 		return errors.New("标题来源或 Orca 绑定无效")
 	}
+	if (p.ProtectionEpoch != nil && *p.ProtectionEpoch < 0) ||
+		(p.SessionKind != "" && p.SessionKind != "project" && p.SessionKind != "bot") {
+		return errors.New("会话保护版本或类型无效")
+	}
 	if p.NativeOnly && (strings.TrimSpace(p.CurrentTitle) == "" || len(p.Turns) > 0 || p.OrcaID == "" || p.OrcaTitle == nil) {
 		return errors.New("仅同步模式需要宿主已确认的会话标题及完整 Orca 绑定")
 	}
@@ -83,8 +93,9 @@ func (p submission) validate() error {
 
 func loadSession(ctx context.Context, q queryer, agent, id string) (session, error) {
 	var s session
-	err := q.QueryRowContext(ctx, `SELECT revision,title,manual,orca_id,orca_managed,project_key,protection_reason FROM sessions
-		WHERE agent=? AND session_id=?`, agent, id).Scan(&s.revision, &s.title, &s.manual, &s.orcaID, &s.orcaManaged, &s.projectKey, &s.protectionReason)
+	err := q.QueryRowContext(ctx, `SELECT revision,title,manual,orca_id,orca_managed,project_key,protection_reason,
+		protection_epoch,orca_unlocked_base FROM sessions WHERE agent=? AND session_id=?`, agent, id).
+		Scan(&s.revision, &s.title, &s.manual, &s.orcaID, &s.orcaManaged, &s.projectKey, &s.protectionReason, &s.protectionEpoch, &s.orcaUnlockedBase)
 	return s, err
 }
 
@@ -100,8 +111,16 @@ func (e *Engine) submit(ctx context.Context, p submission) (accepted, error) {
 	defer e.activeMu.Unlock()
 	var observed session
 	result, err := transact(ctx, e.db, func(tx *sql.Tx) (accepted, error) {
+		state, err := e.titleEligibility(ctx, tx, sessionRequest{Agent: p.Agent, SessionID: p.SessionID})
+		if err != nil {
+			return accepted{}, err
+		}
+		if (state.Locked && (!p.NativeOnly || p.TitleOrigin != "manual" || p.CurrentTitle == state.title)) ||
+			(p.ProtectionEpoch != nil && *p.ProtectionEpoch != state.Epoch) {
+			return accepted{Accepted: true}, nil
+		}
 		var exists bool
-		err := tx.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM events
+		err = tx.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM events
 			WHERE agent=? AND session_id=? AND revision=? AND native_only=?)`, p.Agent, p.SessionID, p.Revision, p.NativeOnly).Scan(&exists)
 		if err != nil || exists {
 			return accepted{Accepted: exists}, err
@@ -129,6 +148,11 @@ func observeSubmission(ctx context.Context, tx *sql.Tx, p submission, now int64)
 		return s, err
 	}
 	if p.TitleOrigin == "manual" {
+		s.manualChanged = !first && s.title != p.CurrentTitle
+		s.priorTitle = s.title
+		if s.protectionReason != decisionManual {
+			s.protectionEpoch++
+		}
 		s.manual = true
 		s.protectionReason = decisionManual
 	}
@@ -145,6 +169,9 @@ func observeSubmission(ctx context.Context, tx *sql.Tx, p submission, now int64)
 			s.manual = true
 		}
 	}
+	if s.orcaUnlockedBase != nil && p.OrcaID == s.orcaID && p.OrcaTitle != nil && *p.OrcaTitle != *s.orcaUnlockedBase {
+		s.manual = true
+	}
 	s.supersedes = !p.NativeOnly || p.CurrentTitle != s.title || s.manual
 	s.preserveInitial = !p.NativeOnly && !s.manual && s.title == "" && p.CurrentTitle == ""
 	if s.supersedes {
@@ -152,6 +179,13 @@ func observeSubmission(ctx context.Context, tx *sql.Tx, p submission, now int64)
 			WHERE agent=? AND session_id=? AND (status='queued' OR
 				(NOT (? AND base='') AND (status IN ('running','candidate') OR (status='claimed' AND (title<>? OR ?)))))`,
 			now, s.protection(), p.Agent, p.SessionID, s.preserveInitial, p.CurrentTitle, s.manual)
+		if err != nil {
+			return s, err
+		}
+	}
+	if s.protectionReason == decisionManual {
+		_, err = tx.ExecContext(ctx, `UPDATE events SET sync_status='stale',updated=?
+			WHERE agent=? AND session_id=? AND sync_status IN ('pending','writing','failed','protected')`, now, p.Agent, p.SessionID)
 		if err != nil {
 			return s, err
 		}
@@ -164,13 +198,19 @@ func observeSubmission(ctx context.Context, tx *sql.Tx, p submission, now int64)
 	if p.OrcaID != "" && p.OrcaID != s.orcaID {
 		s.orcaID = p.OrcaID
 		s.orcaManaged = ""
+		s.orcaUnlockedBase = nil
 	}
 	s.title = p.CurrentTitle
-	_, err = tx.ExecContext(ctx, `INSERT INTO sessions(agent,session_id,revision,title,manual,orca_id,orca_managed,project_key,protection_reason)
-		VALUES(?,?,?,?,?,?,?,?,?) ON CONFLICT(agent,session_id) DO UPDATE SET
+	_, err = tx.ExecContext(ctx, `INSERT INTO sessions(agent,session_id,revision,title,manual,orca_id,orca_managed,project_key,
+		protection_reason,protection_epoch,session_kind,orca_unlocked_base)
+		VALUES(?,?,?,?,?,?,?,?,?,?,?,?) ON CONFLICT(agent,session_id) DO UPDATE SET
 		revision=excluded.revision,title=excluded.title,manual=excluded.manual,orca_id=excluded.orca_id,
-		orca_managed=excluded.orca_managed,project_key=excluded.project_key,protection_reason=excluded.protection_reason`,
-		p.Agent, p.SessionID, s.revision, s.title, s.manual, s.orcaID, s.orcaManaged, s.projectKey, s.protection())
+		orca_managed=excluded.orca_managed,project_key=excluded.project_key,protection_reason=excluded.protection_reason,
+		protection_epoch=excluded.protection_epoch,
+		orca_unlocked_base=excluded.orca_unlocked_base,
+		session_kind=coalesce(nullif(excluded.session_kind,''),sessions.session_kind)`,
+		p.Agent, p.SessionID, s.revision, s.title, s.manual, s.orcaID, s.orcaManaged, s.projectKey,
+		s.protection(), s.protectionEpoch, p.SessionKind, s.orcaUnlockedBase)
 	return s, err
 }
 
@@ -210,6 +250,11 @@ func (e *Engine) insertSubmission(ctx context.Context, tx *sql.Tx, p submission,
 		}
 	}
 	switch {
+	case s.manualChanged:
+		status, finalized, payload = "manual_change", &now, nil
+		if p.OrcaTitle != nil && *p.OrcaTitle != p.CurrentTitle {
+			syncStatus = "blocked"
+		}
 	case p.NativeOnly:
 		status = "native"
 		syncStatus = syncPolicy(p.OrcaID, p.OrcaTitle, p.OrcaOrigin, s.orcaManaged, p.CurrentTitle)
@@ -218,11 +263,15 @@ func (e *Engine) insertSubmission(ctx context.Context, tx *sql.Tx, p submission,
 		finalized = &now
 		payload = nil
 	}
+	base := p.CurrentTitle
+	if s.manualChanged {
+		base = s.priorTitle
+	}
 	_, err = tx.ExecContext(ctx, `INSERT INTO events(id,agent,session_id,revision,native_only,base,title,status,payload,
 		orca_id,orca_base,orca_origin,sync_status,created,updated,finalized,turns_hash,turn_count,confirmation_skips,native_handle,throttle_skips,
 		turn_hashes,goal_hash,decision_reason)
 		VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
-		rand.Text(), p.Agent, p.SessionID, p.Revision, p.NativeOnly, p.CurrentTitle, p.CurrentTitle,
+		rand.Text(), p.Agent, p.SessionID, p.Revision, p.NativeOnly, base, p.CurrentTitle,
 		status, payload, p.OrcaID, p.OrcaTitle, p.OrcaOrigin, syncStatus, now, now, finalized,
 		turnsHash(p.OriginalGoal, p.Turns), len(p.Turns), skips, p.OrcaNativeHandle, throttleSkip, strings.Join(hashes, ","), goalHash, reason)
 	return err

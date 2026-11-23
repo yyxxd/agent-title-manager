@@ -26,6 +26,7 @@ type Backend struct {
 	ResolveTitleOrigin func(context.Context, string, string, string, string) (orcasync.Binding, bool)
 	RetryBinding       func(context.Context, string, string, string, string) (orcasync.Binding, bool)
 	NativeTitleMatches func(context.Context, string, string, string, string) (bool, error)
+	ReadNativeTitle    orcasync.NativeTitleReader
 	AttachBinding      func(context.Context, engine.ConfirmedBinding) error
 	Observe            func(context.Context)
 	Close              func() error
@@ -140,6 +141,8 @@ func (s *Service) Call(ctx context.Context, method string, body string) (any, er
 	switch {
 	case method == "settings.get" || method == "settings.save":
 		return s.publicSettings(ctx, method, json.RawMessage(body))
+	case method == "records.unlock":
+		return s.unlockRecord(ctx, json.RawMessage(body))
 	case slices.Contains(engineMethods, method):
 		return s.backend.Engine(ctx, method, json.RawMessage(body))
 	case slices.Contains(pluginMethods, method):

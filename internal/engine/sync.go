@@ -105,7 +105,13 @@ func (e *Engine) processSync() (bool, error) {
 		if syncErr != nil {
 			syncMessage = syncErr.Error()
 		}
-		if _, err := tx.ExecContext(ctx, "UPDATE events SET sync_status=?,sync_error=?,updated=? WHERE id=?", status, syncMessage, e.now().UnixMilli(), job.id); err != nil {
+		res, err := tx.ExecContext(ctx, "UPDATE events SET sync_status=?,sync_error=?,updated=? WHERE id=? AND sync_status='writing'",
+			status, syncMessage, e.now().UnixMilli(), job.id)
+		if err != nil {
+			return false, err
+		}
+		n, err := res.RowsAffected()
+		if err != nil || n == 0 {
 			return false, err
 		}
 		if syncErr == nil {

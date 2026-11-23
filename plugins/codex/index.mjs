@@ -11,13 +11,13 @@ async function current(call, snapshot) {
   return turn?.id === snapshot.revision && turn.status === "completed";
 }
 
-async function prepare(mode, input, rpc, call) {
+async function prepare(mode, input, rpc, call, protectionEpoch) {
   const sessionId = input.session_id;
   const thread = await readThread(call, sessionId);
   if (!thread) return;
   const snapshot = {
     agent: "codex", sessionId, revision: input.turn_id ?? "session-start",
-    currentTitle: thread.name ?? "", titleOrigin: nativeOrigin(thread.name), project: thread.cwd, hostSessionHint: hostSessionHint(),
+    currentTitle: thread.name ?? "", titleOrigin: nativeOrigin(thread.name), project: thread.cwd, hostSessionHint: hostSessionHint(), protectionEpoch,
   };
   if (mode === "start") {
     if (snapshot.currentTitle && (await readThread(call, sessionId))?.name === snapshot.currentTitle) {
@@ -29,22 +29,37 @@ async function prepare(mode, input, rpc, call) {
   }
   const context = await stopContext(call, thread, snapshot.revision);
   if (!context?.turns.length) return;
-  const result = await submitEvent(rpc, { ...snapshot, ...context }, {
+  const event = { ...snapshot, ...context };
+  const result = await submitEvent(rpc, event, {
     fresh: () => current(call, snapshot),
   });
-  if (result?.accepted) return snapshot;
+  if (result?.accepted) return event;
 }
 
 export async function handleCodex(mode, input, rpc, withNative, polling) {
   if (!safeID(input.session_id) || !["start", "stop"].includes(mode)) return;
   if (mode === "stop" && (!safeID(input.turn_id) || input.stop_hook_active === true)) return;
-  const snapshot = await withNative(call => prepare(mode, input, rpc, call));
+  const snapshot = await withNative(call => prepare(mode, input, rpc, call, polling?.protectionEpoch));
   if (!snapshot) return;
 
-  const { candidate } = await waitCandidate(rpc, snapshot, { ...polling, resume: mode === "start" });
+  let retries = 0;
+  const poll = async (method, params, signal) => {
+    const reply = await rpc(method, params, signal);
+    if (mode === "stop" && reply?.status === "none" && retries < 2) {
+      retries++;
+      await withNative(call => submitEvent(rpc, snapshot, { signal, fresh: () => current(call, snapshot) }));
+    }
+    return reply;
+  };
+  const { candidate } = await waitCandidate(poll, snapshot, { ...polling, resume: mode === "start" });
   if (!candidate) return;
   await withNative(async call => {
-    if (!(await current(call, snapshot))) return;
+    if (!(await current(call, snapshot))) {
+      if (Number.isSafeInteger(snapshot.protectionEpoch)) {
+        await rpc("title.defer", { agent: snapshot.agent, sessionId: snapshot.sessionId, id: candidate.id });
+      }
+      return;
+    }
     await call("thread/name/set", { threadId: snapshot.sessionId, name: candidate.title });
     const observed = await readThread(call, snapshot.sessionId);
     if (observed?.name === candidate.title) await ack(rpc, snapshot, candidate, observed.name);
@@ -81,9 +96,11 @@ async function main() {
       try { await rpc("hook.observed", { registration }); }
       catch { process.stderr.write("标题管理器未能记录 Codex Hook 运行状态。\n"); }
     }
+    const eligibility = await rpc("event.eligibility", { agent: "codex", sessionId: payload.session_id });
+    if (eligibility?.locked || !Number.isSafeInteger(eligibility?.epoch)) return;
     const binary = findCodex(config.codexPath);
     const withNative = action => withAppServer(binary, action);
-    await handleCodex(mode, payload, rpc, withNative);
+    await handleCodex(mode, payload, rpc, withNative, { protectionEpoch: eligibility.epoch });
   } catch {
     process.stderr.write("标题管理器未完成 Codex 标题处理。\n");
   } finally {

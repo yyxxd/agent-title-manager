@@ -126,7 +126,12 @@ func (i *Integration) resolve(ctx context.Context, agent, session, handle, hint,
 	if !i.Active(ctx, agent) {
 		return Binding{}, false
 	}
-	return Binding{strings.TrimPrefix(at.ID, idPrefix), *at.Title, origin, handle}, true
+	id := strings.TrimPrefix(at.ID, idPrefix)
+	category := ""
+	if at.Kind == "chat" && agent == "codex" {
+		category = codexSessionKind(ctx, id)
+	}
+	return Binding{ID: id, Title: *at.Title, Origin: origin, Handle: handle, Kind: category}, true
 }
 
 func (i *Integration) SyncVerified(ctx context.Context, id, expected, title, agent, session, handle string) error {

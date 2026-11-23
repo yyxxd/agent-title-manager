@@ -8,9 +8,22 @@ import { AttemptRow } from './RecordAttempt';
 import { toast } from './toast';
 import { ConfirmDialog, StatusNotice, useAction, useLoad } from './ui';
 
-export type RecordFilter = 'all' | 'attention' | 'codex' | 'claude' | 'antigravity' | 'pi';
+export type RecordFilter = 'changes' | 'all' | 'attention' | 'locked' | 'codex' | 'claude' | 'antigravity' | 'pi';
+
+const recordFilters: { value: RecordFilter; label: string }[] = [
+  { value: 'changes', label: '最近改名' },
+  { value: 'all', label: '全部' },
+  { value: 'attention', label: '待处理' },
+  { value: 'locked', label: '已锁定' },
+  { value: 'codex', label: 'Codex' },
+  { value: 'claude', label: 'Claude' },
+  { value: 'antigravity', label: 'Antigravity' },
+  { value: 'pi', label: 'Pi' },
+];
 
 const states: Record<string, string> = {
+  manual_change: '手动改名',
+  needs_review: '待确认',
   queued: '待处理',
   running: '命名中',
   candidate: '候选待领取',
@@ -28,6 +41,7 @@ const states: Record<string, string> = {
 };
 
 const syncStates: Record<string, { label: string; pill: string }> = {
+  blocked: { label: '同步待处理', pill: 'pill-warning' },
   unbound: { label: 'Orca 未绑定', pill: 'pill-neutral' },
   unchanged: { label: 'Orca 已一致', pill: 'pill-neutral' },
   protected: { label: 'Orca 标题受保护', pill: 'pill-warning' },
@@ -61,6 +75,7 @@ const failureMessages: Record<string, string> = {
 };
 
 const decisionMessages: Record<string, string> = {
+  baseline_unverified: '当前标题或回合已经变化，候选标题未写入。',
   manual_locked: '手动重命名锁定',
   unknown_protected: '已有标题来源未确认，已保留。',
   model_keep: '模型选择保留原标题，具体依据未记录。',
@@ -113,7 +128,7 @@ function attemptSummary(item: RecordItem) {
 }
 
 export function Records({
-  initialFilter = 'all',
+  initialFilter = 'changes',
   onOpened,
   onChanged,
 }: {
@@ -132,7 +147,7 @@ export function Records({
   const before = cursors.at(-1);
   const { value, error, loading } = useLoad(
     async () => {
-      const params = { limit: 50, filter, query: query.trim(), before };
+      const params = { limit: 50, filter, query: query.trim(), before, grouped: true };
       if (!visit.current) {
         visit.current = rpc<RecordList & { counts: RecordCounts }>('records.open', params).then((result) => {
           onOpened(result.counts.unread);
@@ -187,52 +202,31 @@ export function Records({
     }, { success: 'toast', failure: confirmItem ? 'inline' : 'toast' });
   }
 
+  function unlock(id: string) {
+    void action.run(async () => {
+      const result = await rpc<{ accepted: boolean }>('records.unlock', { id });
+      if (!result.accepted) throw new Error('会话状态已更新，请刷新记录。');
+      setRefresh((n) => n + 1);
+      onChanged();
+      return '已允许后续回合自动命名';
+    }, { success: 'toast', failure: 'toast' });
+  }
+
   return (
     <main className="main">
       <div className="filter-bar">
         <div className="segmented" role="group" aria-label="记录筛选">
-          <button
-            type="button"
-            className={`seg-btn ${filter === 'all' ? 'active' : ''}`}
-            onClick={() => selectFilter('all')}
-          >
-            全部 ({counts.total})
-          </button>
-          <button
-            type="button"
-            className={`seg-btn ${filter === 'attention' ? 'active' : ''}`}
-            onClick={() => selectFilter('attention')}
-          >
-            提醒记录
-          </button>
-          <button
-            type="button"
-            className={`seg-btn ${filter === 'codex' ? 'active' : ''}`}
-            onClick={() => selectFilter('codex')}
-          >
-            Codex
-          </button>
-          <button
-            type="button"
-            className={`seg-btn ${filter === 'claude' ? 'active' : ''}`}
-            onClick={() => selectFilter('claude')}
-          >
-            Claude
-          </button>
-          <button
-            type="button"
-            className={`seg-btn ${filter === 'antigravity' ? 'active' : ''}`}
-            onClick={() => selectFilter('antigravity')}
-          >
-            Antigravity
-          </button>
-          <button
-            type="button"
-            className={`seg-btn ${filter === 'pi' ? 'active' : ''}`}
-            onClick={() => selectFilter('pi')}
-          >
-            Pi
-          </button>
+          {recordFilters.map(({ value, label }) => (
+            <button
+              key={value}
+              type="button"
+              className={`seg-btn ${filter === value ? 'active' : ''}`}
+              aria-pressed={filter === value}
+              onClick={() => selectFilter(value)}
+            >
+              {value === 'all' ? `${label} (${counts.total})` : label}
+            </button>
+          ))}
         </div>
 
         <div className="view-actions">
@@ -280,13 +274,17 @@ export function Records({
           {filtered.length > 0 ? (
             <div className="record-list">
               {filtered.map((item) => {
-                const expanded = expandedId === item.id;
+                const key = item.sessionKey ?? item.id;
+                const expanded = expandedId === key;
+                const details = !!item.changes?.length || !!item.attempts?.length;
+                const rowTime = filter === 'all' || filter === 'attention' ? item.checkedAt : item.changedAt;
                 const { model, count, totalTokens, partial } = attemptSummary(item);
                 const reason = failureText(item);
                 const syncError = item.syncError?.trim() || undefined;
                 const syncMeta = item.syncStatus ? syncStates[item.syncStatus] : undefined;
                 const protectedWarn = item.syncStatus === 'protected';
                 const reasons: { text: string; warn?: boolean }[] = [];
+                if (item.syncStatus === 'blocked') reasons.push({ text: '两端标题不同，当前接口无法安全同步。', warn: true });
                 if (reason && syncError && reason !== syncError) {
                   reasons.push({ text: `生成失败：${reason}` });
                   reasons.push({ text: `同步错误：${syncError}` });
@@ -301,7 +299,7 @@ export function Records({
                     : 'Orca 现有标题的来源未确认，已保留。',
                   warn: true,
                 });
-                if (item.reason && Object.hasOwn(decisionMessages, item.reason)) {
+                if (item.reason && !(item.sessionKey && item.reason === 'manual_locked') && Object.hasOwn(decisionMessages, item.reason)) {
                   reasons.push({
                     text: decisionMessages[item.reason],
                     warn: item.reason === 'manual_locked' || item.reason === 'unknown_protected',
@@ -311,7 +309,7 @@ export function Records({
                 }
 
                 return (
-                  <article className="record-item" key={item.id}>
+                  <article className="record-item" key={key}>
                     <div className="record-main">
                       <div className="record-left">
                         <div className="record-title-line">
@@ -322,7 +320,8 @@ export function Records({
                             {agentName(item.agent)}
                           </span>
                           <span>·</span>
-                          <span>{formatTime(item.updatedAt)}</span>
+                          {item.kind && <><span>·</span><span>{item.kind === 'bot' ? 'Bot 聊天' : item.kind === 'project' ? '项目' : 'Orca'}</span></>}
+                          {rowTime && <><span>·</span><time dateTime={rowTime}>{formatTime(rowTime)}</time></>}
                           {model && (
                             <>
                               <span>·</span>
@@ -382,15 +381,22 @@ export function Records({
                             采用新标题
                           </button>
                         )}
-                        {!!item.attempts?.length && (
+                        {item.locked && <span className="pill pill-warning">已锁定</span>}
+                        {(item.locked || item.protected) && (
+                          <button type="button" className="btn btn-sm" disabled={action.busy} onClick={() => unlock(item.id)}>
+                            {item.locked ? '解锁' : '允许自动命名'}
+                          </button>
+                        )}
+                        {details && (
                           <button
                             type="button"
                             className="icon-btn"
                             style={{ width: 28, height: 28 }}
                             aria-expanded={expanded}
+                            aria-controls={`record-details-${key}`}
                             title="查看调用详情"
                             aria-label="查看调用详情"
-                            onClick={() => setExpandedId((cur) => (cur === item.id ? null : item.id))}
+                            onClick={() => setExpandedId((cur) => (cur === key ? null : key))}
                           >
                             {expanded ? (
                               <ChevronDown size={14} aria-hidden="true" />
@@ -402,9 +408,18 @@ export function Records({
                       </div>
                     </div>
 
-                    {expanded && !!item.attempts?.length && (
-                      <div className="record-detail tabular">
-                        {item.attempts.map((attempt, index) => (
+                    {expanded && details && (
+                      <div id={`record-details-${key}`} className="record-detail tabular">
+                        {item.changes?.map((change) => (
+                          <div className="record-change" key={change.id}>
+                            <span className="record-change-title">{change.from || '未命名'} → {change.title}</span>
+                            <span className="record-meta">
+                              {change.source === 'manual' ? '手动改名' : '自动改名'}
+                              {change.at && <time dateTime={change.at}>{change.found ? '发现于 ' : ''}{formatTime(change.at)}</time>}
+                            </span>
+                          </div>
+                        ))}
+                        {item.attempts?.map((attempt, index) => (
                           <AttemptRow key={index} attempt={attempt} status={states[attempt.status] ?? attempt.status} />
                         ))}
                       </div>

@@ -142,6 +142,13 @@ export type RecordItem = {
   syncError?: string;
   failure?: { code: string; length?: number; limit?: number };
   attempts: Attempt[] | null;
+  sessionKey?: string;
+  kind?: string;
+  locked?: boolean;
+  protected?: boolean;
+  changedAt?: string;
+  checkedAt?: string;
+  changes?: { id: string; from: string; title: string; source: 'auto' | 'manual'; at?: string; found?: boolean }[];
 };
 
 export type RecordCursor = { updated: number; rowId: number };

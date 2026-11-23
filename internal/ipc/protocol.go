@@ -48,7 +48,7 @@ func Parse(reader io.Reader) (Request, error) {
 		return request, errors.New("不支持的协议版本")
 	}
 	switch request.Method {
-	case "event.submit", "title.claim", "title.ack", "hook.observed":
+	case "event.eligibility", "event.submit", "title.claim", "title.ack", "title.defer", "hook.observed":
 	default:
 		return request, errors.New("bridge 不允许调用此方法")
 	}

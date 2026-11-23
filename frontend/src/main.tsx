@@ -37,7 +37,7 @@ function App() {
   const [modelsDirty, setModelsDirty] = useState(false);
   const [pendingNav, setPendingNav] = useState<{ page: Page; recordFilter?: RecordFilter } | null>(null);
   const [recordFilter, setRecordFilter] = useState<{ filter: RecordFilter; key: number }>({
-    filter: 'all',
+    filter: 'changes',
     key: 0,
   });
 
@@ -80,7 +80,7 @@ function App() {
 
   function commitNav(next: Page, filter?: RecordFilter) {
     if (next === 'records') {
-      setRecordFilter((prev) => ({ filter: filter ?? 'all', key: prev.key + 1 }));
+      setRecordFilter((prev) => ({ filter: filter ?? 'changes', key: prev.key + 1 }));
     }
     setPage(next);
     setRevision((n) => n + 1);

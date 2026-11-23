@@ -21,10 +21,11 @@ func init() {
 }
 
 type listRequest struct {
-	Limit  int           `json:"limit"`
-	Filter string        `json:"filter"`
-	Query  string        `json:"query"`
-	Before *recordCursor `json:"before"`
+	Limit   int           `json:"limit"`
+	Filter  string        `json:"filter"`
+	Query   string        `json:"query"`
+	Before  *recordCursor `json:"before"`
+	Grouped bool          `json:"grouped"`
 }
 
 type recordCursor struct {
@@ -64,6 +65,13 @@ type record struct {
 	Attempts   []attemptRecord `json:"attempts"`
 	Failure    *failureReason  `json:"failure,omitempty"`
 	Reason     string          `json:"reason,omitempty"`
+	SessionKey string          `json:"sessionKey,omitempty"`
+	Kind       string          `json:"kind,omitempty"`
+	Locked     bool            `json:"locked,omitempty"`
+	Protected  bool            `json:"protected,omitempty"`
+	ChangedAt  string          `json:"changedAt,omitempty"`
+	CheckedAt  string          `json:"checkedAt,omitempty"`
+	Changes    []recordChange  `json:"changes,omitempty"`
 	cursor     recordCursor
 }
 
@@ -83,7 +91,7 @@ type attemptRecord struct {
 }
 
 const recordAdoptable = `(e.sync_status='protected' AND e.orca_id<>'' AND e.orca_base IS NOT NULL AND ` + currentSyncSession + `)`
-const recordAttention = `(e.status='failed' OR e.sync_status='failed' OR ` + recordAdoptable + `)`
+const recordAttention = `(e.status IN ('failed','needs_review') OR e.sync_status IN ('failed','blocked') OR ` + recordAdoptable + `)`
 const recordUnread = `(e.reminder_read=0 AND ` + recordAttention + `)`
 const attemptFields = `SELECT event_id,provider,model,source,requested_tier,actual_tier,status,started,
 	input_tokens,output_tokens,cached_tokens,actual_model FROM attempts`
@@ -117,6 +125,9 @@ func (e *Engine) records(ctx context.Context, p listRequest, markRead bool) (rec
 			if _, err := tx.ExecContext(ctx, `UPDATE events AS e SET reminder_read=1 WHERE `+recordUnread); err != nil {
 				return recordList{}, err
 			}
+		}
+		if p.Grouped {
+			return groupedRecords(ctx, tx, local, p, limit)
 		}
 		where, args := recordSearch(p.Query)
 		var result recordList
@@ -172,21 +183,30 @@ func listRecords(ctx context.Context, tx *sql.Tx, local *time.Location, where st
 	items := []record{}
 	for rows.Next() {
 		var item record
-		var reason failureReason
-		err = rows.Scan(&item.ID, &item.Agent, &item.SessionID, &item.Revision, &item.Title, &item.BaseTitle, &item.Status,
-			&item.SyncStatus, &item.SyncError, &item.cursor.Updated, &reason.Code, &reason.Length, &reason.Limit,
-			&item.Reason, &item.cursor.RowID, &item.OrcaOrigin, &item.CanAdopt)
-		if err != nil {
+		if err := scanRecord(rows, &item, local); err != nil {
 			return nil, err
-		}
-		item.UpdatedAt = formatTime(item.cursor.Updated, local)
-		item.Attempts = []attemptRecord{}
-		if reason.Code != "" {
-			item.Failure = &reason
 		}
 		items = append(items, item)
 	}
 	return items, rows.Err()
+}
+
+func scanRecord(rows *sql.Rows, item *record, local *time.Location, extra ...any) error {
+	var updated int64
+	var reason failureReason
+	fields := []any{&item.ID, &item.Agent, &item.SessionID, &item.Revision, &item.Title, &item.BaseTitle, &item.Status,
+		&item.SyncStatus, &item.SyncError, &updated, &reason.Code, &reason.Length, &reason.Limit,
+		&item.Reason, &item.cursor.RowID, &item.OrcaOrigin, &item.CanAdopt}
+	if err := rows.Scan(append(fields, extra...)...); err != nil {
+		return err
+	}
+	item.UpdatedAt = formatTime(updated, local)
+	item.cursor.Updated = updated
+	item.Attempts = []attemptRecord{}
+	if reason.Code != "" {
+		item.Failure = &reason
+	}
+	return nil
 }
 
 func (item *record) addLegacyFailure() {

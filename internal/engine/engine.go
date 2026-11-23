@@ -134,6 +134,8 @@ func (e *Engine) Handle(ctx context.Context, method string, params json.RawMessa
 		return nil, errors.New("请求过大")
 	}
 	switch method {
+	case "event.eligibility":
+		return dispatch(params, func(p sessionRequest) (titleEligibility, error) { return e.titleEligibility(ctx, e.db, p) })
 	case "event.submit":
 		if err := requiredParams(params, "currentTitle", "turns"); err != nil {
 			return nil, err
@@ -146,6 +148,8 @@ func (e *Engine) Handle(ctx context.Context, method string, params json.RawMessa
 		return dispatch(params, func(p claimRequest) (claimResponse, error) { return e.claim(ctx, p) })
 	case "title.ack":
 		return dispatch(params, func(p ackRequest) (accepted, error) { return e.ack(ctx, p) })
+	case "title.defer":
+		return dispatch(params, func(p deferredTitle) (accepted, error) { return e.deferTitle(ctx, p) })
 	case "settings.get":
 		return e.getSettings(ctx)
 	case "settings.save":
@@ -166,6 +170,10 @@ func (e *Engine) Handle(ctx context.Context, method string, params json.RawMessa
 		return dispatch(params, func(p dateRangeRequest) (dailyStats, error) { return e.dateRange(ctx, p) })
 	case "records.list", "records.open":
 		return dispatch(params, func(p listRequest) (recordList, error) { return e.records(ctx, p, method == "records.open") })
+	case "records.protectionTarget":
+		return dispatch(params, func(p idRequest) (ProtectionTarget, error) { return e.protectionTarget(ctx, p) })
+	case "records.releaseProtection":
+		return dispatch(params, func(p protectionRelease) (accepted, error) { return e.releaseProtection(ctx, p) })
 	case "sync.retry", "sync.adopt":
 		return dispatch(params, func(p idRequest) (accepted, error) { return e.resync(ctx, p, method == "sync.adopt") })
 	default:

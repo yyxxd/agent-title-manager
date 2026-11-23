@@ -10,6 +10,7 @@ type ConfirmedBinding struct {
 	ID, Agent, SessionID, Revision, NativeTitle string
 	OrcaID, OrcaTitle, Origin, NativeHandle     string
 	SessionRevision                             string
+	Kind                                        string
 }
 
 func UnboundAckRevisions(result any) (event, session string, ok bool) {
@@ -52,8 +53,9 @@ func (e *Engine) AttachBinding(ctx context.Context, p ConfirmedBinding) error {
 		if err != nil || n == 0 {
 			return false, err
 		}
-		_, err = tx.ExecContext(ctx, `UPDATE sessions SET orca_id=?,orca_managed=? WHERE agent=? AND session_id=?`,
-			p.OrcaID, s.orcaManaged, p.Agent, p.SessionID)
+		_, err = tx.ExecContext(ctx, `UPDATE sessions SET orca_id=?,orca_managed=?,
+			session_kind=coalesce(nullif(?,''),session_kind) WHERE agent=? AND session_id=?`,
+			p.OrcaID, s.orcaManaged, p.Kind, p.Agent, p.SessionID)
 		return err == nil, err
 	})
 	if err == nil && changed {
