@@ -123,6 +123,15 @@ func (i *Integration) resolve(ctx context.Context, agent, session, handle, hint,
 		return Binding{}, false
 	}
 	origin := resolvePlaceOrigin(ctx, at, i.titleOrigin)
+	if agent == "codex" && at.Kind == "chat" && origin == titleUnknown {
+		// Orca 可能在读取列表与读取来源之间把首句占位替换为自动标题。
+		refreshed, verified := discover(ctx, i.command(agent), i.Validate, agent, session, handle, at.ID, at.Kind, []time.Duration{0})
+		if !verified {
+			return Binding{}, false
+		}
+		at = refreshed
+		origin = resolvePlaceOrigin(ctx, at, i.titleOrigin)
+	}
 	if !i.Active(ctx, agent) {
 		return Binding{}, false
 	}

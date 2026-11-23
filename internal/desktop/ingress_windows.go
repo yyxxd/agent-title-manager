@@ -175,7 +175,7 @@ func (event pendingEvent) forward(ctx context.Context, backend Backend, late *la
 	agent := event.key.agent
 	var bound bool
 	if event.probe && backend.orcaEnabled(ctx, agent) && backend.ResolveTitleOrigin != nil {
-		timeout := 3 * time.Second
+		timeout := 4 * time.Second
 		resolve := backend.ResolveTitleOrigin
 		if event.key.nativeOnly && backend.RetryBinding != nil {
 			timeout, resolve = 8*time.Second, backend.RetryBinding
