@@ -16,6 +16,7 @@ func TestRecordNamesFollowPublicSessionIdentities(t *testing.T) {
 			body = `{"agents":[{"orcaSessionId":"orca_session_id:project-a","agent":"codex","hostId":"local","repo":"Alpha"},
 				{"orcaSessionId":"project-b","agent":"codex","hostId":"local","repo":"Beta"},
 				{"orcaSessionId":"bot-unavailable","agent":"codex","hostId":"local","repo":"Do not label as project"},
+				{"orcaSessionId":"ambiguous","agent":"codex","hostId":"local","repo":"Do not label as project"},
 				{"orcaSessionId":"remote","agent":"codex","hostId":"remote","repo":"Unknown"}]}`
 		case "bot list":
 			body = `{"bots":[{"id":"bot1","name":"First bot"},{"id":"bot2","name":"Second bot"}]}`

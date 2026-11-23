@@ -36,7 +36,7 @@ func (i *Integration) RecordNames(ctx context.Context, identities []engine.Recor
 	wg.Go(func() { bots = localBotNames(ctx, run, allowed) })
 	wg.Wait()
 	for id, name := range bots {
-		if i.Active(ctx, allowed[id].Agent) {
+		if name != "" && i.Active(ctx, allowed[id].Agent) {
 			names[id] = engine.RecordName{Kind: "bot", Name: name}
 		}
 	}
@@ -47,7 +47,7 @@ func (i *Integration) RecordNames(ctx context.Context, identities []engine.Recor
 			!i.Active(ctx, key.Agent) || !validRecordName(candidate.Repo) {
 			continue
 		}
-		if _, bot := names[id]; !bot {
+		if _, bot := bots[id]; !bot {
 			names[id] = engine.RecordName{Kind: "project", Name: candidate.Repo}
 		}
 	}
@@ -86,7 +86,7 @@ func localBotNames(ctx context.Context, run runCLI, allowed map[string]engine.Re
 					continue
 				}
 				if prior, found := owners[id]; found && prior != bot.ID {
-					delete(names, id)
+					names[id] = ""
 				} else {
 					owners[id], names[id] = bot.ID, bot.Name
 				}
