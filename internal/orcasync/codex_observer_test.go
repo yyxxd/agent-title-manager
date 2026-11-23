@@ -43,8 +43,9 @@ func TestCodexSettlementsGiveEachConversationItsOwnLatestNativeTurn(t *testing.T
 			"schemaVersion": 2, "sessionId": item.id, "provider": "codex",
 			"location":            map[string]string{"executionHostId": item.host, "workspaceKind": "git-worktree"},
 			"accountHome":         map[string]string{"variable": "CODEX_HOME", "path": root},
-			"providerHandleChain": []any{map[string]any{"handle": map[string]string{"provider": "codex", "threadId": item.native}}},
+			"providerHandleChain": []any{map[string]any{"origin": "created", "handle": map[string]string{"provider": "codex", "threadId": item.native}}},
 			"lastTurn":            map[string]string{"state": "settled", "outcome": "success"},
+			"conversationName":    "Fixture title",
 		})
 		if err != nil {
 			t.Fatal(err)
@@ -73,5 +74,15 @@ func TestCodexSettlementsGiveEachConversationItsOwnLatestNativeTurn(t *testing.T
 			t.Fatalf("wrong conversation binding: %+v", item)
 		}
 		ids[item.nativeID] = true
+	}
+	if !codexGeneratedName(t.Context(), orcaDatabase(), items[0], "Fixture title") {
+		t.Fatal("Orca-created default title was not recognized")
+	}
+	if _, err := db.Exec(`UPDATE agent_session_records SET record_json=json_set(record_json,'$.conversationNameSource','user')
+		WHERE session_id=?`, items[0].orcaID); err != nil {
+		t.Fatal(err)
+	}
+	if codexGeneratedName(t.Context(), orcaDatabase(), items[0], "Fixture title") {
+		t.Fatal("user title was mistaken for automatic output")
 	}
 }

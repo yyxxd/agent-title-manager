@@ -160,6 +160,9 @@ func (i *Integration) submitCodexSettlement(ctx context.Context, dir string, nod
 	if !ok {
 		return false, errors.New("Codex 回合的 Orca 绑定不可确认")
 	}
+	if bound.Origin == titleUnknown && codexGeneratedName(ctx, orcaDatabase(), row, bound.Title) {
+		bound.Origin = titleAuto
+	}
 	snapshot, err := collectCodexTurn(ctx, dir, node, row)
 	if err != nil || snapshot == nil || !i.Active(ctx, "codex") {
 		return false, err
@@ -177,6 +180,31 @@ func (i *Integration) submitCodexSettlement(ctx context.Context, dir string, nod
 	}
 	_, err = engine(ctx, "event.submit", params)
 	return err == nil, err
+}
+
+func codexGeneratedName(ctx context.Context, path string, row codexSettlement, shown string) bool {
+	if shown == "" {
+		return false
+	}
+	db, err := openOrcaDatabase(path)
+	if err != nil {
+		return false
+	}
+	defer db.Close()
+	ctx, cancel := context.WithTimeout(ctx, 350*time.Millisecond)
+	defer cancel()
+	var auto bool
+	err = db.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM agent_session_records
+		WHERE session_id=? AND json_extract(record_json,'$.sessionId')=session_id
+		AND json_extract(record_json,'$.schemaVersion')=2 AND json_extract(record_json,'$.provider')='codex'
+		AND json_extract(record_json,'$.location.executionHostId')='local'
+		AND json_array_length(record_json,'$.providerHandleChain')=1
+		AND json_extract(record_json,'$.providerHandleChain[0].origin')='created'
+		AND json_extract(record_json,'$.providerHandleChain[0].handle.threadId')=?
+		AND json_extract(record_json,'$.conversationName')=?
+		AND (json_type(record_json,'$.conversationNameSource') IS NULL
+		     OR json_extract(record_json,'$.conversationNameSource')='auto'))`, row.orcaID, row.nativeID, shown).Scan(&auto)
+	return err == nil && auto
 }
 
 func collectCodexTurn(ctx context.Context, dir string, node NodeCommand, row codexSettlement) (map[string]any, error) {
