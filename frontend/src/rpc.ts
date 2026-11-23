@@ -147,9 +147,12 @@ export type RecordItem = {
   locked?: boolean;
   protected?: boolean;
   changedAt?: string;
+  changedFound?: boolean;
+  canRetry?: boolean;
+  identityName?: string;
   checkedAt?: string;
   suggestedTitle?: string;
-  changes?: { id: string; from: string; title: string; source: 'auto' | 'manual'; at?: string; found?: boolean }[];
+  changes?: { id: string; from: string; title: string; source: 'auto' | 'manual' | 'observed'; at?: string; found?: boolean }[];
 };
 
 export type RecordCursor = { updated: number; rowId: number };

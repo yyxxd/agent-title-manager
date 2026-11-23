@@ -207,8 +207,8 @@ func (e *Engine) ack(ctx context.Context, p ackRequest) (accepted, error) {
 
 func (e *Engine) applyAck(ctx context.Context, tx *sql.Tx, p ackRequest, title, syncStatus string) error {
 	now := e.now().UnixMilli()
-	if _, err := tx.ExecContext(ctx, `UPDATE events SET status='applied',sync_status=?,updated=?,finalized=? WHERE id=?`,
-		syncStatus, now, now, p.ID); err != nil {
+	if _, err := tx.ExecContext(ctx, `UPDATE events SET status='applied',sync_status=?,updated=?,finalized=?,renamed_at=? WHERE id=?`,
+		syncStatus, now, now, now, p.ID); err != nil {
 		return err
 	}
 	if _, err := tx.ExecContext(ctx, `UPDATE sessions SET title=? WHERE agent=? AND session_id=?`,

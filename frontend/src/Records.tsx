@@ -23,6 +23,7 @@ const recordFilters: { value: RecordFilter; label: string }[] = [
 ];
 
 const states: Record<string, string> = {
+  observed_change: '发现改名',
   manual_change: '手动改名',
   needs_review: '待确认',
   queued: '待处理',
@@ -151,7 +152,7 @@ export function Records({
   const before = cursors.at(-1);
   const { value, error, loading } = useLoad(
     async () => {
-      const params = { limit: 50, filter, query: query.trim(), before, grouped: true };
+      const params = { limit: 50, filter, query: query.trim(), before, grouped: true, withNames: true };
       if (!visit.current) {
         visit.current = rpc<RecordList & { counts: RecordCounts }>('records.open', params).then((result) => {
           onOpened(result.counts.unread);
@@ -212,6 +213,7 @@ export function Records({
       if (!result.accepted) throw new Error('会话状态已更新，请刷新记录。');
       setRefresh((n) => n + 1);
       onChanged();
+      setCursors([]);
       return '已允许后续回合自动命名';
     }, { success: 'toast', failure: 'toast' });
   }
@@ -282,7 +284,8 @@ export function Records({
                 const key = item.sessionKey ?? item.id;
                 const expanded = expandedId === key;
                 const details = !!item.changes?.length || !!item.attempts?.length;
-                const rowTime = filter === 'all' || filter === 'attention' ? item.checkedAt : item.changedAt;
+                const checkTime = filter === 'all' || filter === 'attention';
+                const rowTime = checkTime ? item.checkedAt : item.changedAt;
                 const { model, count, totalTokens, partial } = attemptSummary(item);
                 const reason = failureText(item);
                 const syncError = item.syncError?.trim() || undefined;
@@ -324,8 +327,12 @@ export function Records({
                           <span style={{ fontWeight: 600, color: 'var(--text-secondary)' }}>
                             {agentName(item.agent)}
                           </span>
-                          {item.kind && <><span>·</span><span>{item.kind === 'bot' ? 'Bot 聊天' : item.kind === 'project' ? '项目' : 'Orca'}</span></>}
-                          {rowTime && <><span>·</span><time dateTime={rowTime}>{formatTime(rowTime)}</time></>}
+                          {(item.kind || item.identityName) && <><span>·</span><span className="record-identity"
+                            title={item.identityName}>{item.identityName || (item.kind === 'bot' ? 'Bot 聊天' : item.kind === 'project' ? '项目' : 'Orca')}</span></>}
+                          {rowTime && <><span>·</span><time dateTime={rowTime}>
+                            {checkTime ? '检查于 ' : item.changedFound ? '发现于 ' : ''}{formatTime(rowTime)}
+                          </time></>}
+                          {!rowTime && !!item.changes?.length && !checkTime && <span>· 时间未记录</span>}
                           {model && (
                             <>
                               <span>·</span>
@@ -363,7 +370,7 @@ export function Records({
                             {syncMeta?.label ?? item.syncStatus}
                           </span>
                         )}
-                        {item.syncStatus === 'failed' && (
+                        {item.syncStatus === 'failed' && (item.canRetry ?? true) && (
                           <button
                             type="button"
                             className="btn btn-sm btn-primary"
@@ -419,8 +426,8 @@ export function Records({
                           <div className="record-change" key={change.id}>
                             <span className="record-change-title">{change.from || '未命名'} → {change.title}</span>
                             <span className="record-meta">
-                              {change.source === 'manual' ? '手动改名' : '自动改名'}
-                              {change.at && <time dateTime={change.at}>{change.found ? '发现于 ' : ''}{formatTime(change.at)}</time>}
+                              {change.source === 'manual' ? '手动改名' : change.source === 'observed' ? '发现改名' : '自动改名'}
+                              {change.at ? <time dateTime={change.at}>{change.found ? '发现于 ' : ''}{formatTime(change.at)}</time> : <span>时间未记录</span>}
                             </span>
                           </div>
                         ))}

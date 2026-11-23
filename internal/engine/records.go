@@ -70,10 +70,14 @@ type record struct {
 	Locked         bool            `json:"locked,omitempty"`
 	Protected      bool            `json:"protected,omitempty"`
 	ChangedAt      string          `json:"changedAt,omitempty"`
+	ChangedFound   bool            `json:"changedFound,omitempty"`
+	CanRetry       *bool           `json:"canRetry,omitempty"`
+	IdentityName   string          `json:"identityName,omitempty"`
 	CheckedAt      string          `json:"checkedAt,omitempty"`
 	Changes        []recordChange  `json:"changes,omitempty"`
 	SuggestedTitle string          `json:"suggestedTitle,omitempty"`
 	cursor         recordCursor
+	orcaID         string
 }
 
 type attemptRecord struct {
@@ -92,6 +96,7 @@ type attemptRecord struct {
 }
 
 const recordAdoptable = `(e.sync_status='protected' AND e.orca_id<>'' AND e.orca_base IS NOT NULL AND ` + currentSyncSession + `)`
+const recordRetryable = `(e.sync_status='failed' AND ` + currentSyncSession + `)`
 const recordAttention = `(e.status IN ('failed','needs_review') OR e.sync_status IN ('failed','blocked') OR ` + recordAdoptable + `)`
 const recordUnread = `(e.reminder_read=0 AND ` + recordAttention + `)`
 const attemptFields = `SELECT event_id,provider,model,source,requested_tier,actual_tier,status,started,

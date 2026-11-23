@@ -2,6 +2,7 @@ package engine
 
 import (
 	"context"
+	"slices"
 	"testing"
 	"time"
 )
@@ -29,7 +30,7 @@ func TestSessionRecordsUseVerifiedRenameTimeAndStableIdentity(t *testing.T) {
 	}
 	page := list("changes", 1, nil)
 	if len(page.Items) != 1 || page.Items[0].SessionID != "bot" || page.Next == nil || !page.Items[0].Locked ||
-		page.Items[0].Kind != "bot" || page.Items[0].ChangedAt != formatTime(200, time.Local) ||
+		page.Items[0].Kind != "bot" || page.Items[0].ChangedAt != formatTime(220, time.Local) ||
 		len(page.Items[0].Changes) != 2 || page.Items[0].Changes[0].Source != "manual" || !page.Items[0].Changes[0].Found {
 		t.Fatalf("invalid verified history: %+v", page)
 	}
@@ -142,5 +143,98 @@ func TestLateClaimCannotChangeAnAlreadyAppliedTitleBaseline(t *testing.T) {
 	state, err := loadSession(t.Context(), e.db, "codex", "settled")
 	if err != nil || got.Status != "applied" || got.Candidate != nil || state.title != goodTitle || state.manual {
 		t.Fatalf("late claim changed an applied title: %+v %+v %v", got, state, err)
+	}
+}
+
+func TestChangeOrderUsesEvidenceAndKeepsEqualTimePagesStable(t *testing.T) {
+	e := engineAt(t, t.TempDir(), nil)
+	if _, err := e.db.Exec(`
+		INSERT INTO sessions(agent,session_id,revision,title,manual,protection_reason) VALUES
+			('codex','mixed','skipped2','new',1,'manual_locked'),('codex','auto','r','new',0,''),
+			('codex','manual','r','new',1,'manual_locked'),('codex','missing','r','new',0,''),
+			('codex','old-migration','r','new',0,''),('codex','verified','r','new',1,'manual_locked');
+		INSERT INTO events(id,agent,session_id,revision,base,title,status,orca_id,orca_origin,created,updated,finalized,renamed_at) VALUES
+			('old','codex','mixed','old','','base','applied','','',10,20,20,NULL),
+			('manual','codex','mixed','edit','base','new','manual_change','','',60,60,60,NULL),
+			('skip1','codex','mixed','skipped','new','new','kept','','',100,999,100,NULL),
+			('skip2','codex','mixed','skipped2','new','new','kept','','',200,999,200,NULL),
+			('auto','codex','auto','r','','new','applied','','',30,55,55,NULL),
+			('only-manual','codex','manual','r','before','new','manual_change','','',60,900,60,NULL),
+			('missing','codex','missing','r','','new','applied','','',900,900,NULL,NULL),
+			('old-migration','codex','old-migration','r','','new','applied','','',800,800,799,NULL),
+			('verified','codex','verified','r','before','new','manual_change','','',92,92,92,42);`); err != nil {
+		t.Fatal(err)
+	}
+	list := func(filter string, limit int, before *recordCursor) recordList {
+		t.Helper()
+		return call[recordList](t, e, "records.list", listRequest{Grouped: true, Filter: filter, Limit: limit, Before: before})
+	}
+	var order []string
+	var cursor *recordCursor
+	for {
+		page := list("changes", 1, cursor)
+		if len(page.Items) != 1 || len(order) > 6 {
+			t.Fatalf("unstable pagination: %+v", page)
+		}
+		item := page.Items[0]
+		order = append(order, item.SessionID)
+		first := item.Changes[0]
+		if item.ChangedAt != first.At || item.ChangedFound != first.Found {
+			t.Fatalf("summary and history disagree: %+v", item)
+		}
+		switch item.SessionID {
+		case "verified":
+			if first.Found || first.At != formatTime(42, time.Local) {
+				t.Fatalf("verified rename time was replaced by readback time: %+v", first)
+			}
+		case "old-migration", "missing":
+			if first.At != "" {
+				t.Fatalf("inferred a timestamp for legacy change: %+v", first)
+			}
+		}
+		cursor = page.Next
+		if cursor == nil {
+			break
+		}
+	}
+	if !slices.Equal(order, []string{"manual", "mixed", "auto", "verified", "old-migration", "missing"}) {
+		t.Fatalf("unexpected change order: %v", order)
+	}
+	all := list("all", 10, nil)
+	if all.Items[0].SessionID != "missing" || all.Items[2].SessionID != "mixed" ||
+		all.Items[2].CheckedAt != formatTime(200, time.Local) {
+		t.Fatalf("all should sort by checks, not retries or renames: %+v", all.Items)
+	}
+}
+
+func TestUnlockRecordsOnlyObservedTitleDifference(t *testing.T) {
+	e := engineAt(t, t.TempDir(), nil)
+	call[accepted](t, e, "event.submit", submission{Agent: "codex", SessionID: "locked", Revision: "known",
+		CurrentTitle: "old name", TitleOrigin: "manual", Turns: []turn{}})
+	locked := call[recordList](t, e, "records.list", listRequest{Grouped: true, Filter: "locked"}).Items[0]
+	snapshot := call[ProtectionTarget](t, e, "records.protectionTarget", idRequest{locked.ID})
+	change := protectionRelease{ProtectionTarget: snapshot, NativeTitle: "different native name"}
+	if !call[accepted](t, e, "records.releaseProtection", change).Accepted ||
+		call[accepted](t, e, "records.releaseProtection", change).Accepted {
+		t.Fatal("unlock did not enforce the observed baseline")
+	}
+	got := call[recordList](t, e, "records.list", listRequest{Grouped: true, Filter: "all"}).Items[0]
+	if got.Locked || got.Title != change.NativeTitle || got.CheckedAt != locked.CheckedAt || len(got.Changes) != 1 ||
+		got.Changes[0].Source != "observed" || !got.Changes[0].Found || got.Changes[0].From != "old name" {
+		t.Fatalf("readback attribution or check time is incorrect: %+v", got)
+	}
+}
+
+func TestAttentionHidesFailureSupersededByLatestCheck(t *testing.T) {
+	e := engineAt(t, t.TempDir(), nil)
+	if _, err := e.db.Exec(`INSERT INTO sessions(agent,session_id,revision,title,manual) VALUES('codex','old','latest','existing',0);
+		INSERT INTO events(id,agent,session_id,revision,base,title,status,orca_id,orca_origin,created,updated)
+		VALUES('failed','codex','old','first','','','failed','','',10,900),
+		('latest','codex','old','latest','existing','existing','kept','','',20,20);`); err != nil {
+		t.Fatal(err)
+	}
+	pending := call[recordList](t, e, "records.list", listRequest{Grouped: true, Filter: "attention"})
+	if len(pending.Items) != 0 || pending.Counts.Attention != 0 || pending.Counts.Unread != 0 {
+		t.Fatalf("stale failure remains actionable: %+v", pending)
 	}
 }

@@ -2,6 +2,7 @@ package engine
 
 import (
 	"context"
+	"crypto/rand"
 	"database/sql"
 	"errors"
 )
@@ -37,17 +38,19 @@ func (e *Engine) titleEligibility(ctx context.Context, q queryer, p sessionReque
 type ProtectionTarget struct {
 	Agent, SessionID, OrcaID, NativeHandle, Revision string
 	Epoch                                            int64
+	Baseline                                         string
+	Locked                                           bool
 }
 
 func (e *Engine) protectionTarget(ctx context.Context, p idRequest) (ProtectionTarget, error) {
 	var target ProtectionTarget
 	err := e.db.QueryRowContext(ctx, `
-		SELECT s.agent,s.session_id,s.orca_id,s.revision,s.protection_epoch,
+		SELECT s.agent,s.session_id,s.orca_id,s.revision,s.protection_epoch,s.title,s.protection_reason='manual_locked',
 			coalesce((SELECT native_handle FROM events
 				WHERE agent=s.agent AND session_id=s.session_id AND orca_id=s.orca_id AND native_handle<>''
 				ORDER BY rowid DESC LIMIT 1),'')
 		FROM sessions s JOIN events e USING(agent,session_id) WHERE e.id=? AND s.manual=1`, p.ID).
-		Scan(&target.Agent, &target.SessionID, &target.OrcaID, &target.Revision, &target.Epoch, &target.NativeHandle)
+		Scan(&target.Agent, &target.SessionID, &target.OrcaID, &target.Revision, &target.Epoch, &target.Baseline, &target.Locked, &target.NativeHandle)
 	if errors.Is(err, sql.ErrNoRows) {
 		err = errors.New("会话保护状态已更新，请刷新记录")
 	}
@@ -71,8 +74,9 @@ func (e *Engine) releaseProtection(ctx context.Context, p protectionRelease) (ac
 	result, err := transact(ctx, e.db, func(tx *sql.Tx) (accepted, error) {
 		res, err := tx.ExecContext(ctx, `UPDATE sessions SET title=?,orca_unlocked_base=?,manual=0,
 			protection_reason='',protection_epoch=protection_epoch+1 WHERE agent=? AND session_id=?
-			AND orca_id=? AND revision=? AND protection_epoch=? AND manual=1`,
-			p.NativeTitle, p.OrcaTitle, p.Agent, p.SessionID, p.OrcaID, p.Revision, p.Epoch)
+			AND orca_id=? AND revision=? AND protection_epoch=? AND title=? AND manual=1
+			AND (protection_reason='manual_locked')=?`,
+			p.NativeTitle, p.OrcaTitle, p.Agent, p.SessionID, p.OrcaID, p.Revision, p.Epoch, p.Baseline, p.Locked)
 		if err != nil {
 			return accepted{}, err
 		}
@@ -80,13 +84,23 @@ func (e *Engine) releaseProtection(ctx context.Context, p protectionRelease) (ac
 		if err != nil || n == 0 {
 			return accepted{}, err
 		}
+		now := e.now().UnixMilli()
+		if p.Locked && p.Baseline != p.NativeTitle {
+			id := rand.Text()
+			if _, err := tx.ExecContext(ctx, `INSERT INTO events(id,agent,session_id,revision,native_only,base,
+				title,status,orca_id,orca_origin,native_handle,created,updated,finalized)
+				VALUES(?,?,?,?,1,?,?,'observed_change',?,'',?,?,?,?)`,
+				id, p.Agent, p.SessionID, id, p.Baseline, p.NativeTitle, p.OrcaID, p.NativeHandle, now, now, now); err != nil {
+				return accepted{}, err
+			}
+		}
 		_, err = tx.ExecContext(ctx, `UPDATE events SET
-			status=CASE WHEN status IN ('queued','running','candidate','claimed') THEN 'stale' ELSE status END,
+			status=CASE WHEN status IN ('queued','running','candidate','claimed','needs_review') THEN 'stale' ELSE status END,
 			sync_status=CASE WHEN sync_status IN ('pending','writing','failed','protected','blocked') THEN 'stale' ELSE sync_status END,
 			payload=NULL,updated=?
-			WHERE agent=? AND session_id=? AND (status IN ('queued','running','candidate','claimed')
+			WHERE agent=? AND session_id=? AND (status IN ('queued','running','candidate','claimed','needs_review')
 			    OR sync_status IN ('pending','writing','failed','protected','blocked'))`,
-			e.now().UnixMilli(), p.Agent, p.SessionID)
+			now, p.Agent, p.SessionID)
 		return accepted{Accepted: err == nil}, err
 	})
 	if err == nil && result.Accepted {

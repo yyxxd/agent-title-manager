@@ -37,6 +37,7 @@ type place struct {
 	Agent     string  `json:"agent"`
 	Kind      string  `json:"kind"`
 	HostID    string  `json:"hostId"`
+	Repo      string  `json:"repo"`
 	Title     *string `json:"title"`
 	PaneKey   string  `json:"paneKey"`
 	Handle    string  `json:"handle"`

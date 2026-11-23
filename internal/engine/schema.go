@@ -123,11 +123,15 @@ BEGIN
 END;
 PRAGMA user_version=12;`
 
-const schemaVersion = 13
+const schemaVersion = 14
 
 const schemaV13 = `
 ALTER TABLE events ADD COLUMN review_only INTEGER NOT NULL DEFAULT 0;
 PRAGMA user_version=13;`
+
+const schemaV14 = `
+ALTER TABLE events ADD COLUMN renamed_at INTEGER;
+PRAGMA user_version=14;`
 
 func initialize(db *sql.DB) error {
 	for _, pragmas := range []string{"PRAGMA busy_timeout=2500", "PRAGMA foreign_keys=ON", "PRAGMA journal_mode=WAL", "PRAGMA secure_delete=ON"} {
@@ -210,6 +214,11 @@ func initialize(db *sql.DB) error {
 		fallthrough
 	case 12:
 		if _, err = tx.Exec(schemaV13); err != nil {
+			return err
+		}
+		fallthrough
+	case 13:
+		if _, err = tx.Exec(schemaV14); err != nil {
 			return err
 		}
 		fallthrough

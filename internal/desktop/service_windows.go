@@ -27,6 +27,7 @@ type Backend struct {
 	RetryBinding       func(context.Context, string, string, string, string) (orcasync.Binding, bool)
 	NativeTitleMatches func(context.Context, string, string, string, string) (bool, error)
 	ReadNativeTitle    orcasync.NativeTitleReader
+	RecordNames        engine.RecordNameReader
 	AttachBinding      func(context.Context, engine.ConfirmedBinding) error
 	Observe            func(context.Context)
 	Close              func() error
@@ -143,6 +144,15 @@ func (s *Service) Call(ctx context.Context, method string, body string) (any, er
 		return s.publicSettings(ctx, method, json.RawMessage(body))
 	case method == "records.unlock":
 		return s.unlockRecord(ctx, json.RawMessage(body))
+	case method == "records.list" || method == "records.open":
+		value, err := s.backend.Engine(ctx, method, json.RawMessage(body))
+		var request struct {
+			WithNames bool `json:"withNames"`
+		}
+		if err == nil && json.Unmarshal([]byte(body), &request) == nil && request.WithNames {
+			value = engine.AddRecordNames(ctx, value, s.backend.RecordNames)
+		}
+		return value, err
 	case slices.Contains(engineMethods, method):
 		return s.backend.Engine(ctx, method, json.RawMessage(body))
 	case slices.Contains(pluginMethods, method):

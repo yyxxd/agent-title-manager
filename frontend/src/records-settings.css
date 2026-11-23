@@ -135,6 +135,10 @@
   overflow-wrap: anywhere;
 }
 
+.record-identity {
+  overflow-wrap: anywhere;
+}
+
 .record-attempt-row {
   display: flex;
   flex-wrap: wrap;

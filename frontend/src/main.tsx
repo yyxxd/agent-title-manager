@@ -58,7 +58,7 @@ function App({ desktopWindow }: { desktopWindow?: DesktopWindow }) {
     void Promise.allSettled([
       rpc<PluginListResponse>('plugins.list'),
       rpc<SettingsData>('settings.get'),
-      rpc<RecordList>('records.list', { limit: 50 }),
+      rpc<RecordList>('records.list', { limit: 50, grouped: true }),
     ]).then(([pluginsRes, settingsRes, recordsRes]) => {
       if (recordsRes.status === 'fulfilled' && request === countsRequest.current) {
         const { counts, items } = recordsRes.value;

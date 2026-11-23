@@ -17,24 +17,34 @@ type recordChange struct {
 	Found  bool   `json:"found,omitempty"`
 }
 
-const renameEvidence = `e.title<>e.base AND e.status IN ('applied','manual_change')`
+const renameEvidence = `e.title<>e.base AND e.status IN ('applied','manual_change','observed_change')`
+const exactRenameTime = `(e.renamed_at > 0 AND e.renamed_at <= e.updated)`
+const renameTime = `CASE WHEN ` + exactRenameTime + ` THEN e.renamed_at
+	WHEN e.finalized > 0 AND e.finalized >= e.created AND e.finalized <= e.updated THEN e.finalized END`
 
 func groupedRecords(ctx context.Context, tx *sql.Tx, local *time.Location, p listRequest, limit int) (recordList, error) {
 	where, args := recordSearch(p.Query)
 	cte := `WITH matches AS (
 		SELECT DISTINCT e.agent,e.session_id FROM events e` + where + `
 	), summary AS (
-		SELECT e.agent,e.session_id,MIN(e.rowid) AS first_row,MAX(e.created) AS checked,
-			MAX(e.finalized) FILTER (WHERE ` + renameEvidence + ` AND e.status='applied') AS changed,
-			MAX(e.status='manual_change' AND e.title<>e.base) AS discovered,
-			MAX(` + recordUnread + `) AS unread,MAX(` + recordAttention + `) AS attention,
-			MAX(e.status='failed') AS failed,MAX(e.sync_status='failed') AS sync_failed,
-			MAX(` + recordAdoptable + `) AS protected
+		SELECT e.agent,e.session_id,MIN(e.rowid) AS first_row,
+			coalesce(MAX(e.created) FILTER (WHERE e.status<>'observed_change'),0) AS checked,
+			MAX(` + renameTime + `) FILTER (WHERE ` + renameEvidence + `) AS changed,
+			MAX(` + renameEvidence + `) AS has_change
 		FROM events e JOIN matches USING(agent,session_id) GROUP BY e.agent,e.session_id
+	), current AS (
+		SELECT g.*, e.rowid AS representative,
+			(e.reminder_read=0 AND ` + groupedAttention + `) AS unread, ` + groupedAttention + ` AS attention,
+			e.status='failed' AS failed,` + recordRetryable + ` AS sync_failed,
+			` + recordAdoptable + ` AS protected
+		FROM summary g JOIN events e ON e.rowid=(
+			SELECT rowid FROM events e WHERE e.agent=g.agent AND e.session_id=g.session_id
+			ORDER BY (e.status='kept' AND e.decision_reason='pending_proposal') ASC,e.created DESC,e.rowid DESC LIMIT 1
+		)
 	)`
 	result := recordList{Items: []record{}, TestAttempts: []attemptRecord{}}
 	err := tx.QueryRowContext(ctx, cte+` SELECT COUNT(*),coalesce(SUM(unread),0),coalesce(SUM(attention),0),
-		coalesce(SUM(failed),0),coalesce(SUM(sync_failed),0),coalesce(SUM(protected),0) FROM summary`, args...).
+		coalesce(SUM(failed),0),coalesce(SUM(sync_failed),0),coalesce(SUM(protected),0) FROM current`, args...).
 		Scan(&result.Counts.Total, &result.Counts.Unread, &result.Counts.Attention, &result.Counts.Failed, &result.Counts.SyncFailed, &result.Counts.Protected)
 	if err != nil {
 		return recordList{}, err
@@ -62,17 +72,20 @@ func groupedRecords(ctx context.Context, tx *sql.Tx, local *time.Location, p lis
 	return result, err
 }
 
+const groupedAttention = `(e.status IN ('failed','needs_review') OR ` + recordRetryable + `
+	OR (e.sync_status='blocked' AND ` + currentSyncSession + `) OR ` + recordAdoptable + `)`
+
 func groupedPage(ctx context.Context, tx *sql.Tx, local *time.Location, cte string, args []any, p listRequest, limit int) ([]record, error) {
-	where, order, preferred := " WHERE 1", "coalesce(g.changed,0)", "e.rowid IS NULL"
+	where, order := " WHERE 1", "coalesce(g.changed,0)"
 	switch p.Filter {
 	case "all":
 		order = "g.checked"
 	case "attention":
-		where, preferred, order = " WHERE g.attention=1", recordAttention, "g.checked"
+		where, order = " WHERE g.attention=1", "g.checked"
 	case "locked":
 		where = " WHERE s.protection_reason='manual_locked'"
 	case "", "changes":
-		where = " WHERE (g.changed IS NOT NULL OR g.discovered=1)"
+		where = " WHERE g.has_change=1"
 	default:
 		where += " AND g.agent=?"
 		args = append(args, p.Filter)
@@ -84,13 +97,10 @@ func groupedPage(ctx context.Context, tx *sql.Tx, local *time.Location, cte stri
 	rows, err := tx.QueryContext(ctx, cte+`
 		SELECT e.id,g.agent,g.session_id,e.revision,s.title,e.base,e.status,e.sync_status,e.sync_error,e.updated,
 			e.failure_code,e.failure_length,e.failure_limit,e.decision_reason,g.first_row,e.orca_origin,`+recordAdoptable+`,
-			s.orca_id,s.protection_reason,s.session_kind,g.changed,g.checked,`+order+`,
+			s.orca_id,s.protection_reason,s.session_kind,g.checked,`+order+`,g.sync_failed,
 			CASE WHEN e.status='needs_review' THEN e.title ELSE '' END
-		FROM summary g JOIN sessions s USING(agent,session_id)
-		JOIN events e ON e.rowid=(
-			SELECT rowid FROM events e WHERE e.agent=g.agent AND e.session_id=g.session_id
-			ORDER BY (`+preferred+`) DESC,e.created DESC,e.rowid DESC LIMIT 1
-		)`+where+` ORDER BY `+order+` DESC,g.first_row DESC LIMIT ?`, append(args, limit)...)
+		FROM current g JOIN sessions s USING(agent,session_id)
+		JOIN events e ON e.rowid=g.representative`+where+` ORDER BY `+order+` DESC,g.first_row DESC LIMIT ?`, append(args, limit)...)
 	if err != nil {
 		return nil, err
 	}
@@ -98,20 +108,20 @@ func groupedPage(ctx context.Context, tx *sql.Tx, local *time.Location, cte stri
 	items := []record{}
 	for rows.Next() {
 		var item record
-		var orcaID, protection string
-		var changed sql.NullInt64
+		var protection string
+		var canRetry bool
 		var checked, sortTime int64
-		if err := scanRecord(rows, &item, local, &orcaID, &protection, &item.Kind, &changed, &checked, &sortTime, &item.SuggestedTitle); err != nil {
+		if err := scanRecord(rows, &item, local, &item.orcaID, &protection, &item.Kind, &checked, &sortTime, &canRetry, &item.SuggestedTitle); err != nil {
 			return nil, err
 		}
 		item.SessionKey = base64.RawURLEncoding.EncodeToString([]byte(item.Agent + "\x00" + item.SessionID))
 		item.Locked = protection == decisionManual
 		item.Protected = protection == decisionProtected
-		item.CheckedAt = formatTime(checked, local)
-		if changed.Valid {
-			item.ChangedAt = formatTime(changed.Int64, local)
+		item.CanRetry = &canRetry
+		if checked > 0 {
+			item.CheckedAt = formatTime(checked, local)
 		}
-		if item.Kind == "" && orcaID != "" {
+		if item.Kind == "" && item.orcaID != "" {
 			item.Kind = "orca"
 		}
 		item.cursor.Updated = sortTime
@@ -131,10 +141,10 @@ func listChanges(ctx context.Context, tx *sql.Tx, local *time.Location, items []
 		args = append(args, item.Agent, item.SessionID)
 	}
 	rows, err := tx.QueryContext(ctx, `
-		SELECT agent,session_id,id,base,title,status,finalized FROM events e
+		SELECT agent,session_id,id,base,title,status,`+renameTime+` AS change_time,coalesce(`+exactRenameTime+`,0) FROM events e
 		WHERE (agent,session_id) IN (VALUES `+strings.TrimSuffix(strings.Repeat("(?,?),", len(items)), ",")+`)
 			AND `+renameEvidence+`
-		ORDER BY coalesce(finalized,created) DESC,rowid DESC`, args...)
+		ORDER BY change_time DESC,rowid DESC`, args...)
 	if err != nil {
 		return err
 	}
@@ -142,19 +152,25 @@ func listChanges(ctx context.Context, tx *sql.Tx, local *time.Location, items []
 	for rows.Next() {
 		var agent, sessionID, status string
 		var at sql.NullInt64
+		var exact bool
 		var change recordChange
-		if err := rows.Scan(&agent, &sessionID, &change.ID, &change.From, &change.Title, &status, &at); err != nil {
+		if err := rows.Scan(&agent, &sessionID, &change.ID, &change.From, &change.Title, &status, &at, &exact); err != nil {
 			return err
 		}
 		change.Source = "auto"
 		if status == "manual_change" {
 			change.Source = "manual"
-			change.Found = true
+		} else if status == "observed_change" {
+			change.Source = "observed"
 		}
 		if at.Valid {
 			change.At = formatTime(at.Int64, local)
+			change.Found = !exact && status != "applied"
 		}
 		item := &items[index[[2]string{agent, sessionID}]]
+		if len(item.Changes) == 0 {
+			item.ChangedAt, item.ChangedFound = change.At, change.Found
+		}
 		if n := len(item.Changes); n == 0 || item.Changes[n-1].Title != change.Title ||
 			item.Changes[n-1].From != change.From {
 			item.Changes = append(item.Changes, change)
