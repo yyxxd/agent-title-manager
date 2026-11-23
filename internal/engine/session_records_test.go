@@ -3,6 +3,7 @@ package engine
 import (
 	"context"
 	"slices"
+	"sync/atomic"
 	"testing"
 	"time"
 )
@@ -105,33 +106,65 @@ func TestManualLockAndReleaseFencePendingTurns(t *testing.T) {
 	}
 }
 
-func TestObservedCodexTurnSharesDedupAndKeepsCandidatePending(t *testing.T) {
+func TestOrcaRecoveryCannotSubmitAnIndependentNamingCandidate(t *testing.T) {
 	e := engineAt(t, t.TempDir(), nil)
+	reply, err := e.Handle(t.Context(), "event.submit", []byte(`{"agent":"codex","sessionId":"session","revision":"finished","currentTitle":"",
+		"orcaSessionId":"linked","orcaTitle":"Codex Chat","orcaTitleOrigin":"auto","reviewOnly":true,
+		"turns":[{"role":"user","text":"Check the unrelated candidate"}]}`))
+	if err == nil {
+		t.Fatalf("Orca-only naming submission accepted: %+v", reply)
+	}
+	var events, attempts int
+	if err := e.db.QueryRow(`SELECT (SELECT count(*) FROM events),(SELECT count(*) FROM attempts)`).Scan(&events, &attempts); err != nil || events != 0 || attempts != 0 {
+		t.Fatalf("rejected submission created work: events=%d attempts=%d err=%v", events, attempts, err)
+	}
+}
+
+func TestOrcaRecoveryDoesNotRenameOrRepeatAgentWork(t *testing.T) {
+	var models, writes atomic.Int32
+	e := engineAt(t, t.TempDir(), func(context.Context, string, string, string) error {
+		writes.Add(1)
+		return nil
+	})
 	e.generate = func(_ context.Context, _ attemptRequest, start func() error) modelResult {
+		models.Add(1)
 		if err := start(); err != nil {
 			t.Error(err)
 			return modelResult{status: "failed"}
 		}
 		return modelResult{status: "completed", decision: decision{Action: "rename", Title: goodTitle}}
 	}
-	p := event("completed", "")
-	title := "Codex Chat"
-	p.OrcaID, p.OrcaTitle, p.OrcaOrigin, p.ReviewOnly = "linked", &title, "auto", true
-	call[accepted](t, e, "event.submit", p)
-	eventually(t, func() bool { return revisionRecord(t, e, p.Revision).Status == "needs_review" })
-	p.ReviewOnly = false
-	call[accepted](t, e, "event.submit", p)
-	claim := call[claimResponse](t, e, "title.claim", claimRequest{Agent: p.Agent, SessionID: p.SessionID, Revision: p.Revision})
-	p.ReviewOnly, p.Revision = true, "another-completed-turn"
-	p.Turns = append(p.Turns, turn{"user", "Check the pending candidate"})
-	call[accepted](t, e, "event.submit", p)
-	if next := revisionRecord(t, e, p.Revision); next.Status != "kept" || next.Reason != "pending_proposal" || len(next.Attempts) != 0 {
-		t.Fatalf("existing candidate allowed another model call: %+v", next)
+	ctx := t.Context()
+	p := event("finished", "")
+	find := func() ConfirmedBinding {
+		t.Helper()
+		v, err := e.UnboundAppliedTitle(ctx, p.Agent, p.SessionID, p.Revision)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return v
 	}
-	list := call[recordList](t, e, "records.list", listRequest{Grouped: true, Filter: "attention"})
-	if claim.Candidate != nil || len(list.Items) != 1 || len(list.Items[0].Attempts) != 1 ||
-		list.Items[0].SuggestedTitle != goodTitle || list.Items[0].Title != "" || len(list.Items[0].Changes) != 0 {
-		t.Fatalf("duplicated or applied unsafe work: %+v %+v", claim, list)
+	call[accepted](t, e, "event.submit", p)
+	eventually(t, func() bool { return latest(t, e).Status == "candidate" })
+	c := call[claimResponse](t, e, "title.claim", claimRequest{Agent: p.Agent, SessionID: p.SessionID, Revision: p.Revision})
+	if c.Candidate == nil || find().ID != "" {
+		t.Fatal("a claim must never act as a native write receipt")
+	}
+	call[accepted](t, e, "title.ack", ackRequest{Agent: p.Agent, SessionID: p.SessionID, ID: c.Candidate.ID, ObservedTitle: goodTitle})
+	v := find()
+	if v.ID != c.Candidate.ID || v.NativeTitle != goodTitle {
+		t.Fatalf("native acknowledgement was unavailable: %+v", v)
+	}
+	v.OrcaID, v.OrcaTitle, v.Origin, v.ReadbackOnly = "linked", "Manual Orca title", "manual", true
+	for range 2 {
+		if err := e.AttachBinding(ctx, v); err != nil {
+			t.Fatal(err)
+		}
+		call[accepted](t, e, "event.submit", p)
+	}
+	current := latest(t, e)
+	if find().ID != "" || current.SyncStatus != "blocked" || current.Title != goodTitle || models.Load() != 1 || writes.Load() != 0 {
+		t.Fatalf("recovery created new naming work: %+v, models=%d, writes=%d", current, models.Load(), writes.Load())
 	}
 }
 

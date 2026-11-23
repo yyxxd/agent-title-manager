@@ -72,7 +72,7 @@ func run() error {
 						}
 						return plugins.CodexPackage(ctx)
 					}, Run: func(ctx context.Context, dir string) error {
-						return orca.RunCodexObserver(ctx, dir, plugins.NodeCommand, core.Handle)
+						return orca.RunCodexObserver(ctx, dir, plugins.NodeCommand, core)
 					}},
 					desktop.Observer{Name: "Orca Chat", Select: func(ctx context.Context) (string, error) {
 						if !orca.Active(ctx, "antigravity") {

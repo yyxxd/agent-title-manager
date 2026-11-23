@@ -3,20 +3,19 @@ package engine
 import "strings"
 
 const (
-	decisionManual        = "manual_locked"
-	decisionProtected     = "unknown_protected"
-	decisionModelKeep     = "model_keep"
-	decisionKeepGoal      = "model_keep_goal"
-	decisionKeepProgress  = "model_keep_progress"
-	decisionKeepUnknown   = "model_keep_unspecified"
-	decisionEmpty         = "empty_title"
-	decisionConfirmation  = "confirmation_only"
-	decisionThrottle      = "throttled"
-	decisionDuplicate     = "duplicate_turn"
-	decisionNoContent     = "no_content"
-	decisionCollision     = "title_collision"
-	decisionSame          = "same_title"
-	decisionOrcaProtected = "orca_title_protected"
+	decisionManual       = "manual_locked"
+	decisionProtected    = "unknown_protected"
+	decisionModelKeep    = "model_keep"
+	decisionKeepGoal     = "model_keep_goal"
+	decisionKeepProgress = "model_keep_progress"
+	decisionKeepUnknown  = "model_keep_unspecified"
+	decisionEmpty        = "empty_title"
+	decisionConfirmation = "confirmation_only"
+	decisionThrottle     = "throttled"
+	decisionDuplicate    = "duplicate_turn"
+	decisionNoContent    = "no_content"
+	decisionCollision    = "title_collision"
+	decisionSame         = "same_title"
 )
 
 func (s session) protection() string {

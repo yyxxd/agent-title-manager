@@ -10,10 +10,12 @@ import (
 	"os"
 	"path/filepath"
 	"time"
+
+	"github.com/yyxxd/agent-title-manager/internal/engine"
 )
 
-//go:embed codex-turn.mjs
-var codexTurnScript string
+//go:embed codex-title.mjs
+var codexTitleScript string
 
 const codexHookGrace = 8 * time.Second
 const codexObservationWindow = 3 * time.Minute
@@ -28,7 +30,19 @@ type codexObservation struct {
 	at    int64
 }
 
-func (i *Integration) RunCodexObserver(parent context.Context, dir string, node NodeCommand, engine Handler) error {
+type codexBindingRecovery struct {
+	find   func(context.Context, string, string, string) (engine.ConfirmedBinding, error)
+	attach func(context.Context, engine.ConfirmedBinding) error
+	read   func(context.Context, codexSettlement) (string, error)
+}
+
+func (i *Integration) RunCodexObserver(parent context.Context, dir string, node NodeCommand, core *engine.Engine) error {
+	recover := codexBindingRecovery{
+		find: core.UnboundAppliedTitle, attach: core.AttachBinding,
+		read: func(ctx context.Context, row codexSettlement) (string, error) {
+			return readCodexTitle(ctx, dir, node, row)
+		},
+	}
 	if !i.Active(parent, "codex") {
 		return nil
 	}
@@ -43,12 +57,12 @@ func (i *Integration) RunCodexObserver(parent context.Context, dir string, node 
 		case <-ctx.Done():
 			return nil
 		case now := <-tick.C:
-			i.observeCodexSettlements(ctx, dir, node, engine, observed, started, now)
+			i.observeCodexSettlements(ctx, recover, observed, started, now)
 		}
 	}
 }
 
-func (i *Integration) observeCodexSettlements(ctx context.Context, dir string, node NodeCommand, engine Handler,
+func (i *Integration) observeCodexSettlements(ctx context.Context, recover codexBindingRecovery,
 	observed map[[2]string]codexObservation, started, now time.Time) {
 	since := max(started.UnixMilli(), now.Add(-codexObservationWindow).UnixMilli())
 	for key, item := range observed {
@@ -68,7 +82,7 @@ func (i *Integration) observeCodexSettlements(ctx context.Context, dir string, n
 			continue
 		}
 		item.at, item.tries = row.at, item.tries+1
-		done, err := i.submitCodexSettlement(ctx, dir, node, engine, row)
+		done, err := i.recoverCodexBinding(ctx, recover, row)
 		if err != nil && item.tries == 3 && ctx.Err() == nil {
 			log.Print("Orca Codex 回合未能确认并入库")
 		}
@@ -131,96 +145,46 @@ func readCodexSettlements(ctx context.Context, path string, since, before int64)
 	return result, rows.Err()
 }
 
-func (i *Integration) submitCodexSettlement(ctx context.Context, dir string, node NodeCommand, engine Handler, row codexSettlement) (bool, error) {
-	id := map[string]string{"agent": "codex", "sessionId": row.nativeID, "revision": row.revision}
-	body, err := json.Marshal(id)
-	if err != nil {
-		return true, err
-	}
-	result, err := engine(ctx, "event.eligibility", body)
-	if err != nil {
+func (i *Integration) recoverCodexBinding(ctx context.Context, recover codexBindingRecovery, row codexSettlement) (bool, error) {
+	applied, err := recover.find(ctx, "codex", row.nativeID, row.revision)
+	if err != nil || applied.ID == "" {
 		return false, err
-	}
-	var state struct {
-		Seen, Locked bool
-		Epoch        *int64
-	}
-	wire, err := json.Marshal(result)
-	if err != nil || json.Unmarshal(wire, &state) != nil || state.Epoch == nil {
-		return false, errors.New("无法确认 Codex 回合登记状态")
-	}
-	if state.Seen || state.Locked {
-		return true, nil
 	}
 	info, err := os.Lstat(row.account)
 	if err != nil || !info.IsDir() || !unredirectedPath(row.account, info) {
-		return false, errors.New("Codex 回合的账户目录不可确认")
+		return false, errors.New("无法确认 Codex 回合的账户目录")
+	}
+	title, err := recover.read(ctx, row)
+	if err != nil || !i.Active(ctx, "codex") {
+		return false, err
+	}
+	if title != applied.NativeTitle {
+		return true, nil
 	}
 	bound, ok := i.resolve(ctx, "codex", row.nativeID, row.nativeID, row.orcaID, "chat", []time.Duration{0})
 	if !ok {
-		return false, errors.New("Codex 回合的 Orca 绑定不可确认")
+		return false, errors.New("无法确认 Codex 回合的 Orca 绑定")
 	}
-	if bound.Origin == titleUnknown && codexGeneratedName(ctx, orcaDatabase(), row, bound.Title) {
-		bound.Origin = titleAuto
-	}
-	snapshot, err := collectCodexTurn(ctx, dir, node, row)
-	if err != nil || snapshot == nil || !i.Active(ctx, "codex") {
-		return false, err
-	}
-	for key, value := range map[string]any{
-		"agent": "codex", "sessionId": row.nativeID, "revision": row.revision,
-		"orcaSessionId": bound.ID, "orcaNativeHandle": bound.Handle, "orcaTitle": bound.Title, "orcaTitleOrigin": bound.Origin,
-		"sessionKind": bound.Kind, "protectionEpoch": *state.Epoch, "reviewOnly": true,
-	} {
-		snapshot[key] = value
-	}
-	params, err := json.Marshal(snapshot)
-	if err != nil {
-		return false, err
-	}
-	_, err = engine(ctx, "event.submit", params)
+	applied.OrcaID, applied.OrcaTitle, applied.Origin = bound.ID, bound.Title, bound.Origin
+	applied.NativeHandle, applied.Kind, applied.ReadbackOnly = bound.Handle, bound.Kind, true
+	err = recover.attach(ctx, applied)
 	return err == nil, err
 }
 
-func codexGeneratedName(ctx context.Context, path string, row codexSettlement, shown string) bool {
-	if shown == "" {
-		return false
-	}
-	db, err := openOrcaDatabase(path)
-	if err != nil {
-		return false
-	}
-	defer db.Close()
-	ctx, cancel := context.WithTimeout(ctx, 350*time.Millisecond)
-	defer cancel()
-	var auto bool
-	err = db.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM agent_session_records
-		WHERE session_id=? AND json_extract(record_json,'$.sessionId')=session_id
-		AND json_extract(record_json,'$.schemaVersion')=2 AND json_extract(record_json,'$.provider')='codex'
-		AND json_extract(record_json,'$.location.executionHostId')='local'
-		AND json_array_length(record_json,'$.providerHandleChain')=1
-		AND json_extract(record_json,'$.providerHandleChain[0].origin')='created'
-		AND json_extract(record_json,'$.providerHandleChain[0].handle.threadId')=?
-		AND json_extract(record_json,'$.conversationName')=?
-		AND (json_type(record_json,'$.conversationNameSource') IS NULL
-		     OR json_extract(record_json,'$.conversationNameSource')='auto'))`, row.orcaID, row.nativeID, shown).Scan(&auto)
-	return err == nil && auto
-}
-
-func collectCodexTurn(ctx context.Context, dir string, node NodeCommand, row codexSettlement) (map[string]any, error) {
+func readCodexTitle(ctx context.Context, dir string, node NodeCommand, row codexSettlement) (string, error) {
 	ctx, cancel := context.WithTimeout(ctx, 8*time.Second)
 	defer cancel()
-	cmd, err := node(ctx, "--input-type=module", "-e", codexTurnScript, dir, row.account, row.nativeID, row.revision)
+	cmd, err := node(ctx, "--input-type=module", "-e", codexTitleScript, dir, row.account, row.nativeID)
 	if err != nil {
-		return nil, err
+		return "", err
 	}
 	out, err := cmd.Output()
 	if err != nil {
-		return nil, err
+		return "", err
 	}
-	var snapshot map[string]any
-	if len(out) > 64<<10 || json.Unmarshal(out, &snapshot) != nil {
-		return nil, errors.New("Codex 原生回合读回格式无效")
+	var title *string
+	if len(out) > 8192 || json.Unmarshal(out, &title) != nil || title == nil {
+		return "", errors.New("Codex 原生标题读回无效")
 	}
-	return snapshot, nil
+	return *title, nil
 }

@@ -76,7 +76,7 @@ func (p submission) validate() error {
 	}
 	if (p.ProtectionEpoch != nil && *p.ProtectionEpoch < 0) ||
 		(p.SessionKind != "" && p.SessionKind != "project" && p.SessionKind != "bot") ||
-		(p.ReviewOnly && (p.Agent != "codex" || p.NativeOnly || p.OrcaTitle == nil)) {
+		p.ReviewOnly {
 		return errors.New("会话保护版本或类型无效")
 	}
 	if p.NativeOnly && (strings.TrimSpace(p.CurrentTitle) == "" || len(p.Turns) > 0 || p.OrcaID == "" || p.OrcaTitle == nil) {
@@ -221,18 +221,6 @@ func (e *Engine) insertSubmission(ctx context.Context, tx *sql.Tx, p submission,
 	reason := s.protection()
 	var finalized *int64
 	now := e.now().UnixMilli()
-	if p.ReviewOnly && payload != nil && reason == "" {
-		var pending bool
-		err := tx.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM events WHERE agent=? AND session_id=?
-			AND base=? AND orca_id=? AND orca_base IS ? AND review_only=1 AND status='needs_review')`,
-			p.Agent, p.SessionID, p.CurrentTitle, p.OrcaID, p.OrcaTitle).Scan(&pending)
-		if err != nil {
-			return err
-		}
-		if pending {
-			payload, reason = nil, "pending_proposal"
-		}
-	}
 	skips, err := confirmationSkips(ctx, tx, p, s)
 	if err != nil {
 		return err
@@ -253,9 +241,6 @@ func (e *Engine) insertSubmission(ctx context.Context, tx *sql.Tx, p submission,
 	}
 	if reason == "" && !p.NativeOnly {
 		switch {
-		case p.ReviewOnly && p.OrcaTitle != nil && *p.OrcaTitle != "" && p.OrcaOrigin != "auto":
-			reason = decisionOrcaProtected
-			payload = nil
 		case payload == nil:
 			reason = decisionNoContent
 		case skips > 0:
@@ -286,11 +271,11 @@ func (e *Engine) insertSubmission(ctx context.Context, tx *sql.Tx, p submission,
 	}
 	_, err = tx.ExecContext(ctx, `INSERT INTO events(id,agent,session_id,revision,native_only,base,title,status,payload,
 		orca_id,orca_base,orca_origin,sync_status,created,updated,finalized,turns_hash,turn_count,confirmation_skips,native_handle,throttle_skips,
-		turn_hashes,goal_hash,decision_reason,review_only)
-		VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
+		turn_hashes,goal_hash,decision_reason)
+		VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
 		rand.Text(), p.Agent, p.SessionID, p.Revision, p.NativeOnly, base, p.CurrentTitle,
 		status, payload, p.OrcaID, p.OrcaTitle, p.OrcaOrigin, syncStatus, now, now, finalized,
-		turnsHash(p.OriginalGoal, p.Turns), len(p.Turns), skips, p.OrcaNativeHandle, throttleSkip, strings.Join(hashes, ","), goalHash, reason, p.ReviewOnly)
+		turnsHash(p.OriginalGoal, p.Turns), len(p.Turns), skips, p.OrcaNativeHandle, throttleSkip, strings.Join(hashes, ","), goalHash, reason)
 	return err
 }
 

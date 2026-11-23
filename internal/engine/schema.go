@@ -233,6 +233,7 @@ func initialize(db *sql.DB) error {
 	}
 	for _, recovery := range []string{
 		"UPDATE attempts SET status='interrupted' WHERE status='running'",
+		"UPDATE events SET status='interrupted',payload=NULL WHERE review_only=1 AND status='queued'",
 		"UPDATE events SET status='interrupted',payload=NULL,updated=CAST(unixepoch('subsec')*1000 AS INTEGER) WHERE status='running'",
 		"UPDATE events SET sync_status='pending' WHERE sync_status='writing'",
 	} {

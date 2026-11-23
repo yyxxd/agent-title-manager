@@ -60,7 +60,7 @@ func (e *Engine) nextModel() (*modelJob, error) {
 	return transact(ctx, e.db, func(tx *sql.Tx) (*modelJob, error) {
 		var job modelJob
 		err := tx.QueryRowContext(ctx, `SELECT q.id,q.agent,q.session_id,q.base,q.payload FROM events q
-			WHERE q.status='queued' AND NOT EXISTS(SELECT 1 FROM events first
+			WHERE q.status='queued' AND q.review_only=0 AND NOT EXISTS(SELECT 1 FROM events first
 				WHERE first.agent=q.agent AND first.session_id=q.session_id AND first.native_only=0
 				  AND first.base='' AND first.status IN ('candidate','claimed'))
 			ORDER BY q.created,q.rowid LIMIT 1`).Scan(&job.id, &job.agent, &job.sessionID, &job.base, &job.payload)
@@ -143,10 +143,10 @@ func (e *Engine) finishModel(job *modelJob, r modelResult) error {
 	now := e.now().UnixMilli()
 	_, err := transact(ctx, e.db, func(tx *sql.Tx) (bool, error) {
 		var base string
-		var current, reviewOnly bool
-		err := tx.QueryRowContext(ctx, `SELECT e.base,e.review_only,`+currentModel+`
+		var current bool
+		err := tx.QueryRowContext(ctx, `SELECT e.base,`+currentModel+`
 			FROM events e JOIN sessions s ON e.agent=s.agent AND e.session_id=s.session_id WHERE e.id=?`, job.id).
-			Scan(&base, &reviewOnly, &current)
+			Scan(&base, &current)
 		if err != nil {
 			return false, err
 		}
@@ -164,9 +164,6 @@ func (e *Engine) finishModel(job *modelJob, r modelResult) error {
 				title, status, finalized = base, "kept", &now
 				decisionReason = decisionCollision
 			}
-		}
-		if status == "candidate" && reviewOnly {
-			status, decisionReason = "needs_review", "conditional_write_unavailable"
 		}
 		_, err = tx.ExecContext(ctx, `UPDATE events SET status=?,title=?,updated=?,finalized=?,
 			failure_code=?,failure_length=?,failure_limit=?,decision_reason=? WHERE id=? AND status='running'`,

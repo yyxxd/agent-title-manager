@@ -1,11 +1,88 @@
 package orcasync
 
 import (
+	"context"
 	"database/sql"
 	"encoding/json"
+	"fmt"
 	"path/filepath"
 	"testing"
+
+	"github.com/yyxxd/agent-title-manager/internal/engine"
 )
+
+func TestCodexRecoveryRequiresNativeAckAndLiveIdentity(t *testing.T) {
+	const nativeTitle, previous, manual = "Native title", "Previous title", "Manual title"
+	for _, tc := range []struct {
+		name, kind, native, orca string
+		ack, sameBinding, attach bool
+	}{
+		{"unacknowledged", "project", "", previous, false, true, false},
+		{"native not written", "project", "", previous, true, true, false},
+		{"ambiguous binding", "bot", nativeTitle, previous, true, false, false},
+		{"ordinary readback", "project", nativeTitle, nativeTitle, true, true, true},
+		{"bot manual title", "bot", nativeTitle, manual, true, true, true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			root := t.TempDir()
+			row := codexSettlement{orcaID: acpChat, nativeID: acpNative, account: root, revision: "turn"}
+			seenNative := false
+			i := Integration{Enabled: alwaysEnabled, origin: func(context.Context, string, string, string) string {
+				if tc.orca == manual {
+					return titleManual
+				}
+				return titleAuto
+			}}
+			i.run = func(_ context.Context, args ...string) ([]byte, error) {
+				if !seenNative || args[0] != "agent" || args[1] != "show" {
+					t.Fatalf("unexpected Orca call before native proof: %v", args)
+				}
+				switch args[2] {
+				case row.nativeID:
+					if !tc.sameBinding {
+						return providerMapping(manualChat)
+					}
+					return providerMapping(row.orcaID)
+				case idPrefix + row.orcaID:
+					return replyPlace(place{ID: row.orcaID, Agent: "codex", Kind: "chat", HostID: "local", Title: &tc.orca})
+				default:
+					return nil, fmt.Errorf("unexpected identity: %v", args)
+				}
+			}
+			attached := 0
+			r := codexBindingRecovery{
+				find: func(_ context.Context, agent, session, revision string) (engine.ConfirmedBinding, error) {
+					if agent != "codex" || session != row.nativeID || revision != row.revision {
+						t.Fatalf("wrong native receipt identity: %s %s %s", agent, session, revision)
+					}
+					if !tc.ack {
+						return engine.ConfirmedBinding{}, nil
+					}
+					return engine.ConfirmedBinding{ID: "confirmed", NativeTitle: nativeTitle}, nil
+				},
+				read: func(_ context.Context, actual codexSettlement) (string, error) {
+					if actual != row {
+						t.Fatalf("wrong scoped native read: %+v", actual)
+					}
+					seenNative = true
+					return tc.native, nil
+				},
+				attach: func(_ context.Context, evidence engine.ConfirmedBinding) error {
+					if !evidence.ReadbackOnly || evidence.NativeTitle != nativeTitle ||
+						evidence.OrcaID != row.orcaID || evidence.OrcaTitle != tc.orca {
+						t.Fatalf("invalid readback evidence: %+v", evidence)
+					}
+					attached++
+					return nil
+				},
+			}
+			_, err := i.recoverCodexBinding(t.Context(), r, row)
+			if (err != nil) == tc.sameBinding || seenNative != tc.ack || (attached == 1) != tc.attach {
+				t.Fatalf("read=%v attach=%d err=%v", seenNative, attached, err)
+			}
+		})
+	}
+}
 
 func TestCodexSettlementsGiveEachConversationItsOwnLatestNativeTurn(t *testing.T) {
 	root := t.TempDir()
@@ -74,15 +151,5 @@ func TestCodexSettlementsGiveEachConversationItsOwnLatestNativeTurn(t *testing.T
 			t.Fatalf("wrong conversation binding: %+v", item)
 		}
 		ids[item.nativeID] = true
-	}
-	if !codexGeneratedName(t.Context(), orcaDatabase(), items[0], "Fixture title") {
-		t.Fatal("Orca-created default title was not recognized")
-	}
-	if _, err := db.Exec(`UPDATE agent_session_records SET record_json=json_set(record_json,'$.conversationNameSource','user')
-		WHERE session_id=?`, items[0].orcaID); err != nil {
-		t.Fatal(err)
-	}
-	if codexGeneratedName(t.Context(), orcaDatabase(), items[0], "Fixture title") {
-		t.Fatal("user title was mistaken for automatic output")
 	}
 }
