@@ -118,6 +118,12 @@ func TestObservedCodexTurnSharesDedupAndKeepsCandidatePending(t *testing.T) {
 	p.ReviewOnly = false
 	call[accepted](t, e, "event.submit", p)
 	claim := call[claimResponse](t, e, "title.claim", claimRequest{Agent: p.Agent, SessionID: p.SessionID, Revision: p.Revision})
+	p.ReviewOnly, p.Revision = true, "another-completed-turn"
+	p.Turns = append(p.Turns, turn{"user", "Check the pending candidate"})
+	call[accepted](t, e, "event.submit", p)
+	if next := revisionRecord(t, e, p.Revision); next.Status != "kept" || next.Reason != "pending_proposal" || len(next.Attempts) != 0 {
+		t.Fatalf("existing candidate allowed another model call: %+v", next)
+	}
 	list := call[recordList](t, e, "records.list", listRequest{Grouped: true, Filter: "attention"})
 	if claim.Candidate != nil || len(list.Items) != 1 || len(list.Items[0].Attempts) != 1 ||
 		list.Items[0].SuggestedTitle != goodTitle || list.Items[0].Title != "" || len(list.Items[0].Changes) != 0 {

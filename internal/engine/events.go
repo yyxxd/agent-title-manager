@@ -221,6 +221,18 @@ func (e *Engine) insertSubmission(ctx context.Context, tx *sql.Tx, p submission,
 	reason := s.protection()
 	var finalized *int64
 	now := e.now().UnixMilli()
+	if p.ReviewOnly && payload != nil && reason == "" {
+		var pending bool
+		err := tx.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM events WHERE agent=? AND session_id=?
+			AND base=? AND orca_id=? AND orca_base IS ? AND review_only=1 AND status='needs_review')`,
+			p.Agent, p.SessionID, p.CurrentTitle, p.OrcaID, p.OrcaTitle).Scan(&pending)
+		if err != nil {
+			return err
+		}
+		if pending {
+			payload, reason = nil, "pending_proposal"
+		}
+	}
 	skips, err := confirmationSkips(ctx, tx, p, s)
 	if err != nil {
 		return err

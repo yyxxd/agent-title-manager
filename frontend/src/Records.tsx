@@ -79,6 +79,7 @@ const decisionMessages: Record<string, string> = {
   baseline_unverified: '当前标题或回合已经变化，候选标题未写入。',
   conditional_write_unavailable: '当前接口无法安全写入候选标题。',
   orca_title_protected: 'Orca 现有标题已保留。',
+  pending_proposal: '已有待处理候选，本轮沿用。',
   manual_locked: '手动重命名锁定',
   unknown_protected: '已有标题来源未确认，已保留。',
   model_keep: '模型选择保留原标题，具体依据未记录。',
