@@ -72,6 +72,41 @@ func TestTitleOriginRejectsUnknownIdentityAndSchema(t *testing.T) {
 	}
 }
 
+func TestCodexTitleOriginUsesLocalCreatedConversationProvenance(t *testing.T) {
+	for _, c := range []struct {
+		source, origin, want string
+	}{
+		{"", "created", titleAuto},
+		{`,"conversationNameSource":"user"`, "created", titleManual},
+		{`,"conversationNameSource":null`, "created", titleUnknown},
+		{"", "adopted", titleUnknown},
+	} {
+		db, err := sql.Open("sqlite", ":memory:")
+		if err != nil {
+			t.Fatal(err)
+		}
+		if _, err := db.Exec(`CREATE TABLE agent_session_records (session_id TEXT PRIMARY KEY, record_json TEXT)`); err != nil {
+			t.Fatal(err)
+		}
+		doc := fmt.Sprintf(`{"schemaVersion":2,"sessionId":"chat","provider":"codex","location":{"executionHostId":"local"},
+			"providerHandleChain":[{"origin":%q,"handle":{"provider":"codex","threadId":%q}}],"conversationName":"Orca automatic"%s}`,
+			c.origin, nativeFixture, c.source)
+		if _, err := db.Exec(`INSERT INTO agent_session_records VALUES ('chat', ?)`, doc); err != nil {
+			t.Fatal(err)
+		}
+		rec, ok := readNameRecord(t.Context(), db, "chat")
+		if err := db.Close(); err != nil {
+			t.Fatal(err)
+		}
+		if got := rec.origin("codex", "Orca automatic"); !ok || got != c.want {
+			t.Errorf("source %q origin %q: got %q, want %q", c.source, c.origin, got, c.want)
+		}
+		if got := rec.origin("codex", "Different live name"); got != titleUnknown {
+			t.Errorf("record title differed from live title: %q", got)
+		}
+	}
+}
+
 func TestInstalledOrcaPiOriginReadOnly(t *testing.T) {
 	for _, origin := range []string{"AUTO", "MANUAL"} {
 		base := "ATM_TEST_PI_" + origin

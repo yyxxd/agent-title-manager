@@ -69,6 +69,7 @@ type nameRecord struct {
 	session, provider    sql.NullString
 	nameType, sourceType sql.NullString
 	name, source         sql.NullString
+	createdCodexThread   sql.NullString
 }
 
 func titleOrigin(ctx context.Context, path, agent, id, displayed string) string {
@@ -95,7 +96,13 @@ func readNameRecord(ctx context.Context, db *sql.DB, id string) (nameRecord, boo
 		       json_type(record_json, '$.conversationName'),
 		       json_type(record_json, '$.conversationNameSource'),
 		       json_extract(record_json, '$.conversationName'),
-		       json_extract(record_json, '$.conversationNameSource')
+		       json_extract(record_json, '$.conversationNameSource'),
+		       CASE WHEN json_extract(record_json, '$.location.executionHostId') = 'local'
+		        AND json_array_length(record_json, '$.providerHandleChain') = 1
+		        AND json_extract(record_json, '$.providerHandleChain[0].origin') = 'created'
+		        AND json_extract(record_json, '$.providerHandleChain[0].handle.provider') = 'codex'
+		        AND json_type(record_json, '$.providerContextBoundary') IS NULL
+		       THEN json_extract(record_json, '$.providerHandleChain[0].handle.threadId') END
 		FROM agent_session_records WHERE session_id = ? LIMIT 2`, id)
 	if err != nil {
 		return r, false
@@ -104,7 +111,7 @@ func readNameRecord(ctx context.Context, db *sql.DB, id string) (nameRecord, boo
 	if !rows.Next() {
 		return r, false
 	}
-	err = rows.Scan(&r.schema, &r.session, &r.provider, &r.nameType, &r.sourceType, &r.name, &r.source)
+	err = rows.Scan(&r.schema, &r.session, &r.provider, &r.nameType, &r.sourceType, &r.name, &r.source, &r.createdCodexThread)
 	return r, err == nil && !rows.Next() && rows.Err() == nil
 }
 
@@ -118,6 +125,13 @@ func (r nameRecord) origin(agent, displayed string) string {
 		}
 	}
 	if agent == "antigravity" && r.nameType.String == "text" && r.name.String != "" && r.name.String == displayed &&
+		(!r.sourceType.Valid || r.sourceType.String == "text" && r.source.String == "auto") {
+		return titleAuto
+	}
+	// Orca 1.4 的本地新建 Codex 聊天上，宿主自动命名不写来源字段，手动改名写入 user。
+	// 收养、替换和来源不明的会话不能据此接管标题。
+	if agent == "codex" && nativeID.MatchString(r.createdCodexThread.String) &&
+		r.nameType.String == "text" && displayed != "" && r.name.String == displayed &&
 		(!r.sourceType.Valid || r.sourceType.String == "text" && r.source.String == "auto") {
 		return titleAuto
 	}
