@@ -46,6 +46,13 @@ func TestAPIMissingCacheAndInvalidPayload(t *testing.T) {
 	}
 }
 
+func TestChatGenerationUsesReasoningSafeOutputBudget(t *testing.T) {
+	payload := generationPayload(protocolChat, "demo", "policy", "input").(chatRequest)
+	if payload.MaxTokens != 8192 {
+		t.Fatalf("Chat Completions 输出预算为 %d，期望 8192", payload.MaxTokens)
+	}
+}
+
 func TestCodexStopsAmbiguousReconnect(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
