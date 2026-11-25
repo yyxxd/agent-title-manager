@@ -9,6 +9,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 	"time"
@@ -34,10 +35,11 @@ func testACPObserver(t *testing.T, home, account string) {
 			t.Fatal("Node.js required to exercise embedded observation:", err)
 		}
 	}
-	plugin, err := filepath.Abs("../../plugins/antigravity")
-	if err != nil {
-		t.Fatal(err)
+	_, source, _, ok := runtime.Caller(0)
+	if !ok {
+		t.Fatal("无法定位 ACP 测试源文件")
 	}
+	plugin := filepath.Join(filepath.Dir(source), "..", "..", "plugins", "antigravity")
 	t.Setenv("ORCA_USER_DATA_PATH", home)
 	t.Setenv("NODE_TEST_CONTEXT", "isolated-acp-fixture")
 	if account == "" {
