@@ -30,6 +30,8 @@ type codexObservation struct {
 	at    int64
 }
 
+var errCodexAckPending = errors.New("等待 Codex 原生回执")
+
 type codexBindingRecovery struct {
 	find   func(context.Context, string, string, string) (engine.ConfirmedBinding, error)
 	attach func(context.Context, engine.ConfirmedBinding) error
@@ -81,10 +83,13 @@ func (i *Integration) observeCodexSettlements(ctx context.Context, recover codex
 		if item.tries >= 3 || !i.Active(ctx, "codex") {
 			continue
 		}
-		item.at, item.tries = row.at, item.tries+1
+		item.at = row.at
 		done, err := i.recoverCodexBinding(ctx, recover, row)
-		if err != nil && item.tries == 3 && ctx.Err() == nil {
-			log.Print("Orca Codex 回合未能确认并入库")
+		if !errors.Is(err, errCodexAckPending) {
+			item.tries++
+			if err != nil && item.tries == 3 && ctx.Err() == nil {
+				log.Print("Orca Codex 回合未能确认并入库")
+			}
 		}
 		if done {
 			item.tries = 3
@@ -147,8 +152,11 @@ func readCodexSettlements(ctx context.Context, path string, since, before int64)
 
 func (i *Integration) recoverCodexBinding(ctx context.Context, recover codexBindingRecovery, row codexSettlement) (bool, error) {
 	applied, err := recover.find(ctx, "codex", row.nativeID, row.revision)
-	if err != nil || applied.ID == "" {
+	if err != nil {
 		return false, err
+	}
+	if applied.ID == "" {
+		return false, errCodexAckPending
 	}
 	info, err := os.Lstat(row.account)
 	if err != nil || !info.IsDir() || !unredirectedPath(row.account, info) {

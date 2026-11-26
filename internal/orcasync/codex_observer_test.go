@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"path/filepath"
 	"testing"
+	"time"
 
 	"github.com/yyxxd/agent-title-manager/internal/engine"
 )
@@ -77,7 +78,7 @@ func TestCodexRecoveryRequiresNativeAckAndLiveIdentity(t *testing.T) {
 				},
 			}
 			_, err := i.recoverCodexBinding(t.Context(), r, row)
-			if (err != nil) == tc.sameBinding || seenNative != tc.ack || (attached == 1) != tc.attach {
+			if (err != nil) != (!tc.ack || !tc.sameBinding) || seenNative != tc.ack || (attached == 1) != tc.attach {
 				t.Fatalf("read=%v attach=%d err=%v", seenNative, attached, err)
 			}
 		})
@@ -208,5 +209,47 @@ func TestCodexSettlementsGiveEachConversationItsOwnLatestNativeTurn(t *testing.T
 			t.Fatalf("wrong conversation binding: %+v", item)
 		}
 		ids[item.nativeID] = true
+	}
+
+	title := "Acknowledged native title"
+	i := Integration{Enabled: alwaysEnabled, run: func(_ context.Context, args ...string) ([]byte, error) {
+		if args[2] == acpNative {
+			return providerMapping(acpChat)
+		}
+		return replyPlace(place{ID: acpChat, Agent: "codex", Kind: "chat", HostID: "local", Title: &title})
+	}, origin: func(context.Context, string, string, string) string { return titleAuto }}
+	polls, attached := 0, 0
+	recover := codexBindingRecovery{
+		find: func(_ context.Context, _, session, _ string) (engine.ConfirmedBinding, error) {
+			if session != acpNative {
+				return engine.ConfirmedBinding{}, nil
+			}
+			polls++
+			if polls <= 4 {
+				return engine.ConfirmedBinding{}, nil
+			}
+			return engine.ConfirmedBinding{ID: "confirmed", NativeTitle: title}, nil
+		},
+		read: func(_ context.Context, row codexSettlement) (string, error) {
+			if row.nativeID != acpNative || polls != 5 {
+				t.Fatalf("unexpected read before or after native acknowledgement: %+v", row)
+			}
+			return title, nil
+		},
+		attach: func(_ context.Context, proof engine.ConfirmedBinding) error {
+			if proof.OrcaID != acpChat || !proof.ReadbackOnly {
+				t.Fatalf("unexpected attachment: %+v", proof)
+			}
+			attached++
+			return nil
+		},
+	}
+	observed := make(map[[2]string]codexObservation)
+	for tick := range 6 {
+		i.observeCodexSettlements(t.Context(), recover, observed, time.UnixMilli(50),
+			time.UnixMilli(90).Add(codexHookGrace+time.Duration(tick)*3*time.Second))
+	}
+	if polls != 5 || attached != 1 {
+		t.Fatalf("expected one attachment after four pending polls, got polls=%d attachments=%d", polls, attached)
 	}
 }
