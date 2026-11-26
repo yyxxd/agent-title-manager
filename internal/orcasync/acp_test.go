@@ -26,6 +26,10 @@ func TestACPObserverSettlesRenamesAndProtectsManualName(t *testing.T) {
 	testACPObserver(t, t.TempDir(), "")
 }
 
+func TestACPObserverUsesRecordedGeminiHome(t *testing.T) {
+	testACPObserver(t, t.TempDir(), filepath.Join(t.TempDir(), "gemini"))
+}
+
 func testACPObserver(t *testing.T, home, account string) {
 	t.Helper()
 	node, err := exec.LookPath("node.exe")
@@ -45,7 +49,11 @@ func testACPObserver(t *testing.T, home, account string) {
 	if account == "" {
 		account = filepath.Join(home, "antigravity-chat")
 	}
-	data := filepath.Join(account, "antigravity-acp")
+	layout := "antigravity-cli"
+	if samePath(filepath.Dir(account), home) && filepath.Base(account) == "antigravity-chat" {
+		layout = "antigravity-acp"
+	}
+	data := filepath.Join(account, layout)
 	db := makeACPDatabase(t, home)
 	now := time.Now()
 	putACPFixture(t, db, data, account, acpChat, acpNative, "", now)
@@ -56,8 +64,8 @@ func testACPObserver(t *testing.T, home, account string) {
 	const target = "fixture result"
 	i := Integration{Enabled: alwaysEnabled, ReadNative: func(context.Context, string, string, string) (string, error) {
 		return "", errors.New("ACP used unscoped title read")
-	}, ReadScoped: func(_ context.Context, id, root string) (string, error) {
-		if id != acpNative || !samePath(root, data) {
+	}, ReadNativeAt: func(_ context.Context, agent, id, root string) (string, error) {
+		if agent != "antigravity" || id != acpNative || !samePath(root, data) {
 			return "", fmt.Errorf("unverified native root")
 		}
 		wire, err := os.ReadFile(filepath.Join(root, "annotations", id+".pbtxt"))

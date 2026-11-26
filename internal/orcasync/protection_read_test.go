@@ -44,9 +44,9 @@ func TestProtectionReadsBoundAntigravityChat(t *testing.T) {
 				t.Fatal("chat used unscoped read")
 				return "", nil
 			}
-			i.ReadScoped = func(_ context.Context, id, root string) (string, error) {
+			i.ReadNativeAt = func(_ context.Context, agent, id, root string) (string, error) {
 				reads++
-				if id != acpNative || !samePath(root, data) {
+				if agent != "antigravity" || id != acpNative || !samePath(root, data) {
 					t.Fatalf("incorrect scope: %q %q", id, root)
 				}
 				if tc.changed {

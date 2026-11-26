@@ -9,7 +9,18 @@ import (
 	"testing"
 )
 
-func TestBoundCodexProtectionReadsOnlyVerifiedChatAccount(t *testing.T) {
+func TestBoundProtectionReadsOnlyVerifiedChatAccount(t *testing.T) {
+	for _, agent := range []string{"codex", "claude"} {
+		t.Run(agent, func(t *testing.T) { testBoundProtectionAccount(t, agent) })
+	}
+}
+
+func testBoundProtectionAccount(t *testing.T, agent string) {
+	variable, field := "CODEX_HOME", "threadId"
+	if agent == "claude" {
+		variable, field = "CLAUDE_CONFIG_DIR", "sessionId"
+	}
+
 	for _, tc := range []struct {
 		name                                                                                                     string
 		legacyHandle, defaultAccount, missingAccount, mismatchedThread, wrongMapping, accountChanged, readFailed bool
@@ -23,7 +34,7 @@ func TestBoundCodexProtectionReadsOnlyVerifiedChatAccount(t *testing.T) {
 			home := t.TempDir()
 			t.Setenv("ORCA_USER_DATA_PATH", home)
 			defaultHome, account := t.TempDir(), t.TempDir()
-			t.Setenv("CODEX_HOME", defaultHome)
+			t.Setenv(variable, defaultHome)
 			if tc.defaultAccount {
 				account = defaultHome
 			}
@@ -40,11 +51,11 @@ func TestBoundCodexProtectionReadsOnlyVerifiedChatAccount(t *testing.T) {
 			}
 			writeAccount := func(dir string) {
 				t.Helper()
-				record := map[string]any{"sessionId": acpChat, "schemaVersion": 2, "provider": "codex",
+				record := map[string]any{"sessionId": acpChat, "schemaVersion": 2, "provider": agent,
 					"location":            map[string]string{"executionHostId": "local", "workspaceKind": "git-worktree"},
-					"providerHandleChain": []any{map[string]any{"handle": map[string]string{"provider": "codex", "threadId": thread}}}}
+					"providerHandleChain": []any{map[string]any{"handle": map[string]string{"provider": agent, field: thread}}}}
 				if dir != "" {
-					record["accountHome"] = map[string]string{"variable": "CODEX_HOME", "path": dir}
+					record["accountHome"] = map[string]string{"variable": variable, "path": dir}
 				}
 				wire, err := json.Marshal(record)
 				if err != nil {
@@ -65,9 +76,9 @@ func TestBoundCodexProtectionReadsOnlyVerifiedChatAccount(t *testing.T) {
 				t.Fatal("bound chat read unverified default account")
 				return "", nil
 			}
-			i.ReadCodexAt = func(_ context.Context, id, dir string) (string, error) {
+			i.ReadNativeAt = func(_ context.Context, gotAgent, id, dir string) (string, error) {
 				reads++
-				if id != nativeFixture || !samePath(dir, account) {
+				if gotAgent != agent || id != nativeFixture || !samePath(dir, account) {
 					t.Fatalf("read wrong native ID or account: %q %q", id, dir)
 				}
 				if tc.accountChanged {
@@ -85,12 +96,12 @@ func TestBoundCodexProtectionReadsOnlyVerifiedChatAccount(t *testing.T) {
 						return providerMapping(lookup)
 					case idPrefix + acpChat:
 						title := latest
-						return replyPlace(place{ID: acpChat, Agent: "codex", Kind: "chat", HostID: "local", Title: &title})
+						return replyPlace(place{ID: acpChat, Agent: agent, Kind: "chat", HostID: "local", Title: &title})
 					}
 				}
 				return nil, fmt.Errorf("unexpected Orca command: %v", args)
 			}
-			native, orca, err := i.ReadProtectionTitles(t.Context(), "codex", nativeFixture, handle, acpChat)
+			native, orca, err := i.ReadProtectionTitles(t.Context(), agent, nativeFixture, handle, acpChat)
 			var want error
 			wantReads := 1
 			switch {

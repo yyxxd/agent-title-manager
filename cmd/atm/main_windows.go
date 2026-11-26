@@ -107,8 +107,7 @@ func orcaIntegration(plugins *pluginmgr.Manager) *orcasync.Integration {
 			return plugins.Enabled(ctx, agent)
 		},
 		Changes: plugins.Changes, Validate: plugins.ValidateNativeHandle,
-		ReadNative: plugins.ReadNativeTitle, ReadScoped: plugins.ReadAntigravityTitleAt,
-		ReadCodexAt: plugins.ReadCodexTitleAt,
+		ReadNative: plugins.ReadNativeTitle, ReadNativeAt: plugins.ReadNativeTitleAt,
 	}
 }
 

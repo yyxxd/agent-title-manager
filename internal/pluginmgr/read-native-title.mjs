@@ -18,8 +18,8 @@ async function readCodex() {
   }, env);
 }
 
-function findClaudeTranscript() {
-  const root = join(hostDir, "projects");
+function findClaudeTranscript(home) {
+  const root = join(home, "projects");
   const projects = opendirSync(root);
   let found;
   try {
@@ -39,9 +39,10 @@ function findClaudeTranscript() {
 
 async function readClaude() {
   const { identify, readObservedTitle } = await importAdapter("transcript.mjs");
-  const path = findClaudeTranscript();
+  const home = explicitRoot || hostDir;
+  const path = findClaudeTranscript(home);
   if (!path) return undefined;
-  const session = identify({ session_id: sessionId, transcript_path: path }, hostDir);
+  const session = identify({ session_id: sessionId, transcript_path: path }, home);
   return session && readObservedTitle(session);
 }
 

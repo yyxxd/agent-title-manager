@@ -58,8 +58,11 @@ func (m *Manager) ReadNativeTitle(ctx context.Context, agent, sessionID, handle 
 	return adapterTitle(ctx, node, agent, sessionID, m.packageDir(r.release), h.dir)
 }
 
-func (m *Manager) ReadAntigravityTitleAt(ctx context.Context, id, root string) (string, error) {
-	dir, err := m.AntigravityPackage(ctx)
+func (m *Manager) ReadNativeTitleAt(ctx context.Context, agent, id, root string) (string, error) {
+	if !filepath.IsAbs(root) || (agent != "codex" && agent != "claude" && agent != "antigravity") {
+		return "", ErrNativePending
+	}
+	dir, err := m.observerPackage(ctx, agent)
 	if err != nil {
 		return "", err
 	}
@@ -70,25 +73,7 @@ func (m *Manager) ReadAntigravityTitleAt(ctx context.Context, id, root string) (
 	if err != nil {
 		return "", err
 	}
-	return adapterTitle(ctx, node, "antigravity", id, dir, "", root)
-}
-
-func (m *Manager) ReadCodexTitleAt(ctx context.Context, id, root string) (string, error) {
-	if !filepath.IsAbs(root) {
-		return "", ErrNativePending
-	}
-	dir, err := m.CodexPackage(ctx)
-	if err != nil {
-		return "", err
-	}
-	if dir == "" {
-		return "", ErrNativePending
-	}
-	node, err := m.findExecutable("node.exe", true)
-	if err != nil {
-		return "", err
-	}
-	return adapterTitle(ctx, node, "codex", id, dir, "", root)
+	return adapterTitle(ctx, node, agent, id, dir, "", root)
 }
 
 func adapterTitle(ctx context.Context, node, agent, sessionID, adapterDir, hostDir string, scope ...string) (string, error) {
