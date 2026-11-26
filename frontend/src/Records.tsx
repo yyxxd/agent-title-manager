@@ -375,7 +375,7 @@ export function Records({
                             type="button"
                             className="btn btn-sm btn-primary"
                             disabled={action.busy}
-                            onClick={() => sync(item.id, 'retry')}
+                            onClick={() => sync(item.syncRetryId ?? item.id, 'retry')}
                           >
                             重试同步
                           </button>

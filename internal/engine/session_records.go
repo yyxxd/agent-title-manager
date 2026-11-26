@@ -34,13 +34,18 @@ func groupedRecords(ctx context.Context, tx *sql.Tx, local *time.Location, p lis
 			MAX(` + renameEvidence + `) AS has_change
 		FROM events e JOIN matches USING(agent,session_id) GROUP BY e.agent,e.session_id
 	), current AS (
-		SELECT g.*, e.rowid AS representative,
-			(e.reminder_read=0 AND ` + groupedAttention + `) AS unread, ` + groupedAttention + ` AS attention,
-			e.status='failed' AS failed,` + recordRetryable + ` AS sync_failed,
+		SELECT g.*, e.rowid AS representative, f.rowid AS retry,
+			((e.reminder_read=0 AND ` + groupedAttention + `) OR coalesce(f.reminder_read=0,0)) AS unread,
+			(` + groupedAttention + ` OR f.rowid IS NOT NULL) AS attention,
+			e.status='failed' AS failed,f.rowid IS NOT NULL AS sync_failed,
 			` + recordAdoptable + ` AS protected
 		FROM summary g JOIN events e ON e.rowid=(
 			SELECT rowid FROM events e WHERE e.agent=g.agent AND e.session_id=g.session_id
 			ORDER BY (e.status='kept' AND e.decision_reason='pending_proposal') ASC,e.created DESC,e.rowid DESC LIMIT 1
+		)
+		LEFT JOIN events f ON f.rowid=(
+			SELECT e.rowid FROM events e WHERE e.agent=g.agent AND e.session_id=g.session_id AND ` + recordRetryable + `
+			ORDER BY e.created DESC,e.rowid DESC LIMIT 1
 		)
 	)`
 	result := recordList{Items: []record{}, TestAttempts: []attemptRecord{}}
@@ -58,7 +63,7 @@ func groupedRecords(ctx context.Context, tx *sql.Tx, local *time.Location, p lis
 		items = items[:limit]
 		result.Next = &items[limit-1].cursor
 	}
-	if err := listAttempts(ctx, tx, local, items); err != nil {
+	if err := listSessionAttempts(ctx, tx, local, items); err != nil {
 		return recordList{}, err
 	}
 	for i := range items {
@@ -73,7 +78,7 @@ func groupedRecords(ctx context.Context, tx *sql.Tx, local *time.Location, p lis
 	return result, err
 }
 
-const groupedAttention = `(e.status IN ('failed','needs_review') OR ` + recordRetryable + `
+const groupedAttention = `(e.status IN ('failed','needs_review')
 	OR (e.sync_status='blocked' AND ` + currentSyncSession + `) OR ` + recordAdoptable + `)`
 
 func groupedPage(ctx context.Context, tx *sql.Tx, local *time.Location, cte string, args []any, p listRequest, limit int) ([]record, error) {
@@ -96,12 +101,15 @@ func groupedPage(ctx context.Context, tx *sql.Tx, local *time.Location, cte stri
 		args = append(args, p.Before.Updated, p.Before.RowID)
 	}
 	rows, err := tx.QueryContext(ctx, cte+`
-		SELECT e.id,g.agent,g.session_id,e.revision,s.title,e.base,e.status,e.sync_status,e.sync_error,e.updated,
+		SELECT e.id,g.agent,g.session_id,e.revision,s.title,e.base,e.status,
+			coalesce(f.sync_status,CASE WHEN e.sync_status='failed' THEN '' ELSE e.sync_status END),
+			coalesce(f.sync_error,CASE WHEN e.sync_status='failed' THEN '' ELSE e.sync_error END),e.updated,
 			e.failure_code,e.failure_length,e.failure_limit,e.decision_reason,g.first_row,e.orca_origin,`+recordAdoptable+`,
 			s.orca_id,s.protection_reason,s.session_kind,g.checked,`+order+`,g.sync_failed,
-			CASE WHEN e.status='needs_review' THEN e.title ELSE '' END
+			CASE WHEN e.status='needs_review' THEN e.title ELSE '' END,coalesce(f.id,'')
 		FROM current g JOIN sessions s USING(agent,session_id)
-		JOIN events e ON e.rowid=g.representative`+where+` ORDER BY `+order+` DESC,g.first_row DESC LIMIT ?`, append(args, limit)...)
+		JOIN events e ON e.rowid=g.representative LEFT JOIN events f ON f.rowid=g.retry`+where+`
+		ORDER BY `+order+` DESC,g.first_row DESC LIMIT ?`, append(args, limit)...)
 	if err != nil {
 		return nil, err
 	}
@@ -112,7 +120,7 @@ func groupedPage(ctx context.Context, tx *sql.Tx, local *time.Location, cte stri
 		var protection string
 		var canRetry bool
 		var checked, sortTime int64
-		if err := scanRecord(rows, &item, local, &item.orcaID, &protection, &item.Kind, &checked, &sortTime, &canRetry, &item.SuggestedTitle); err != nil {
+		if err := scanRecord(rows, &item, local, &item.orcaID, &protection, &item.Kind, &checked, &sortTime, &canRetry, &item.SuggestedTitle, &item.SyncRetryID); err != nil {
 			return nil, err
 		}
 		item.SessionKey = base64.RawURLEncoding.EncodeToString([]byte(item.Agent + "\x00" + item.SessionID))
@@ -129,6 +137,25 @@ func groupedPage(ctx context.Context, tx *sql.Tx, local *time.Location, cte stri
 		items = append(items, item)
 	}
 	return items, rows.Err()
+}
+
+func listSessionAttempts(ctx context.Context, tx *sql.Tx, local *time.Location, items []record) error {
+	if len(items) == 0 {
+		return nil
+	}
+	index := make(map[string]int, len(items))
+	args := make([]any, 0, 2*len(items))
+	for i, item := range items {
+		index[item.Agent+"\x00"+item.SessionID] = i
+		args = append(args, item.Agent, item.SessionID)
+	}
+	return readAttempts(ctx, tx, local, `SELECT e.agent || char(0) || e.session_id,a.event_id,`+attemptColumns+`
+		FROM events e JOIN attempts a ON a.event_id=e.id AND a.agent=e.agent
+		WHERE (e.agent,e.session_id) IN (VALUES `+strings.TrimSuffix(strings.Repeat("(?,?),", len(items)), ",")+`)
+		ORDER BY a.id`, args, func(key string, attempt attemptRecord) {
+		i := index[key]
+		items[i].Attempts = append(items[i].Attempts, attempt)
+	})
 }
 
 func listChanges(ctx context.Context, tx *sql.Tx, local *time.Location, items []record) error {

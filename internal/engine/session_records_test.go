@@ -52,6 +52,87 @@ func TestSessionRecordsUseVerifiedRenameTimeAndStableIdentity(t *testing.T) {
 	}
 }
 
+func TestGroupedRecordsKeepActionableSyncAndModelHistory(t *testing.T) {
+	targets := make(chan SyncTarget, 1)
+	e := engineAt(t, t.TempDir(), func(ctx context.Context, id, before, title string) error {
+		target, _ := SyncTargetFromContext(ctx)
+		targets <- target
+		if id != "orca" || before != "previous" || title != "Same" {
+			t.Errorf("unexpected sync: %s %s %s", id, before, title)
+		}
+		return nil
+	})
+	_, err := e.db.Exec(`
+		INSERT INTO sessions(agent,session_id,revision,title,manual,orca_id) VALUES
+		('codex','same','keep','Same',0,'orca'),('claude','same','other','Same',0,''),
+		('codex','repaired','check','Same',0,'repair'),('codex','replaced','check','Next',0,'replace');
+		INSERT INTO events(id,agent,session_id,revision,base,title,status,orca_id,orca_base,orca_origin,sync_status,sync_error,created,updated,finalized,decision_reason,native_handle) VALUES
+		('duplicate','codex','same','duplicate','','Same','applied','orca','previous','auto','failed','old',5,6,6,'','old'),
+		('rename','codex','same','rename','','Same','applied','orca','previous','auto','failed','needs retry',10,11,11,'','correct'),
+		('keep','codex','same','keep','Same','Same','kept','orca',NULL,'auto','','',30,30,30,'throttled',''),
+		('other','claude','same','other','','Same','applied','',NULL,'','','',25,25,25,'',''),
+		('repair-old','codex','repaired','r1','','Same','applied','repair','previous','auto','failed','old',10,11,11,'',''),
+		('repair-new','codex','repaired','r2','Same','Same','native','repair','Same','auto','unchanged','',15,16,16,'',''),
+		('replace-old','codex','replaced','r1','','Same','applied','replace','previous','auto','failed','old',10,11,11,'',''),
+		('replace-new','codex','replaced','r2','Same','Next','applied','replace','Same','auto','synced','',20,21,21,'','');
+		INSERT INTO attempts(event_id,agent,provider,model,source,requested_tier,status,started,input_tokens,output_tokens,cached_tokens) VALUES
+		('rename','codex','api','first','api','standard','completed',10,100,20,6),
+		('rename','codex','api','second','api','standard','completed',11,200,30,8),
+		('other','claude','api','different','api','standard','completed',25,600,40,0),
+		('rename','claude','api','misattributed','api','standard','completed',11,600,40,0);
+	`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Run("sync", func(t *testing.T) {
+		list := func() recordList {
+			return call[recordList](t, e, "records.list", listRequest{Grouped: true, Filter: "attention"})
+		}
+		page := list()
+		if len(page.Items) != 1 || page.Counts.Attention != 1 || page.Counts.Unread != 1 || page.Counts.SyncFailed != 1 {
+			t.Fatalf("expected one actionable sync failure, got %+v", page)
+		}
+		if row := page.Items[0]; row.ID != "keep" || row.SyncRetryID != "rename" || row.SyncStatus != "failed" || row.SyncError != "needs retry" ||
+			row.CanRetry == nil || !*row.CanRetry {
+			t.Fatalf("wrong synchronization state: %+v", row)
+		}
+		for _, id := range []string{"duplicate", "repair-old", "replace-old"} {
+			if call[accepted](t, e, "sync.retry", idRequest{id}).Accepted {
+				t.Fatalf("obsolete sync failure %s is still eligible", id)
+			}
+		}
+		if !call[accepted](t, e, "sync.retry", idRequest{page.Items[0].SyncRetryID}).Accepted {
+			t.Fatal("current sync was not queued")
+		}
+		eventually(t, func() bool {
+			var status string
+			return e.db.QueryRow("SELECT sync_status FROM events WHERE id='rename'").Scan(&status) == nil && status == "synced"
+		})
+		if got := <-targets; got != (SyncTarget{"codex", "same", "correct", "Same"}) {
+			t.Fatalf("wrong native target: %+v", got)
+		}
+		after := list()
+		if len(after.Items) != 0 || after.Counts.Attention != 0 || after.Counts.Unread != 0 || after.Counts.SyncFailed != 0 {
+			t.Fatalf("completed failure is still shown: %+v", after)
+		}
+		var attempts int
+		if err := e.db.QueryRow("SELECT COUNT(*) FROM attempts").Scan(&attempts); err != nil || attempts != 4 {
+			t.Fatalf("sync retry changed model history: %d, %v", attempts, err)
+		}
+	})
+	t.Run("attempts", func(t *testing.T) {
+		page := call[recordList](t, e, "records.list", listRequest{Grouped: true, Filter: "all", Query: "first"})
+		if len(page.Items) != 1 || page.Items[0].ID != "keep" || len(page.Items[0].Attempts) != 2 {
+			t.Fatalf("historical attempts not available on the current row: %+v", page)
+		}
+		attempts := page.Items[0].Attempts
+		if attempts[0].Model != "first" || attempts[1].Model != "second" || *attempts[0].InputTokens != 100 ||
+			*attempts[1].OutputTokens != 30 || *attempts[1].CachedTokens != 8 {
+			t.Fatalf("wrong attempt usage or ordering: %+v", attempts)
+		}
+	})
+}
+
 func TestManualLockAndReleaseFencePendingTurns(t *testing.T) {
 	dir := t.TempDir()
 	e := engineAt(t, dir, nil)

@@ -149,6 +149,7 @@ export type RecordItem = {
   changedAt?: string;
   changedFound?: boolean;
   canRetry?: boolean;
+  syncRetryId?: string;
   identityName?: string;
   checkedAt?: string;
   suggestedTitle?: string;

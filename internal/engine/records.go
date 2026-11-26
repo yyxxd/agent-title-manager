@@ -72,6 +72,7 @@ type record struct {
 	ChangedAt      string          `json:"changedAt,omitempty"`
 	ChangedFound   bool            `json:"changedFound,omitempty"`
 	CanRetry       *bool           `json:"canRetry,omitempty"`
+	SyncRetryID    string          `json:"syncRetryId,omitempty"`
 	IdentityName   string          `json:"identityName,omitempty"`
 	CheckedAt      string          `json:"checkedAt,omitempty"`
 	Changes        []recordChange  `json:"changes,omitempty"`
@@ -93,14 +94,15 @@ type attemptRecord struct {
 	OutputTokens  *int64 `json:"outputTokens"`
 	CachedTokens  *int64 `json:"cachedTokens"`
 	UsageKnown    bool   `json:"usageKnown"`
+	eventID       string
 }
 
 const recordAdoptable = `(e.sync_status='protected' AND e.orca_id<>'' AND e.orca_base IS NOT NULL AND ` + currentSyncSession + `)`
-const recordRetryable = `(e.sync_status='failed' AND ` + currentSyncSession + `)`
 const recordAttention = `(e.status IN ('failed','needs_review') OR e.sync_status IN ('failed','blocked') OR ` + recordAdoptable + `)`
 const recordUnread = `(e.reminder_read=0 AND ` + recordAttention + `)`
-const attemptFields = `SELECT event_id,provider,model,source,requested_tier,actual_tier,status,started,
-	input_tokens,output_tokens,cached_tokens,actual_model FROM attempts`
+const attemptColumns = `a.provider,a.model,a.source,a.requested_tier,a.actual_tier,a.status,a.started,
+	a.input_tokens,a.output_tokens,a.cached_tokens,a.actual_model`
+const attemptFields = `SELECT a.event_id,a.event_id,` + attemptColumns + ` FROM attempts a`
 
 func recordSearch(query string) (string, []any) {
 	query = strings.ToLower(strings.TrimSpace(query))
@@ -109,7 +111,7 @@ func recordSearch(query string) (string, []any) {
 	}
 	return ` WHERE (instr(atm_lower(e.title || ' ' || e.base || ' ' || e.agent || ' ' || e.session_id || ' ' || e.sync_error),?)>0
 		OR (e.agent='claude' AND instr('claude code',?)>0)
-		OR EXISTS(SELECT 1 FROM attempts a WHERE a.event_id=e.id AND
+		OR EXISTS(SELECT 1 FROM attempts a WHERE a.event_id=e.id AND a.agent=e.agent AND
 			(instr(atm_lower(a.model),?)>0 OR instr(atm_lower(a.actual_model),?)>0)))`, []any{query, query, query, query}
 }
 
@@ -220,9 +222,14 @@ func (item *record) addLegacyFailure() {
 		return
 	}
 	code := failureUnrecorded
-	if len(item.Attempts) > 0 && item.Attempts[len(item.Attempts)-1].Status == "completed" {
-		// 旧版只有模型完成后未通过标题校验，才会把该命名事件标记为失败。
-		code = failureLegacyTitle
+	for i := len(item.Attempts) - 1; i >= 0; i-- {
+		if attempt := item.Attempts[i]; attempt.eventID == item.ID {
+			// 旧版只有模型完成后未通过标题校验，才会把该命名事件标记为失败。
+			if attempt.Status == "completed" {
+				code = failureLegacyTitle
+			}
+			break
+		}
 	}
 	item.Failure = &failureReason{Code: code}
 }
@@ -252,9 +259,9 @@ func readAttempts(ctx context.Context, tx *sql.Tx, local *time.Location, query s
 	defer rows.Close()
 	for rows.Next() {
 		var item attemptRecord
-		var id sql.NullString
+		var id, eventID sql.NullString
 		var started int64
-		err = rows.Scan(&id, &item.Provider, &item.Model, &item.Source, &item.RequestedTier, &item.ActualTier,
+		err = rows.Scan(&id, &eventID, &item.Provider, &item.Model, &item.Source, &item.RequestedTier, &item.ActualTier,
 			&item.Status, &started, &item.InputTokens, &item.OutputTokens, &item.CachedTokens, &item.ActualModel)
 		if err != nil {
 			return err
@@ -263,6 +270,7 @@ func readAttempts(ctx context.Context, tx *sql.Tx, local *time.Location, query s
 			item.ActualTier = "unknown"
 		}
 		item.StartedAt = formatTime(started, local)
+		item.eventID = eventID.String
 		item.UsageKnown = item.InputTokens != nil && item.OutputTokens != nil && item.CachedTokens != nil
 		add(id.String, item)
 	}

@@ -33,6 +33,13 @@ type idRequest struct {
 const currentSyncSession = `EXISTS(SELECT 1 FROM sessions s WHERE s.agent=e.agent
 	AND s.session_id=e.session_id AND s.title=e.title AND s.orca_id=e.orca_id)`
 
+// A newer synchronization for the same title supersedes an older failure. Checks
+// with no synchronization state leave the earlier failure actionable.
+const recordRetryable = `(e.sync_status='failed' AND ` + currentSyncSession + ` AND NOT EXISTS(
+	SELECT 1 FROM events later WHERE later.agent=e.agent AND later.session_id=e.session_id
+	AND later.orca_id=e.orca_id AND later.title=e.title AND (later.created,later.rowid)>(e.created,e.rowid)
+	AND later.sync_status IN ('pending','writing','failed','synced','unchanged','protected','blocked')))`
+
 func syncPolicy(id string, expected *string, origin, managed, title string) string {
 	switch {
 	case id == "" || expected == nil:
@@ -131,7 +138,7 @@ func (e *Engine) resync(ctx context.Context, p idRequest, adopt bool) (accepted,
 	if p.ID == "" || !validString(p.ID, 128) {
 		return accepted{}, errors.New("记录 ID 无效")
 	}
-	eligible := `e.sync_status='failed' AND ` + currentSyncSession
+	eligible := recordRetryable
 	if adopt {
 		eligible = recordAdoptable
 	}
