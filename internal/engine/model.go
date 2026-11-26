@@ -39,14 +39,13 @@ type modelJob struct {
 }
 
 type attemptRequest struct {
-	eventID    *string
-	agent      string
-	provider   string
-	settings   Settings
-	secret     []byte
-	payload    []byte
-	feedback   *titleRetry
-	suggestion bool
+	eventID  *string
+	agent    string
+	provider string
+	settings Settings
+	secret   []byte
+	payload  []byte
+	feedback *titleRetry
 }
 
 const currentModel = `s.title=e.base AND s.manual=0 AND (s.revision=e.revision OR e.base='')`
@@ -241,7 +240,7 @@ var errStale = errors.New("会话已发生变化")
 var errDisabled = errors.New("命名插件已停用")
 
 func (e *Engine) attemptEnabled(ctx context.Context, req attemptRequest) bool {
-	return req.eventID == nil && !req.suggestion || e.isEnabled == nil || e.isEnabled(ctx, req.agent)
+	return req.eventID == nil || e.isEnabled == nil || e.isEnabled(ctx, req.agent)
 }
 
 func (e *Engine) startAttempt(ctx context.Context, req attemptRequest) (int64, error) {
@@ -260,8 +259,8 @@ func (e *Engine) startAttempt(ctx context.Context, req attemptRequest) (int64, e
 			}
 		}
 		model, source, tier := providerInfo(req.provider, req.settings)
-		result, err := tx.ExecContext(ctx, `INSERT INTO attempts(event_id,agent,provider,model,source,requested_tier,status,started,suggestion)
-			VALUES(?,?,?,?,?,?,'running',?,?)`, req.eventID, req.agent, req.provider, model, source, tier, e.now().UnixMilli(), req.suggestion)
+		result, err := tx.ExecContext(ctx, `INSERT INTO attempts(event_id,agent,provider,model,source,requested_tier,status,started)
+			VALUES(?,?,?,?,?,?,'running',?)`, req.eventID, req.agent, req.provider, model, source, tier, e.now().UnixMilli())
 		if err != nil {
 			return 0, err
 		}

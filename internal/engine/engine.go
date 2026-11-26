@@ -36,7 +36,6 @@ type Engine struct {
 	now                 func() time.Time
 	activeMu            sync.Mutex
 	activeModel         *activeModel
-	suggestions         sync.Map
 }
 
 // Open starts one durable worker per queue. dataDir belongs to a single running engine.

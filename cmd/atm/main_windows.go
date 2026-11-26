@@ -61,9 +61,8 @@ func run() error {
 			OrcaEnabled:        orca.Active, ResolveTitleOrigin: orca.ResolveTitleOrigin,
 			RetryBinding: orca.RetryBinding, NativeTitleMatches: orca.NativeTitleMatches,
 			ReadNativeTitle: plugins.ReadNativeTitle,
-			SuggestTitle:    core.SuggestTitle, ReadNamingSnapshot: plugins.ReadNamingSnapshot,
-			RecordNames:   orca.RecordNames,
-			AttachBinding: core.AttachBinding, Close: core.Close,
+			RecordNames:     orca.RecordNames,
+			AttachBinding:   core.AttachBinding, Close: core.Close,
 			Observe: func(ctx context.Context) {
 				desktop.RunObservers(ctx, plugins.Changes,
 					desktop.Observer{Name: "Antigravity Desktop", Select: plugins.DesktopObserverEntry, Run: plugins.RunDesktopObserver},

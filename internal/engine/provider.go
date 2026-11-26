@@ -143,9 +143,6 @@ func providerPrompt(payload []byte, maxLength int, feedback *titleRetry) (string
 	if data["connectivity_test"] == true {
 		policy = `这是一个连接测试。只返回 {"action":"keep","title":"","reason":""}。`
 	}
-	if data["title_suggestion"] == true {
-		policy += "\n这是用户主动请求的标题建议。根据现有对话给出一个不同于当前标题的有效名称，沿用标题格式与长度规则，不添加对话里没有的信息。"
-	}
 	if feedback != nil {
 		policy += "\n上一次改名未通过校验。retry_feedback.previous_title 是上一次标题的原文，actual_length 是它的 Unicode 码点数。"
 		switch feedback.FailureCode {

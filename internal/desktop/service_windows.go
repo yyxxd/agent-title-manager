@@ -22,8 +22,6 @@ type Backend struct {
 	ObserveCodexHook   func(context.Context, json.RawMessage) (any, error)
 	AutoUpdateBuiltins func(context.Context) (any, error)
 	Enabled            func(context.Context, string) (bool, error)
-	SuggestTitle       func(context.Context, string, func(context.Context, engine.SuggestionTarget) (engine.SuggestionObservation, error)) (engine.TitleSuggestion, error)
-	ReadNamingSnapshot func(context.Context, string, string, string, string) (engine.NamingSnapshot, error)
 	OrcaEnabled        func(context.Context, string) bool
 	ResolveTitleOrigin func(context.Context, string, string, string, string) (orcasync.Binding, bool)
 	RetryBinding       func(context.Context, string, string, string, string) (orcasync.Binding, bool)
@@ -146,8 +144,6 @@ func (s *Service) Call(ctx context.Context, method string, body string) (any, er
 		return s.publicSettings(ctx, method, json.RawMessage(body))
 	case method == "records.unlock":
 		return s.unlockRecord(ctx, json.RawMessage(body))
-	case method == "records.suggestTitle":
-		return s.suggestTitle(ctx, json.RawMessage(body))
 	case method == "records.list" || method == "records.open":
 		value, err := s.backend.Engine(ctx, method, json.RawMessage(body))
 		var request struct {

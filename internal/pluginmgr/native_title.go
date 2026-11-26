@@ -26,37 +26,29 @@ func (m *Manager) ReadNativeTitle(ctx context.Context, agent, sessionID, handle 
 	if agent == "pi" {
 		return ReadPiTitle(ctx, sessionID, handle)
 	}
-	node, adapterDir, hostDir, err := m.nativeReader(agent, sessionID, handle)
-	if err != nil {
-		return "", err
-	}
-	return adapterTitle(ctx, node, agent, sessionID, adapterDir, hostDir)
-}
-
-func (m *Manager) nativeReader(agent, sessionID, handle string) (string, string, string, error) {
 	if agent != "codex" && agent != "claude" && agent != "antigravity" {
-		return "", "", "", ErrNativePending
+		return "", ErrNativePending
 	}
 	if agent == "antigravity" && sessionID != handle {
-		return "", "", "", ErrNativePending
+		return "", ErrNativePending
 	}
 	state, err := m.load()
 	if err != nil {
-		return "", "", "", err
+		return "", err
 	}
 	r := state.Items[agent]
 	if !r.Enabled || r.Dir == "" || r.Manifest.ID != agent || state.Pending != nil && state.Pending.ID == agent {
-		return "", "", "", ErrNativePending
+		return "", ErrNativePending
 	}
 	node, err := m.findExecutable("node.exe", true)
 	if err != nil {
-		return "", "", "", err
+		return "", err
 	}
 	h, err := resolveHost(agent)
 	if err != nil {
-		return "", "", "", err
+		return "", err
 	}
-	return node, m.packageDir(r.release), h.dir, nil
+	return adapterTitle(ctx, node, agent, sessionID, m.packageDir(r.release), h.dir)
 }
 
 func (m *Manager) ReadAntigravityTitleAt(ctx context.Context, id, root string) (string, error) {
@@ -75,14 +67,6 @@ func (m *Manager) ReadAntigravityTitleAt(ctx context.Context, id, root string) (
 }
 
 func adapterTitle(ctx context.Context, node, agent, sessionID, adapterDir, hostDir string, scope ...string) (string, error) {
-	wire, err := adapterOutput(ctx, node, agent, sessionID, adapterDir, hostDir, scope...)
-	if err != nil {
-		return "", err
-	}
-	return decodeAdapterTitle(wire)
-}
-
-func adapterOutput(ctx context.Context, node, agent, sessionID, adapterDir, hostDir string, scope ...string) ([]byte, error) {
 	ctx, cancel := context.WithTimeout(ctx, 6*time.Second)
 	defer cancel()
 	cmd := exec.CommandContext(ctx, node, append([]string{"--input-type=module", "-e", nativeTitleScript, agent, sessionID, adapterDir, hostDir}, scope...)...)
@@ -90,12 +74,8 @@ func adapterOutput(ctx context.Context, node, agent, sessionID, adapterDir, host
 	cmd.Env = withoutNodeInjection(cmd.Environ())
 	wire, err := cmd.Output()
 	if err != nil {
-		return nil, ErrNativePending
+		return "", ErrNativePending
 	}
-	return wire, nil
-}
-
-func decodeAdapterTitle(wire []byte) (string, error) {
 	var reply struct {
 		Title *string `json:"title"`
 	}
