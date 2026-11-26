@@ -50,7 +50,7 @@ func testACPObserver(t *testing.T, home, account string) {
 		account = filepath.Join(home, "antigravity-chat")
 	}
 	layout := "antigravity-cli"
-	if samePath(filepath.Dir(account), home) && filepath.Base(account) == "antigravity-chat" {
+	if filepath.Base(account) == "antigravity-chat" {
 		layout = "antigravity-acp"
 	}
 	data := filepath.Join(account, layout)
@@ -94,6 +94,10 @@ func testACPObserver(t *testing.T, home, account string) {
 		default:
 			return nil, fmt.Errorf("unexpected command: %v", args)
 		}
+	}
+	rows, err := i.readACPSettlements(t.Context(), now.Add(-time.Second).UnixMilli())
+	if err != nil || len(rows) != 1 || rows[0].Orca != acpChat || !samePath(rows[0].Root, data) {
+		t.Fatalf("wrong scoped ACP settlement: %+v, %v", rows, err)
 	}
 	ctx, cancel := context.WithTimeout(t.Context(), 7*time.Second)
 	defer cancel()

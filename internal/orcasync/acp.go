@@ -157,11 +157,10 @@ func acpAccountRoot(database, account string) (string, error) {
 		return "", ErrNativePending
 	}
 	legacy := filepath.Join(filepath.Dir(database), "antigravity-chat")
-	layout := "antigravity-cli"
+	root := filepath.Join(account, "antigravity-cli")
 	if samePath(account, legacy) {
-		layout = "antigravity-acp"
+		root = filepath.Join(legacy, "antigravity-acp")
 	}
-	root := filepath.Join(account, layout)
 	info, err := os.Lstat(root)
 	if err != nil || !info.IsDir() || !unredirectedPath(root, info) {
 		return "", fmt.Errorf("%w: 无法确认 Antigravity 账户目录", ErrNativePending)
