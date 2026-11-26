@@ -60,9 +60,9 @@ func run() error {
 			AutoUpdateBuiltins: func(ctx context.Context) (any, error) { return plugins.AutoUpdateBuiltins(ctx) },
 			OrcaEnabled:        orca.Active, ResolveTitleOrigin: orca.ResolveTitleOrigin,
 			RetryBinding: orca.RetryBinding, NativeTitleMatches: orca.NativeTitleMatches,
-			ReadNativeTitle: plugins.ReadNativeTitle,
-			RecordNames:     orca.RecordNames,
-			AttachBinding:   core.AttachBinding, Close: core.Close,
+			ReadProtectionTitles: orca.ReadProtectionTitles,
+			RecordNames:          orca.RecordNames,
+			AttachBinding:        core.AttachBinding, Close: core.Close,
 			Observe: func(ctx context.Context) {
 				desktop.RunObservers(ctx, plugins.Changes,
 					desktop.Observer{Name: "Antigravity Desktop", Select: plugins.DesktopObserverEntry, Run: plugins.RunDesktopObserver},

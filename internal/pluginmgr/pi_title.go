@@ -6,6 +6,7 @@ import (
 	"context"
 	"encoding/json"
 	"io"
+	"io/fs"
 	"os"
 	"path/filepath"
 	"regexp"
@@ -111,15 +112,11 @@ func openPiSession(ctx context.Context, id, handle string) (*os.File, error) {
 		!strings.HasSuffix(filepath.Base(handle), "_"+id+".jsonl") {
 		return nil, ErrNativePending
 	}
-	piHome := os.Getenv("PI_CODING_AGENT_DIR")
-	if piHome == "" {
-		home, err := os.UserHomeDir()
-		if err != nil {
-			return nil, err
-		}
-		piHome = filepath.Join(home, ".pi", "agent")
+	host, err := resolveHost("pi")
+	if err != nil {
+		return nil, err
 	}
-	sessionRoot := filepath.Join(piHome, "sessions")
+	sessionRoot := filepath.Join(host.dir, "sessions")
 	rel, err := filepath.Rel(sessionRoot, handle)
 	if err != nil || !filepath.IsAbs(sessionRoot) || !filepath.IsLocal(rel) {
 		return nil, ErrNativePending
@@ -143,6 +140,58 @@ func openPiSession(ctx context.Context, id, handle string) (*os.File, error) {
 		return nil, ErrNativePending
 	}
 	return file, nil
+}
+
+func locatePiTitleSession(ctx context.Context, id string) (string, error) {
+	if !piSessionID.MatchString(id) {
+		return "", ErrNativePending
+	}
+	host, err := resolveHost("pi")
+	if err != nil {
+		return "", err
+	}
+	dir := filepath.Join(host.dir, "sessions")
+	root, err := os.OpenRoot(dir)
+	if err != nil {
+		return "", ErrNativePending
+	}
+	defer root.Close()
+	entries, err := fs.ReadDir(root.FS(), ".")
+	if err != nil {
+		return "", ErrNativePending
+	}
+	var found string
+	accept := func(group string, file fs.DirEntry) bool {
+		if !strings.HasSuffix(file.Name(), "_"+id+".jsonl") {
+			return true
+		}
+		if found != "" || !file.Type().IsRegular() {
+			return false
+		}
+		found = filepath.Join(dir, group, file.Name())
+		return true
+	}
+	for _, entry := range entries {
+		if ctx.Err() != nil || !accept("", entry) {
+			return "", ErrNativePending
+		}
+		if !entry.IsDir() {
+			continue
+		}
+		files, err := fs.ReadDir(root.FS(), entry.Name())
+		if err != nil {
+			return "", ErrNativePending
+		}
+		for _, file := range files {
+			if !accept(entry.Name(), file) {
+				return "", ErrNativePending
+			}
+		}
+	}
+	if found == "" {
+		return "", ErrNativePending
+	}
+	return found, nil
 }
 
 func readFirstLine(file *os.File) ([]byte, error) {

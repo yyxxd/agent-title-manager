@@ -17,20 +17,20 @@ import (
 )
 
 type Backend struct {
-	Engine             ipc.Handler
-	Plugins            ipc.Handler
-	ObserveCodexHook   func(context.Context, json.RawMessage) (any, error)
-	AutoUpdateBuiltins func(context.Context) (any, error)
-	Enabled            func(context.Context, string) (bool, error)
-	OrcaEnabled        func(context.Context, string) bool
-	ResolveTitleOrigin func(context.Context, string, string, string, string) (orcasync.Binding, bool)
-	RetryBinding       func(context.Context, string, string, string, string) (orcasync.Binding, bool)
-	NativeTitleMatches func(context.Context, string, string, string, string) (bool, error)
-	ReadNativeTitle    orcasync.NativeTitleReader
-	RecordNames        engine.RecordNameReader
-	AttachBinding      func(context.Context, engine.ConfirmedBinding) error
-	Observe            func(context.Context)
-	Close              func() error
+	Engine               ipc.Handler
+	Plugins              ipc.Handler
+	ObserveCodexHook     func(context.Context, json.RawMessage) (any, error)
+	AutoUpdateBuiltins   func(context.Context) (any, error)
+	Enabled              func(context.Context, string) (bool, error)
+	OrcaEnabled          func(context.Context, string) bool
+	ResolveTitleOrigin   func(context.Context, string, string, string, string) (orcasync.Binding, bool)
+	RetryBinding         func(context.Context, string, string, string, string) (orcasync.Binding, bool)
+	NativeTitleMatches   func(context.Context, string, string, string, string) (bool, error)
+	ReadProtectionTitles func(context.Context, string, string, string, string) (string, *string, error)
+	RecordNames          engine.RecordNameReader
+	AttachBinding        func(context.Context, engine.ConfirmedBinding) error
+	Observe              func(context.Context)
+	Close                func() error
 }
 
 type Service struct {

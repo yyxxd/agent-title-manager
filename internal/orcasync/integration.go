@@ -2,7 +2,6 @@ package orcasync
 
 import (
 	"context"
-	"fmt"
 	"strings"
 	"time"
 )
@@ -157,14 +156,7 @@ func (i *Integration) SyncVerified(ctx context.Context, id, expected, title, age
 			if !i.Active(ctx, agent) {
 				return "", ErrSkipped
 			}
-			root, err := acpRoot(ctx, id, session)
-			if err != nil || i.ReadScoped == nil {
-				return "", fmt.Errorf("%w: 无法确认 Antigravity Chat 数据目录", ErrNativePending)
-			}
-			if !i.Active(ctx, agent) {
-				return "", ErrSkipped
-			}
-			return i.ReadScoped(ctx, session, root)
+			return i.readAntigravityChatTitle(ctx, id, session)
 		},
 	})
 }

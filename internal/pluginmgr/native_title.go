@@ -24,12 +24,18 @@ func (m *Manager) ReadNativeTitle(ctx context.Context, agent, sessionID, handle 
 		return "", ErrNativePending
 	}
 	if agent == "pi" {
+		if handle == "" {
+			handle, err = locatePiTitleSession(ctx, sessionID)
+			if err != nil {
+				return "", err
+			}
+		}
 		return ReadPiTitle(ctx, sessionID, handle)
 	}
 	if agent != "codex" && agent != "claude" && agent != "antigravity" {
 		return "", ErrNativePending
 	}
-	if agent == "antigravity" && sessionID != handle {
+	if agent == "antigravity" && handle != "" && sessionID != handle {
 		return "", ErrNativePending
 	}
 	state, err := m.load()
