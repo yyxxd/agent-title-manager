@@ -108,6 +108,7 @@ func orcaIntegration(plugins *pluginmgr.Manager) *orcasync.Integration {
 		},
 		Changes: plugins.Changes, Validate: plugins.ValidateNativeHandle,
 		ReadNative: plugins.ReadNativeTitle, ReadScoped: plugins.ReadAntigravityTitleAt,
+		ReadCodexAt: plugins.ReadCodexTitleAt,
 	}
 }
 

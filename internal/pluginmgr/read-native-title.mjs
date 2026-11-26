@@ -8,13 +8,14 @@ const importAdapter = (filename) => import(pathToFileURL(join(pluginDir, filenam
 async function readCodex() {
   const { findCodex, withAppServer } = await importAdapter("app-server.mjs");
   const runtime = JSON.parse(readFileSync(join(pluginDir, "atm-runtime.json"), "utf8"));
+  const env = explicitRoot ? { ...process.env, CODEX_HOME: explicitRoot } : process.env;
   return withAppServer(findCodex(runtime.codexPath), async (call) => {
     const { thread } = await call("thread/read", { threadId: sessionId, includeTurns: false });
     if (thread?.id === sessionId) {
       if (thread.name === null) return "";
       if (typeof thread.name === "string") return thread.name;
     }
-  });
+  }, env);
 }
 
 function findClaudeTranscript() {

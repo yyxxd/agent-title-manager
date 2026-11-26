@@ -9,11 +9,12 @@ import (
 type Gate func(context.Context, string) (bool, error)
 
 type Integration struct {
-	Enabled    Gate
-	Changes    func() <-chan struct{}
-	Validate   NativeHandleValidator
-	ReadNative NativeTitleReader
-	ReadScoped func(context.Context, string, string) (string, error)
+	Enabled     Gate
+	Changes     func() <-chan struct{}
+	Validate    NativeHandleValidator
+	ReadNative  NativeTitleReader
+	ReadScoped  func(context.Context, string, string) (string, error)
+	ReadCodexAt func(context.Context, string, string) (string, error)
 
 	run    runCLI
 	origin func(context.Context, string, string, string) string

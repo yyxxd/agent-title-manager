@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"os/exec"
+	"path/filepath"
 	"strings"
 	"time"
 )
@@ -70,6 +71,24 @@ func (m *Manager) ReadAntigravityTitleAt(ctx context.Context, id, root string) (
 		return "", err
 	}
 	return adapterTitle(ctx, node, "antigravity", id, dir, "", root)
+}
+
+func (m *Manager) ReadCodexTitleAt(ctx context.Context, id, root string) (string, error) {
+	if !filepath.IsAbs(root) {
+		return "", ErrNativePending
+	}
+	dir, err := m.CodexPackage(ctx)
+	if err != nil {
+		return "", err
+	}
+	if dir == "" {
+		return "", ErrNativePending
+	}
+	node, err := m.findExecutable("node.exe", true)
+	if err != nil {
+		return "", err
+	}
+	return adapterTitle(ctx, node, "codex", id, dir, "", root)
 }
 
 func adapterTitle(ctx context.Context, node, agent, sessionID, adapterDir, hostDir string, scope ...string) (string, error) {
