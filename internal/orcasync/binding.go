@@ -16,7 +16,8 @@ var (
 type NativeHandleValidator func(context.Context, string, string, string) bool
 
 type Binding struct {
-	ID, Title, Origin, Handle string
+	ID, Title, Origin, Handle, Kind string
+	Surface                         string
 }
 
 func supportsAgent(agent string) bool {
@@ -50,7 +51,7 @@ func mappedPlace(ctx context.Context, run runCLI, agent, id string) (place, erro
 		empty := ""
 		at.Title = &empty
 	}
-	return at, nil
+	return botTitlePlace(ctx, run, at)
 }
 
 func discover(ctx context.Context, run runCLI, validate NativeHandleValidator, agent, session, handle, hint, kind string, delays []time.Duration) (place, bool) {
@@ -71,7 +72,8 @@ func discover(ctx context.Context, run runCLI, validate NativeHandleValidator, a
 		if !validLocator(ctx, validate, agent, session, handle) {
 			continue
 		}
-		probe, cancel := context.WithTimeout(ctx, 1500*time.Millisecond)
+		// Bot 话题还需要通过公开的 Bot 列表和话题列表核对标题。
+		probe, cancel := context.WithTimeout(ctx, 2500*time.Millisecond)
 		id := lookupProviderMapping(probe, run, handle)
 		if id == "" {
 			cancel()

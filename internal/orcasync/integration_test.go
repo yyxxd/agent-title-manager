@@ -111,6 +111,55 @@ func TestTerminalDiscoveryRetriesAndRejectsSplitTabs(t *testing.T) {
 	}
 }
 
+func TestCodexChatRefreshesTitleBeforeClassifyingOrigin(t *testing.T) {
+	for _, tc := range []struct {
+		name   string
+		origin string
+	}{
+		{"automatic", titleAuto},
+		{"manual", titleManual},
+		{"unknown", titleUnknown},
+		{"different chat", ""},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			shows := 0
+			i := Integration{
+				Enabled: alwaysEnabled,
+				origin: func(_ context.Context, _, _, displayed string) string {
+					if displayed == "First message seed" {
+						return titleUnknown
+					}
+					return tc.origin
+				},
+				run: func(_ context.Context, args ...string) ([]byte, error) {
+					if args[2] == nativeFixture {
+						if shows > 0 && tc.origin == "" {
+							return providerMapping("different")
+						}
+						return providerMapping("chat")
+					}
+					shows++
+					title := "First message seed"
+					if shows > 1 {
+						title = "Refreshed title"
+					}
+					return replyPlace(place{ID: "chat", Agent: "codex", Kind: "chat", HostID: "local", Title: &title})
+				},
+			}
+			got, ok := i.ResolveTitleOrigin(t.Context(), "codex", nativeFixture, nativeFixture, "chat")
+			if tc.origin == "" {
+				if ok || shows != 1 {
+					t.Fatalf("accepted changed chat mapping: %+v, found=%v, shows=%d", got, ok, shows)
+				}
+				return
+			}
+			if !ok || got.Title != "Refreshed title" || got.Origin != tc.origin || shows != 2 {
+				t.Fatalf("unexpected refreshed binding: %+v, found=%v, shows=%d", got, ok, shows)
+			}
+		})
+	}
+}
+
 func alwaysEnabled(context.Context, string) (bool, error) { return true, nil }
 
 func replyPlace(at place) ([]byte, error) {

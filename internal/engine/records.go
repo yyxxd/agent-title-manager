@@ -21,10 +21,11 @@ func init() {
 }
 
 type listRequest struct {
-	Limit  int           `json:"limit"`
-	Filter string        `json:"filter"`
-	Query  string        `json:"query"`
-	Before *recordCursor `json:"before"`
+	Limit   int           `json:"limit"`
+	Filter  string        `json:"filter"`
+	Query   string        `json:"query"`
+	Before  *recordCursor `json:"before"`
+	Grouped bool          `json:"grouped"`
 }
 
 type recordCursor struct {
@@ -49,22 +50,35 @@ type recordList struct {
 }
 
 type record struct {
-	ID         string          `json:"id"`
-	Agent      string          `json:"agent"`
-	SessionID  string          `json:"sessionId"`
-	Revision   string          `json:"revision"`
-	Title      string          `json:"title"`
-	BaseTitle  string          `json:"baseTitle"`
-	Status     string          `json:"status"`
-	SyncStatus string          `json:"syncStatus"`
-	SyncError  string          `json:"syncError,omitempty"`
-	OrcaOrigin string          `json:"orcaTitleOrigin,omitempty"`
-	CanAdopt   bool            `json:"canAdopt"`
-	UpdatedAt  string          `json:"updatedAt"`
-	Attempts   []attemptRecord `json:"attempts"`
-	Failure    *failureReason  `json:"failure,omitempty"`
-	Reason     string          `json:"reason,omitempty"`
-	cursor     recordCursor
+	ID             string          `json:"id"`
+	Agent          string          `json:"agent"`
+	SessionID      string          `json:"sessionId"`
+	Revision       string          `json:"revision"`
+	Title          string          `json:"title"`
+	BaseTitle      string          `json:"baseTitle"`
+	Status         string          `json:"status"`
+	SyncStatus     string          `json:"syncStatus"`
+	SyncError      string          `json:"syncError,omitempty"`
+	OrcaOrigin     string          `json:"orcaTitleOrigin,omitempty"`
+	CanAdopt       bool            `json:"canAdopt"`
+	UpdatedAt      string          `json:"updatedAt"`
+	Attempts       []attemptRecord `json:"attempts"`
+	Failure        *failureReason  `json:"failure,omitempty"`
+	Reason         string          `json:"reason,omitempty"`
+	SessionKey     string          `json:"sessionKey,omitempty"`
+	Kind           string          `json:"kind,omitempty"`
+	Locked         bool            `json:"locked,omitempty"`
+	Protected      bool            `json:"protected,omitempty"`
+	ChangedAt      string          `json:"changedAt,omitempty"`
+	ChangedFound   bool            `json:"changedFound,omitempty"`
+	CanRetry       *bool           `json:"canRetry,omitempty"`
+	SyncRetryID    string          `json:"syncRetryId,omitempty"`
+	IdentityName   string          `json:"identityName,omitempty"`
+	CheckedAt      string          `json:"checkedAt,omitempty"`
+	Changes        []recordChange  `json:"changes,omitempty"`
+	SuggestedTitle string          `json:"suggestedTitle,omitempty"`
+	cursor         recordCursor
+	orcaID         string
 }
 
 type attemptRecord struct {
@@ -80,13 +94,15 @@ type attemptRecord struct {
 	OutputTokens  *int64 `json:"outputTokens"`
 	CachedTokens  *int64 `json:"cachedTokens"`
 	UsageKnown    bool   `json:"usageKnown"`
+	eventID       string
 }
 
 const recordAdoptable = `(e.sync_status='protected' AND e.orca_id<>'' AND e.orca_base IS NOT NULL AND ` + currentSyncSession + `)`
-const recordAttention = `(e.status='failed' OR e.sync_status='failed' OR ` + recordAdoptable + `)`
+const recordAttention = `(e.status IN ('failed','needs_review') OR e.sync_status IN ('failed','blocked') OR ` + recordAdoptable + `)`
 const recordUnread = `(e.reminder_read=0 AND ` + recordAttention + `)`
-const attemptFields = `SELECT event_id,provider,model,source,requested_tier,actual_tier,status,started,
-	input_tokens,output_tokens,cached_tokens,actual_model FROM attempts`
+const attemptColumns = `a.provider,a.model,a.source,a.requested_tier,a.actual_tier,a.status,a.started,
+	a.input_tokens,a.output_tokens,a.cached_tokens,a.actual_model`
+const attemptFields = `SELECT a.event_id,a.event_id,` + attemptColumns + ` FROM attempts a`
 
 func recordSearch(query string) (string, []any) {
 	query = strings.ToLower(strings.TrimSpace(query))
@@ -95,7 +111,7 @@ func recordSearch(query string) (string, []any) {
 	}
 	return ` WHERE (instr(atm_lower(e.title || ' ' || e.base || ' ' || e.agent || ' ' || e.session_id || ' ' || e.sync_error),?)>0
 		OR (e.agent='claude' AND instr('claude code',?)>0)
-		OR EXISTS(SELECT 1 FROM attempts a WHERE a.event_id=e.id AND
+		OR EXISTS(SELECT 1 FROM attempts a WHERE a.event_id=e.id AND a.agent=e.agent AND
 			(instr(atm_lower(a.model),?)>0 OR instr(atm_lower(a.actual_model),?)>0)))`, []any{query, query, query, query}
 }
 
@@ -117,6 +133,9 @@ func (e *Engine) records(ctx context.Context, p listRequest, markRead bool) (rec
 			if _, err := tx.ExecContext(ctx, `UPDATE events AS e SET reminder_read=1 WHERE `+recordUnread); err != nil {
 				return recordList{}, err
 			}
+		}
+		if p.Grouped {
+			return groupedRecords(ctx, tx, local, p, limit)
 		}
 		where, args := recordSearch(p.Query)
 		var result recordList
@@ -155,7 +174,7 @@ func (e *Engine) records(ctx context.Context, p listRequest, markRead bool) (rec
 		}
 		result.Items = items
 		result.TestAttempts = []attemptRecord{}
-		err = readAttempts(ctx, tx, local, attemptFields+` WHERE event_id IS NULL ORDER BY id DESC LIMIT ?`,
+		err = readAttempts(ctx, tx, local, attemptFields+` WHERE event_id IS NULL AND suggestion=0 ORDER BY id DESC LIMIT ?`,
 			[]any{limit}, func(_ string, item attemptRecord) { result.TestAttempts = append(result.TestAttempts, item) })
 		return result, err
 	})
@@ -172,21 +191,30 @@ func listRecords(ctx context.Context, tx *sql.Tx, local *time.Location, where st
 	items := []record{}
 	for rows.Next() {
 		var item record
-		var reason failureReason
-		err = rows.Scan(&item.ID, &item.Agent, &item.SessionID, &item.Revision, &item.Title, &item.BaseTitle, &item.Status,
-			&item.SyncStatus, &item.SyncError, &item.cursor.Updated, &reason.Code, &reason.Length, &reason.Limit,
-			&item.Reason, &item.cursor.RowID, &item.OrcaOrigin, &item.CanAdopt)
-		if err != nil {
+		if err := scanRecord(rows, &item, local); err != nil {
 			return nil, err
-		}
-		item.UpdatedAt = formatTime(item.cursor.Updated, local)
-		item.Attempts = []attemptRecord{}
-		if reason.Code != "" {
-			item.Failure = &reason
 		}
 		items = append(items, item)
 	}
 	return items, rows.Err()
+}
+
+func scanRecord(rows *sql.Rows, item *record, local *time.Location, extra ...any) error {
+	var updated int64
+	var reason failureReason
+	fields := []any{&item.ID, &item.Agent, &item.SessionID, &item.Revision, &item.Title, &item.BaseTitle, &item.Status,
+		&item.SyncStatus, &item.SyncError, &updated, &reason.Code, &reason.Length, &reason.Limit,
+		&item.Reason, &item.cursor.RowID, &item.OrcaOrigin, &item.CanAdopt}
+	if err := rows.Scan(append(fields, extra...)...); err != nil {
+		return err
+	}
+	item.UpdatedAt = formatTime(updated, local)
+	item.cursor.Updated = updated
+	item.Attempts = []attemptRecord{}
+	if reason.Code != "" {
+		item.Failure = &reason
+	}
+	return nil
 }
 
 func (item *record) addLegacyFailure() {
@@ -194,9 +222,14 @@ func (item *record) addLegacyFailure() {
 		return
 	}
 	code := failureUnrecorded
-	if len(item.Attempts) > 0 && item.Attempts[len(item.Attempts)-1].Status == "completed" {
-		// 旧版只有模型完成后未通过标题校验，才会把该命名事件标记为失败。
-		code = failureLegacyTitle
+	for i := len(item.Attempts) - 1; i >= 0; i-- {
+		if attempt := item.Attempts[i]; attempt.eventID == item.ID {
+			// 旧版只有模型完成后未通过标题校验，才会把该命名事件标记为失败。
+			if attempt.Status == "completed" {
+				code = failureLegacyTitle
+			}
+			break
+		}
 	}
 	item.Failure = &failureReason{Code: code}
 }
@@ -226,9 +259,9 @@ func readAttempts(ctx context.Context, tx *sql.Tx, local *time.Location, query s
 	defer rows.Close()
 	for rows.Next() {
 		var item attemptRecord
-		var id sql.NullString
+		var id, eventID sql.NullString
 		var started int64
-		err = rows.Scan(&id, &item.Provider, &item.Model, &item.Source, &item.RequestedTier, &item.ActualTier,
+		err = rows.Scan(&id, &eventID, &item.Provider, &item.Model, &item.Source, &item.RequestedTier, &item.ActualTier,
 			&item.Status, &started, &item.InputTokens, &item.OutputTokens, &item.CachedTokens, &item.ActualModel)
 		if err != nil {
 			return err
@@ -237,6 +270,7 @@ func readAttempts(ctx context.Context, tx *sql.Tx, local *time.Location, query s
 			item.ActualTier = "unknown"
 		}
 		item.StartedAt = formatTime(started, local)
+		item.eventID = eventID.String
 		item.UsageKnown = item.InputTokens != nil && item.OutputTokens != nil && item.CachedTokens != nil
 		add(id.String, item)
 	}

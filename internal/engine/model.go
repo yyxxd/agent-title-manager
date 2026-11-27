@@ -60,7 +60,7 @@ func (e *Engine) nextModel() (*modelJob, error) {
 	return transact(ctx, e.db, func(tx *sql.Tx) (*modelJob, error) {
 		var job modelJob
 		err := tx.QueryRowContext(ctx, `SELECT q.id,q.agent,q.session_id,q.base,q.payload FROM events q
-			WHERE q.status='queued' AND NOT EXISTS(SELECT 1 FROM events first
+			WHERE q.status='queued' AND q.review_only=0 AND NOT EXISTS(SELECT 1 FROM events first
 				WHERE first.agent=q.agent AND first.session_id=q.session_id AND first.native_only=0
 				  AND first.base='' AND first.status IN ('candidate','claimed'))
 			ORDER BY q.created,q.rowid LIMIT 1`).Scan(&job.id, &job.agent, &job.sessionID, &job.base, &job.payload)

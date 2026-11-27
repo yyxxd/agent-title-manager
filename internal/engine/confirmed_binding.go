@@ -10,6 +10,24 @@ type ConfirmedBinding struct {
 	ID, Agent, SessionID, Revision, NativeTitle string
 	OrcaID, OrcaTitle, Origin, NativeHandle     string
 	SessionRevision                             string
+	Kind                                        string
+	ReadbackOnly                                bool
+	ProtectionEpoch                             int64
+}
+
+// UnboundAppliedTitle returns an acknowledgement from the Agent's own naming flow.
+func (e *Engine) UnboundAppliedTitle(ctx context.Context, agent, session, revision string) (ConfirmedBinding, error) {
+	p := ConfirmedBinding{Agent: agent, SessionID: session, SessionRevision: revision}
+	err := e.db.QueryRowContext(ctx, `
+		SELECT e.id,e.revision,e.title,s.protection_epoch FROM events e JOIN sessions s USING(agent,session_id)
+		WHERE e.agent=? AND e.session_id=? AND s.revision=? AND s.manual=0 AND e.title=s.title
+		  AND e.title<>'' AND e.status='applied' AND e.sync_status='unbound' AND e.review_only=0
+		ORDER BY e.renamed_at DESC,e.rowid DESC LIMIT 1`, agent, session, revision).
+		Scan(&p.ID, &p.Revision, &p.NativeTitle, &p.ProtectionEpoch)
+	if errors.Is(err, sql.ErrNoRows) {
+		return ConfirmedBinding{}, nil
+	}
+	return p, err
 }
 
 func UnboundAckRevisions(result any) (event, session string, ok bool) {
@@ -37,10 +55,16 @@ func (e *Engine) AttachBinding(ctx context.Context, p ConfirmedBinding) error {
 		if err != nil {
 			return false, err
 		}
+		if p.ReadbackOnly && (p.ProtectionEpoch != s.protectionEpoch || s.orcaID != "" && s.orcaID != p.OrcaID) {
+			return false, nil
+		}
 		if s.orcaID != p.OrcaID {
 			s.orcaManaged = ""
 		}
 		status := syncPolicy(p.OrcaID, &p.OrcaTitle, p.Origin, s.orcaManaged, p.NativeTitle)
+		if p.ReadbackOnly && p.OrcaTitle != p.NativeTitle {
+			status = "blocked"
+		}
 		result, err := tx.ExecContext(ctx, `UPDATE events SET orca_id=?,orca_base=?,orca_origin=?,native_handle=?,sync_status=?,updated=?
 			WHERE id=? AND agent=? AND session_id=? AND revision=? AND title=? AND status='applied' AND sync_status='unbound'`,
 			p.OrcaID, p.OrcaTitle, p.Origin, p.NativeHandle, status, e.now().UnixMilli(),
@@ -52,8 +76,9 @@ func (e *Engine) AttachBinding(ctx context.Context, p ConfirmedBinding) error {
 		if err != nil || n == 0 {
 			return false, err
 		}
-		_, err = tx.ExecContext(ctx, `UPDATE sessions SET orca_id=?,orca_managed=? WHERE agent=? AND session_id=?`,
-			p.OrcaID, s.orcaManaged, p.Agent, p.SessionID)
+		_, err = tx.ExecContext(ctx, `UPDATE sessions SET orca_id=?,orca_managed=?,
+			session_kind=coalesce(nullif(?,''),session_kind) WHERE agent=? AND session_id=?`,
+			p.OrcaID, s.orcaManaged, p.Kind, p.Agent, p.SessionID)
 		return err == nil, err
 	})
 	if err == nil && changed {

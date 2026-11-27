@@ -44,6 +44,9 @@ func (e *Engine) claim(ctx context.Context, p claimRequest) (claimResponse, erro
 		if err != nil {
 			return claimResponse{}, err
 		}
+		if s.protectionReason == decisionManual {
+			return claimResponse{Status: "locked"}, nil
+		}
 		revision := p.Revision
 		if revision == "" {
 			revision = s.revision
@@ -60,6 +63,10 @@ func (e *Engine) claim(ctx context.Context, p claimRequest) (claimResponse, erro
 		}
 		if errors.Is(err, sql.ErrNoRows) {
 			status = "none"
+		}
+		switch status {
+		case "applied", "failed", "interrupted", "stale", "disabled", "needs_review":
+			return claimResponse{Status: status}, nil
 		}
 		if s.title != p.CurrentTitle {
 			status, err = e.observeChangedTitle(ctx, tx, p, s)
@@ -185,6 +192,9 @@ func (e *Engine) ack(ctx context.Context, p ackRequest) (accepted, error) {
 			return accepted{}, nil
 		}
 		syncStatus := syncPolicy(orcaID, orcaBase, origin, s.orcaManaged, title)
+		if s.orcaUnlockedBase != nil && orcaBase != nil && *orcaBase != title {
+			syncStatus = "blocked"
+		}
 		return accepted{Accepted: true, SyncStatus: syncStatus, EventRevision: revision, SessionRevision: s.revision},
 			e.applyAck(ctx, tx, p, title, syncStatus)
 	})
@@ -197,8 +207,8 @@ func (e *Engine) ack(ctx context.Context, p ackRequest) (accepted, error) {
 
 func (e *Engine) applyAck(ctx context.Context, tx *sql.Tx, p ackRequest, title, syncStatus string) error {
 	now := e.now().UnixMilli()
-	if _, err := tx.ExecContext(ctx, `UPDATE events SET status='applied',sync_status=?,updated=?,finalized=? WHERE id=?`,
-		syncStatus, now, now, p.ID); err != nil {
+	if _, err := tx.ExecContext(ctx, `UPDATE events SET status='applied',sync_status=?,updated=?,finalized=?,renamed_at=? WHERE id=?`,
+		syncStatus, now, now, now, p.ID); err != nil {
 		return err
 	}
 	if _, err := tx.ExecContext(ctx, `UPDATE sessions SET title=? WHERE agent=? AND session_id=?`,
@@ -206,7 +216,7 @@ func (e *Engine) applyAck(ctx context.Context, tx *sql.Tx, p ackRequest, title, 
 		return err
 	}
 	_, err := tx.ExecContext(ctx, `UPDATE events SET status='stale',payload=NULL,updated=?
-		WHERE agent=? AND session_id=? AND id<>? AND base<>? AND status IN ('queued','candidate','claimed')`,
+		WHERE agent=? AND session_id=? AND id<>? AND base<>? AND status IN ('queued','candidate','claimed','needs_review')`,
 		now, p.Agent, p.SessionID, p.ID, title)
 	return err
 }

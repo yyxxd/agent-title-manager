@@ -40,7 +40,7 @@ function App({ desktopWindow }: { desktopWindow?: DesktopWindow }) {
   const [modelsDirty, setModelsDirty] = useState(false);
   const [pendingNav, setPendingNav] = useState<{ page: Page; recordFilter?: RecordFilter } | null>(null);
   const [recordFilter, setRecordFilter] = useState<{ filter: RecordFilter; key: number }>({
-    filter: 'all',
+    filter: 'changes',
     key: 0,
   });
 
@@ -58,7 +58,7 @@ function App({ desktopWindow }: { desktopWindow?: DesktopWindow }) {
     void Promise.allSettled([
       rpc<PluginListResponse>('plugins.list'),
       rpc<SettingsData>('settings.get'),
-      rpc<RecordList>('records.list', { limit: 50 }),
+      rpc<RecordList>('records.list', { limit: 50, grouped: true }),
     ]).then(([pluginsRes, settingsRes, recordsRes]) => {
       if (recordsRes.status === 'fulfilled' && request === countsRequest.current) {
         const { counts, items } = recordsRes.value;
@@ -83,7 +83,7 @@ function App({ desktopWindow }: { desktopWindow?: DesktopWindow }) {
 
   function commitNav(next: Page, filter?: RecordFilter) {
     if (next === 'records') {
-      setRecordFilter((prev) => ({ filter: filter ?? 'all', key: prev.key + 1 }));
+      setRecordFilter((prev) => ({ filter: filter ?? 'changes', key: prev.key + 1 }));
     }
     setPage(next);
     setRevision((n) => n + 1);

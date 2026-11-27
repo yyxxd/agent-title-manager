@@ -109,6 +109,7 @@
   align-items: center;
   gap: 8px;
   flex-shrink: 0;
+  flex-wrap: wrap;
 }
 
 .record-detail {
@@ -120,6 +121,22 @@
   display: flex;
   flex-direction: column;
   gap: 8px;
+}
+
+.record-change {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 4px 16px;
+  flex-wrap: wrap;
+}
+
+.record-change-title {
+  overflow-wrap: anywhere;
+}
+
+.record-identity {
+  overflow-wrap: anywhere;
 }
 
 .record-attempt-row {

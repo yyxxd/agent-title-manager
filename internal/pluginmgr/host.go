@@ -69,6 +69,13 @@ func events(agent string) []event {
 func (m *Manager) hostEntry(id string, rel release) (string, error) {
 	dir := m.packageDir(rel)
 	entry := filepath.Join(dir, filepath.FromSlash(rel.Manifest.Entry))
+	if stableCodexRelease(id, rel) {
+		var err error
+		entry, err = m.ensureCodexLauncher()
+		if err != nil {
+			return "", err
+		}
+	}
 	result := entry
 	if id != "pi" {
 		node, err := m.findExecutable("node.exe", true)
@@ -92,6 +99,11 @@ func (m *Manager) writeRuntime(dir string) error {
 		return err
 	}
 	runtime := map[string]string{"bridgePath": bridge}
+	if os.Getenv("ATM_DATA_DIR") != "" {
+		runtime["atmDataDir"] = filepath.Dir(m.root)
+	} else {
+		runtime["atmLocalAppData"] = filepath.Dir(filepath.Dir(m.root))
+	}
 	if codex, err := exec.LookPath("codex.exe"); err == nil && filepath.IsAbs(codex) {
 		runtime["codexPath"] = codex
 	}

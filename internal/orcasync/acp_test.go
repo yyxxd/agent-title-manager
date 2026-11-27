@@ -9,6 +9,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 	"time"
@@ -25,6 +26,10 @@ func TestACPObserverSettlesRenamesAndProtectsManualName(t *testing.T) {
 	testACPObserver(t, t.TempDir(), "")
 }
 
+func TestACPObserverUsesRecordedGeminiHome(t *testing.T) {
+	testACPObserver(t, t.TempDir(), filepath.Join(t.TempDir(), "gemini"))
+}
+
 func testACPObserver(t *testing.T, home, account string) {
 	t.Helper()
 	node, err := exec.LookPath("node.exe")
@@ -34,16 +39,21 @@ func testACPObserver(t *testing.T, home, account string) {
 			t.Fatal("Node.js required to exercise embedded observation:", err)
 		}
 	}
-	plugin, err := filepath.Abs("../../plugins/antigravity")
-	if err != nil {
-		t.Fatal(err)
+	_, source, _, ok := runtime.Caller(0)
+	if !ok {
+		t.Fatal("无法定位 ACP 测试源文件")
 	}
+	plugin := filepath.Join(filepath.Dir(source), "..", "..", "plugins", "antigravity")
 	t.Setenv("ORCA_USER_DATA_PATH", home)
 	t.Setenv("NODE_TEST_CONTEXT", "isolated-acp-fixture")
 	if account == "" {
 		account = filepath.Join(home, "antigravity-chat")
 	}
-	data := filepath.Join(account, "antigravity-acp")
+	layout := "antigravity-cli"
+	if filepath.Base(account) == "antigravity-chat" {
+		layout = "antigravity-acp"
+	}
+	data := filepath.Join(account, layout)
 	db := makeACPDatabase(t, home)
 	now := time.Now()
 	putACPFixture(t, db, data, account, acpChat, acpNative, "", now)
@@ -54,8 +64,8 @@ func testACPObserver(t *testing.T, home, account string) {
 	const target = "fixture result"
 	i := Integration{Enabled: alwaysEnabled, ReadNative: func(context.Context, string, string, string) (string, error) {
 		return "", errors.New("ACP used unscoped title read")
-	}, ReadScoped: func(_ context.Context, id, root string) (string, error) {
-		if id != acpNative || !samePath(root, data) {
+	}, ReadNativeAt: func(_ context.Context, agent, id, root string) (string, error) {
+		if agent != "antigravity" || id != acpNative || !samePath(root, data) {
 			return "", fmt.Errorf("unverified native root")
 		}
 		wire, err := os.ReadFile(filepath.Join(root, "annotations", id+".pbtxt"))
@@ -84,6 +94,10 @@ func testACPObserver(t *testing.T, home, account string) {
 		default:
 			return nil, fmt.Errorf("unexpected command: %v", args)
 		}
+	}
+	rows, err := i.readACPSettlements(t.Context(), now.Add(-time.Second).UnixMilli())
+	if err != nil || len(rows) != 1 || rows[0].Orca != acpChat || !samePath(rows[0].Root, data) {
+		t.Fatalf("wrong scoped ACP settlement: %+v, %v", rows, err)
 	}
 	ctx, cancel := context.WithTimeout(t.Context(), 7*time.Second)
 	defer cancel()

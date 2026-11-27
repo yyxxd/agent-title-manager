@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"os/exec"
+	"path/filepath"
 	"strings"
 	"time"
 )
@@ -24,12 +25,18 @@ func (m *Manager) ReadNativeTitle(ctx context.Context, agent, sessionID, handle 
 		return "", ErrNativePending
 	}
 	if agent == "pi" {
+		if handle == "" {
+			handle, err = locatePiTitleSession(ctx, sessionID)
+			if err != nil {
+				return "", err
+			}
+		}
 		return ReadPiTitle(ctx, sessionID, handle)
 	}
 	if agent != "codex" && agent != "claude" && agent != "antigravity" {
 		return "", ErrNativePending
 	}
-	if agent == "antigravity" && sessionID != handle {
+	if agent == "antigravity" && handle != "" && sessionID != handle {
 		return "", ErrNativePending
 	}
 	state, err := m.load()
@@ -51,8 +58,11 @@ func (m *Manager) ReadNativeTitle(ctx context.Context, agent, sessionID, handle 
 	return adapterTitle(ctx, node, agent, sessionID, m.packageDir(r.release), h.dir)
 }
 
-func (m *Manager) ReadAntigravityTitleAt(ctx context.Context, id, root string) (string, error) {
-	dir, err := m.AntigravityPackage(ctx)
+func (m *Manager) ReadNativeTitleAt(ctx context.Context, agent, id, root string) (string, error) {
+	if !filepath.IsAbs(root) || (agent != "codex" && agent != "claude" && agent != "antigravity") {
+		return "", ErrNativePending
+	}
+	dir, err := m.observerPackage(ctx, agent)
 	if err != nil {
 		return "", err
 	}
@@ -63,7 +73,7 @@ func (m *Manager) ReadAntigravityTitleAt(ctx context.Context, id, root string) (
 	if err != nil {
 		return "", err
 	}
-	return adapterTitle(ctx, node, "antigravity", id, dir, "", root)
+	return adapterTitle(ctx, node, agent, id, dir, "", root)
 }
 
 func adapterTitle(ctx context.Context, node, agent, sessionID, adapterDir, hostDir string, scope ...string) (string, error) {

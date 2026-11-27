@@ -6,7 +6,7 @@ import { promisify } from "node:util";
 import { setTimeout as delay } from "node:timers/promises";
 
 const exec = promisify(execFile);
-const terminalStatuses = new Set(["kept", "failed", "interrupted", "stale", "applied", "disabled"]);
+const terminalStatuses = new Set(["kept", "failed", "interrupted", "stale", "applied", "disabled", "locked", "needs_review"]);
 const confirmationTexts = new Set(["好", "好的", "可以", "收到", "谢谢", "继续", "ok", "okay", "thanks", "thank you", "continue"]);
 export const safeID = value => typeof value === "string" && /^[A-Za-z0-9_-]{1,120}$/.test(value);
 export const fingerprint = (...values) => createHash("sha256").update(JSON.stringify(values)).digest("hex");

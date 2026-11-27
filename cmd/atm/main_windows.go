@@ -60,10 +60,20 @@ func run() error {
 			AutoUpdateBuiltins: func(ctx context.Context) (any, error) { return plugins.AutoUpdateBuiltins(ctx) },
 			OrcaEnabled:        orca.Active, ResolveTitleOrigin: orca.ResolveTitleOrigin,
 			RetryBinding: orca.RetryBinding, NativeTitleMatches: orca.NativeTitleMatches,
-			AttachBinding: core.AttachBinding, Close: core.Close,
+			ReadProtectionTitles: orca.ReadProtectionTitles,
+			RecordNames:          orca.RecordNames,
+			AttachBinding:        core.AttachBinding, Close: core.Close,
 			Observe: func(ctx context.Context) {
 				desktop.RunObservers(ctx, plugins.Changes,
 					desktop.Observer{Name: "Antigravity Desktop", Select: plugins.DesktopObserverEntry, Run: plugins.RunDesktopObserver},
+					desktop.Observer{Name: "Orca Codex", Select: func(ctx context.Context) (string, error) {
+						if !orca.Active(ctx, "codex") {
+							return "", nil
+						}
+						return plugins.CodexPackage(ctx)
+					}, Run: func(ctx context.Context, dir string) error {
+						return orca.RunCodexObserver(ctx, dir, plugins.NodeCommand, core)
+					}},
 					desktop.Observer{Name: "Orca Chat", Select: func(ctx context.Context) (string, error) {
 						if !orca.Active(ctx, "antigravity") {
 							return "", nil
@@ -97,7 +107,7 @@ func orcaIntegration(plugins *pluginmgr.Manager) *orcasync.Integration {
 			return plugins.Enabled(ctx, agent)
 		},
 		Changes: plugins.Changes, Validate: plugins.ValidateNativeHandle,
-		ReadNative: plugins.ReadNativeTitle, ReadScoped: plugins.ReadAntigravityTitleAt,
+		ReadNative: plugins.ReadNativeTitle, ReadNativeAt: plugins.ReadNativeTitleAt,
 	}
 }
 

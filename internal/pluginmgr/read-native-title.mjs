@@ -8,17 +8,18 @@ const importAdapter = (filename) => import(pathToFileURL(join(pluginDir, filenam
 async function readCodex() {
   const { findCodex, withAppServer } = await importAdapter("app-server.mjs");
   const runtime = JSON.parse(readFileSync(join(pluginDir, "atm-runtime.json"), "utf8"));
+  const env = explicitRoot ? { ...process.env, CODEX_HOME: explicitRoot } : process.env;
   return withAppServer(findCodex(runtime.codexPath), async (call) => {
     const { thread } = await call("thread/read", { threadId: sessionId, includeTurns: false });
     if (thread?.id === sessionId) {
       if (thread.name === null) return "";
       if (typeof thread.name === "string") return thread.name;
     }
-  });
+  }, env);
 }
 
-function findClaudeTranscript() {
-  const root = join(hostDir, "projects");
+function findClaudeTranscript(home) {
+  const root = join(home, "projects");
   const projects = opendirSync(root);
   let found;
   try {
@@ -38,9 +39,10 @@ function findClaudeTranscript() {
 
 async function readClaude() {
   const { identify, readObservedTitle } = await importAdapter("transcript.mjs");
-  const path = findClaudeTranscript();
+  const home = explicitRoot || hostDir;
+  const path = findClaudeTranscript(home);
   if (!path) return undefined;
-  const session = identify({ session_id: sessionId, transcript_path: path }, hostDir);
+  const session = identify({ session_id: sessionId, transcript_path: path }, home);
   return session && readObservedTitle(session);
 }
 

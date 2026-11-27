@@ -21,7 +21,9 @@ func generationPayload(protocol, model, policy, input string) any {
 			"generationConfig":  map[string]any{"responseMimeType": "application/json", "maxOutputTokens": 2048},
 		}
 	default:
-		return chatRequest{model, []chatMessage{{"system", policy}, {"user", input}}, 512}
+		// 具备推理能力的 Chat Completions 模型可能在输出 JSON 决策前耗尽预算。
+		// 与 Responses 路径保持一致，避免有效答案被截断为 null。
+		return chatRequest{model, []chatMessage{{"system", policy}, {"user", input}}, 8192}
 	}
 }
 

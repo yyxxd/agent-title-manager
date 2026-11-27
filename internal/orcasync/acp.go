@@ -35,7 +35,7 @@ func (i *Integration) RunACPObserver(ctx context.Context, dir string, node NodeC
 	}
 	ctx, cancel := i.operation(ctx, "antigravity")
 	defer cancel()
-	cmd, err := node(ctx, "--input-type=module", "-e", acpRPC+"\n"+acpObserver, dir, filepath.Dir(db))
+	cmd, err := node(ctx, "--input-type=module", "-e", acpRPC+"\n"+acpObserver, dir)
 	if err != nil {
 		return err
 	}
@@ -149,16 +149,29 @@ func acpRoot(ctx context.Context, id, session string) (string, error) {
 	if err != nil {
 		return "", err
 	}
-	dir := filepath.Join(filepath.Dir(path), "antigravity-chat")
-	if !filepath.IsAbs(account) || !samePath(account, dir) {
-		return "", fmt.Errorf("%w: 无效的 Antigravity 账号目录", ErrNativePending)
+	return acpAccountRoot(path, account)
+}
+
+func acpAccountRoot(database, account string) (string, error) {
+	if !filepath.IsAbs(account) {
+		return "", ErrNativePending
 	}
-	return filepath.Join(dir, "antigravity-acp"), nil
+	legacy := filepath.Join(filepath.Dir(database), "antigravity-chat")
+	root := filepath.Join(account, "antigravity-cli")
+	if samePath(account, legacy) {
+		root = filepath.Join(legacy, "antigravity-acp")
+	}
+	info, err := os.Lstat(root)
+	if err != nil || !info.IsDir() || !unredirectedPath(root, info) {
+		return "", fmt.Errorf("%w: 无法确认 Antigravity 账户目录", ErrNativePending)
+	}
+	return root, nil
 }
 
 type settlement struct {
 	Orca   string `json:"orca"`
 	Native string `json:"native"`
+	Root   string `json:"root"`
 	At     int64  `json:"at"`
 }
 
@@ -200,16 +213,18 @@ func (i *Integration) readACPSettlements(ctx context.Context, since int64) ([]se
 		return nil, err
 	}
 	defer rows.Close()
-	expected := filepath.Join(filepath.Dir(path), "antigravity-chat")
 	for rows.Next() {
 		var item settlement
 		var native, account sql.NullString
 		if err := rows.Scan(&item.Orca, &native, &item.At, &account); err != nil {
 			return nil, err
 		}
-		if nativeID.MatchString(item.Orca) && nativeID.MatchString(native.String) &&
-			filepath.IsAbs(account.String) && samePath(account.String, expected) {
-			item.Native = native.String
+		if !nativeID.MatchString(item.Orca) || !nativeID.MatchString(native.String) {
+			continue
+		}
+		root, err := acpAccountRoot(path, account.String)
+		if err == nil {
+			item.Native, item.Root = native.String, root
 			result = append(result, item)
 		}
 	}

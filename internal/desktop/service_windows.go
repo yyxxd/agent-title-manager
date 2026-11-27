@@ -17,18 +17,20 @@ import (
 )
 
 type Backend struct {
-	Engine             ipc.Handler
-	Plugins            ipc.Handler
-	ObserveCodexHook   func(context.Context, json.RawMessage) (any, error)
-	AutoUpdateBuiltins func(context.Context) (any, error)
-	Enabled            func(context.Context, string) (bool, error)
-	OrcaEnabled        func(context.Context, string) bool
-	ResolveTitleOrigin func(context.Context, string, string, string, string) (orcasync.Binding, bool)
-	RetryBinding       func(context.Context, string, string, string, string) (orcasync.Binding, bool)
-	NativeTitleMatches func(context.Context, string, string, string, string) (bool, error)
-	AttachBinding      func(context.Context, engine.ConfirmedBinding) error
-	Observe            func(context.Context)
-	Close              func() error
+	Engine               ipc.Handler
+	Plugins              ipc.Handler
+	ObserveCodexHook     func(context.Context, json.RawMessage) (any, error)
+	AutoUpdateBuiltins   func(context.Context) (any, error)
+	Enabled              func(context.Context, string) (bool, error)
+	OrcaEnabled          func(context.Context, string) bool
+	ResolveTitleOrigin   func(context.Context, string, string, string, string) (orcasync.Binding, bool)
+	RetryBinding         func(context.Context, string, string, string, string) (orcasync.Binding, bool)
+	NativeTitleMatches   func(context.Context, string, string, string, string) (bool, error)
+	ReadProtectionTitles func(context.Context, string, string, string, string) (string, *string, error)
+	RecordNames          engine.RecordNameReader
+	AttachBinding        func(context.Context, engine.ConfirmedBinding) error
+	Observe              func(context.Context)
+	Close                func() error
 }
 
 type Service struct {
@@ -140,6 +142,17 @@ func (s *Service) Call(ctx context.Context, method string, body string) (any, er
 	switch {
 	case method == "settings.get" || method == "settings.save":
 		return s.publicSettings(ctx, method, json.RawMessage(body))
+	case method == "records.unlock":
+		return s.unlockRecord(ctx, json.RawMessage(body))
+	case method == "records.list" || method == "records.open":
+		value, err := s.backend.Engine(ctx, method, json.RawMessage(body))
+		var request struct {
+			WithNames bool `json:"withNames"`
+		}
+		if err == nil && json.Unmarshal([]byte(body), &request) == nil && request.WithNames {
+			value = engine.AddRecordNames(ctx, value, s.backend.RecordNames)
+		}
+		return value, err
 	case slices.Contains(engineMethods, method):
 		return s.backend.Engine(ctx, method, json.RawMessage(body))
 	case slices.Contains(pluginMethods, method):

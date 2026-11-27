@@ -103,6 +103,7 @@ func (l *lateBindings) retry(ctx context.Context, backend Backend, job lateBindi
 		ID: job.id, Agent: job.agent, SessionID: job.session, Revision: job.revision, NativeTitle: job.title,
 		SessionRevision: job.sessionRevision,
 		OrcaID:          binding.ID, OrcaTitle: binding.Title, Origin: binding.Origin, NativeHandle: binding.Handle,
+		Kind: binding.Kind,
 	}); err != nil {
 		log.Print("Orca 补绑写入失败")
 	}

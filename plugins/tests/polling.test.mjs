@@ -147,3 +147,52 @@ test("Codex 重开时按实际最新已完成轮次恢复候选，无需重提�
   assert.deepEqual(methods, ["title.claim", "title.ack"]);
   assert.equal(title, candidate.title);
 });
+
+test("Codex resubmits the same live turn after an ingress receipt is lost", async () => {
+  let submitted;
+  let calls = 0;
+  let polls = 0;
+  const current = turn(state.revision, [user("latest", [textBlock("Verify the mailbox change")])]);
+  const native = action => action(async () => ({ thread: { id: state.sessionId, name: "", turns: [current] } }));
+  const rpc = async (method, params) => {
+    if (method === "event.submit") {
+      if (submitted) assert.deepEqual(params, submitted);
+      submitted = params;
+      calls++;
+      return { accepted: true };
+    }
+    assert.equal(method, "title.claim");
+    return { status: ++polls === 1 ? "none" : "kept" };
+  };
+  await handleCodex("stop", { session_id: state.sessionId, turn_id: state.revision }, rpc, native, {
+    ...clock(), protectionEpoch: 7,
+  });
+  assert.equal(calls, 2);
+  assert.equal(submitted.revision, state.revision);
+  assert.equal(submitted.protectionEpoch, 7);
+});
+
+test("Codex reports an unverifiable candidate before attempting a stale write", async () => {
+  let currentTitle = "";
+  const settled = turn(state.revision, [user("latest", [textBlock("Check the current task")])]);
+  const native = action => action(async method => {
+    assert.equal(method, "thread/read");
+    return { thread: { id: state.sessionId, name: currentTitle, turns: [settled] } };
+  });
+  const methods = [];
+  const rpc = async (method, params) => {
+    methods.push(method);
+    if (method === "event.submit") return { accepted: true };
+    if (method === "title.claim") {
+      currentTitle = "external title";
+      return { candidate, status: "claimed" };
+    }
+    assert.equal(method, "title.defer");
+    assert.equal(params.id, candidate.id);
+    return { accepted: true };
+  };
+  await handleCodex("stop", { session_id: state.sessionId, turn_id: state.revision }, rpc, native, {
+    ...clock(), protectionEpoch: 0,
+  });
+  assert.deepEqual(methods, ["event.submit", "title.claim", "title.defer"]);
+});

@@ -2,7 +2,7 @@ import { AlertCircle, Check, Copy, X } from 'lucide-react';
 import { useEffect, useRef, useState, useSyncExternalStore } from 'react';
 import { rpc } from './rpc';
 import { toast } from './toast';
-import { ConfirmDialog, StatusNotice, useAction } from './ui';
+import { ConfirmDialog, StatusNotice, copyTextToClipboard, useAction } from './ui';
 import { UpdateNotes } from './UpdateNotes';
 
 type Available = { version: string; notes: string; size: number; sha256: string };
@@ -62,35 +62,6 @@ function rememberDismissedVersion(version: string) {
     localStorage.setItem(dismissedKey, version);
   } catch {
     // 忽略本地存储限制，不阻断更新流程。
-  }
-}
-
-async function copyTextToClipboard(text: string): Promise<boolean> {
-  if (navigator.clipboard?.writeText) {
-    try {
-      await navigator.clipboard.writeText(text);
-      return true;
-    } catch {
-      // 剪贴板 API 不可用时使用兜底方案。
-    }
-  }
-  const textarea = document.createElement('textarea');
-  textarea.value = text;
-  textarea.setAttribute('readonly', '');
-  textarea.style.position = 'fixed';
-  textarea.style.top = '-9999px';
-  textarea.style.left = '-9999px';
-  textarea.style.opacity = '0';
-  textarea.style.pointerEvents = 'none';
-  document.body.appendChild(textarea);
-  textarea.focus();
-  textarea.select();
-  try {
-    return document.execCommand('copy');
-  } catch {
-    return false;
-  } finally {
-    document.body.removeChild(textarea);
   }
 }
 

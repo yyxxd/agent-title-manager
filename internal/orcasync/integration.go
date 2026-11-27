@@ -2,7 +2,6 @@ package orcasync
 
 import (
 	"context"
-	"fmt"
 	"strings"
 	"time"
 )
@@ -10,11 +9,11 @@ import (
 type Gate func(context.Context, string) (bool, error)
 
 type Integration struct {
-	Enabled    Gate
-	Changes    func() <-chan struct{}
-	Validate   NativeHandleValidator
-	ReadNative NativeTitleReader
-	ReadScoped func(context.Context, string, string) (string, error)
+	Enabled      Gate
+	Changes      func() <-chan struct{}
+	Validate     NativeHandleValidator
+	ReadNative   NativeTitleReader
+	ReadNativeAt NativeTitleReader
 
 	run    runCLI
 	origin func(context.Context, string, string, string) string
@@ -123,10 +122,24 @@ func (i *Integration) resolve(ctx context.Context, agent, session, handle, hint,
 		return Binding{}, false
 	}
 	origin := resolvePlaceOrigin(ctx, at, i.titleOrigin)
+	if agent == "codex" && at.Kind == "chat" && origin == titleUnknown {
+		// Orca 可能在读取列表与读取来源之间把首句占位替换为自动标题。
+		refreshed, verified := discover(ctx, i.command(agent), i.Validate, agent, session, handle, at.ID, at.Kind, []time.Duration{0})
+		if !verified {
+			return Binding{}, false
+		}
+		at = refreshed
+		origin = resolvePlaceOrigin(ctx, at, i.titleOrigin)
+	}
 	if !i.Active(ctx, agent) {
 		return Binding{}, false
 	}
-	return Binding{strings.TrimPrefix(at.ID, idPrefix), *at.Title, origin, handle}, true
+	id := strings.TrimPrefix(at.ID, idPrefix)
+	category := ""
+	if at.Kind == "chat" && agent == "codex" {
+		category = codexSessionKind(ctx, id)
+	}
+	return Binding{ID: id, Title: *at.Title, Origin: origin, Handle: handle, Kind: category, Surface: at.Kind}, true
 }
 
 func (i *Integration) SyncVerified(ctx context.Context, id, expected, title, agent, session, handle string) error {
@@ -143,14 +156,7 @@ func (i *Integration) SyncVerified(ctx context.Context, id, expected, title, age
 			if !i.Active(ctx, agent) {
 				return "", ErrSkipped
 			}
-			root, err := acpRoot(ctx, id, session)
-			if err != nil || i.ReadScoped == nil {
-				return "", fmt.Errorf("%w: 无法确认 Antigravity Chat 数据目录", ErrNativePending)
-			}
-			if !i.Active(ctx, agent) {
-				return "", ErrSkipped
-			}
-			return i.ReadScoped(ctx, session, root)
+			return i.readAntigravityChatTitle(ctx, id, session)
 		},
 	})
 }

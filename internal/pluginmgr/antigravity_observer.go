@@ -9,7 +9,15 @@ import (
 )
 
 func (m *Manager) AntigravityPackage(ctx context.Context) (string, error) {
-	enabled, err := m.Enabled(ctx, "antigravity")
+	return m.observerPackage(ctx, "antigravity")
+}
+
+func (m *Manager) CodexPackage(ctx context.Context) (string, error) {
+	return m.observerPackage(ctx, "codex")
+}
+
+func (m *Manager) observerPackage(ctx context.Context, agent string) (string, error) {
+	enabled, err := m.Enabled(ctx, agent)
 	if err != nil || !enabled {
 		return "", err
 	}
@@ -17,8 +25,8 @@ func (m *Manager) AntigravityPackage(ctx context.Context) (string, error) {
 	if err != nil {
 		return "", err
 	}
-	r := state.Items["antigravity"]
-	if !r.Enabled || r.Dir == "" || r.Manifest.ID != "antigravity" || state.Pending != nil && state.Pending.ID == "antigravity" {
+	r := state.Items[agent]
+	if !r.Enabled || r.Dir == "" || r.Manifest.ID != agent || state.Pending != nil && state.Pending.ID == agent {
 		return "", nil
 	}
 	if !filepath.IsLocal(r.Dir) || filepath.Base(r.Dir) != r.Dir {
@@ -37,7 +45,7 @@ func (m *Manager) AntigravityPackage(ctx context.Context) (string, error) {
 		return "", err
 	}
 	if manifest != r.Manifest {
-		return "", errors.New("Antigravity 插件清单已改变")
+		return "", errors.New("观察器插件清单已改变")
 	}
 	return dir, nil
 }

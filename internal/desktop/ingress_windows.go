@@ -64,6 +64,13 @@ func (s *Service) pluginEvent(ctx context.Context, method string, params json.Ra
 	if !s.pluginEnabled(ctx, agent) {
 		return nil, errors.New("Agent 插件未启用或目前不可用")
 	}
+	if method == "event.eligibility" {
+		canonical, err := canonicalParams(fields, "agent", "sessionId")
+		if err != nil {
+			return nil, err
+		}
+		return s.backend.Engine(ctx, method, canonical)
+	}
 	if method != "event.submit" {
 		if method == "title.claim" && s.ingress.sessionPending(agent, fieldString(fields, "sessionId")) {
 			return map[string]any{"candidate": nil, "status": "ingress_pending"}, nil
@@ -168,7 +175,7 @@ func (event pendingEvent) forward(ctx context.Context, backend Backend, late *la
 	agent := event.key.agent
 	var bound bool
 	if event.probe && backend.orcaEnabled(ctx, agent) && backend.ResolveTitleOrigin != nil {
-		timeout := 2 * time.Second
+		timeout := 4 * time.Second
 		resolve := backend.ResolveTitleOrigin
 		if event.key.nativeOnly && backend.RetryBinding != nil {
 			timeout, resolve = 8*time.Second, backend.RetryBinding
@@ -238,7 +245,7 @@ func (event pendingEvent) needsBinding() bool {
 func (event pendingEvent) setBinding(binding orcasync.Binding) {
 	for key, value := range map[string]string{
 		"orcaSessionId": binding.ID, "orcaTitle": binding.Title,
-		"orcaTitleOrigin": binding.Origin, "orcaNativeHandle": binding.Handle,
+		"orcaTitleOrigin": binding.Origin, "orcaNativeHandle": binding.Handle, "sessionKind": binding.Kind,
 	} {
 		event.fields[key], _ = json.Marshal(value)
 	}
@@ -246,9 +253,9 @@ func (event pendingEvent) setBinding(binding orcasync.Binding) {
 
 func (event pendingEvent) params(bound bool) (json.RawMessage, error) {
 	fields := []string{"agent", "sessionId", "revision", "currentTitle", "titleOrigin", "nativeTitleOnly",
-		"originalGoal", "confirmationOnly", "substantiveActivity", "project", "turns"}
+		"originalGoal", "confirmationOnly", "substantiveActivity", "project", "turns", "protectionEpoch"}
 	if bound {
-		fields = append(fields, "orcaSessionId", "orcaTitle", "orcaTitleOrigin", "orcaNativeHandle")
+		fields = append(fields, "orcaSessionId", "orcaTitle", "orcaTitleOrigin", "orcaNativeHandle", "sessionKind")
 		if event.key.nativeOnly {
 			identity, err := json.Marshal([]string{event.key.revision, fieldString(event.fields, "orcaSessionId"), fieldString(event.fields, "orcaTitle")})
 			if err != nil {

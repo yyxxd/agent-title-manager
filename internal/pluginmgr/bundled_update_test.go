@@ -86,6 +86,33 @@ func TestBundledUpdateFailureKeepsOldHostRegistration(t *testing.T) {
 	}
 }
 
+func TestCodexBundledUpdatePreservesTrustedCommand(t *testing.T) {
+	m, host := testManager(t)
+	bundle := filepath.Join(m.bundled, "codex")
+	stage := func(version string) {
+		packageFixture(t, bundle, "codex", "codex", version)
+		manifest := filepath.Join(bundle, manifestName)
+		writeFixture(t, manifest, strings.ReplaceAll(readFixture(t, manifest), "test-entry.mjs", "index.mjs"))
+		writeFixture(t, filepath.Join(bundle, "index.mjs"), "")
+	}
+	stage("0.2.2")
+	mustInvoke(t, m, "enable", request{ID: "codex"})
+	hooks := filepath.Join(host["codex"], "hooks.json")
+	before := readFixture(t, hooks)
+	if !strings.Contains(before, "codex-hook.mjs") {
+		t.Fatal("Codex hook still points at a versioned package")
+	}
+	stage("0.2.3")
+	got := mustInvoke(t, m, "update", request{ID: "codex", Source: "bundled"})
+	if got.Version != "0.2.3" || !got.Enabled || readFixture(t, hooks) != before {
+		t.Fatalf("upgrading changed the trusted registration: %+v", got)
+	}
+	mustInvoke(t, m, "disable", request{ID: "codex"})
+	if registration, err := readSettings(hooks); err != nil || registration.Exists {
+		t.Fatalf("disabled Codex hook remains registered: %v", err)
+	}
+}
+
 func TestBuiltinVersionsUseSemVerPrecedence(t *testing.T) {
 	for _, c := range []struct {
 		candidate, current string

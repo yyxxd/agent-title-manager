@@ -59,7 +59,7 @@ WITH outcomes AS (
 		NULL AS input,NULL AS output,NULL AS cached,0 AS unknown
 	FROM events WHERE finalized>=? AND finalized<?
 	UNION ALL
-	SELECT agent,provider,CASE WHEN provider='claude' THEN actual_model ELSE model END,1,event_id IS NULL,0,0,0,input_tokens,output_tokens,cached_tokens,
+	SELECT agent,provider,CASE WHEN provider='claude' THEN actual_model ELSE model END,1,event_id IS NULL AND suggestion=0,0,0,0,input_tokens,output_tokens,cached_tokens,
 		(input_tokens IS NULL OR output_tokens IS NULL OR cached_tokens IS NULL)
 	FROM attempts WHERE started>=? AND started<?
 )

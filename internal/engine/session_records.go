@@ -1,0 +1,211 @@
+package engine
+
+import (
+	"context"
+	"database/sql"
+	"encoding/base64"
+	"strings"
+	"time"
+)
+
+type recordChange struct {
+	ID     string `json:"id"`
+	From   string `json:"from"`
+	Title  string `json:"title"`
+	Source string `json:"source"`
+	At     string `json:"at,omitempty"`
+	Found  bool   `json:"found,omitempty"`
+	Side   string `json:"side,omitempty"`
+}
+
+const renameEvidence = `e.title<>e.base AND e.status IN ('applied','manual_change','observed_change')`
+const exactRenameTime = `(e.renamed_at > 0 AND e.renamed_at <= e.updated)`
+const renameTime = `CASE WHEN ` + exactRenameTime + ` THEN e.renamed_at
+	WHEN e.finalized > 0 AND e.finalized >= e.created AND e.finalized <= e.updated THEN e.finalized END`
+
+func groupedRecords(ctx context.Context, tx *sql.Tx, local *time.Location, p listRequest, limit int) (recordList, error) {
+	where, args := recordSearch(p.Query)
+	cte := `WITH matches AS (
+		SELECT DISTINCT e.agent,e.session_id FROM events e` + where + `
+	), summary AS (
+		SELECT e.agent,e.session_id,MIN(e.rowid) AS first_row,
+			coalesce(MAX(e.created) FILTER (WHERE e.status<>'observed_change'),0) AS checked,
+			MAX(` + renameTime + `) FILTER (WHERE ` + renameEvidence + `) AS changed,
+			MAX(` + renameEvidence + `) AS has_change
+		FROM events e JOIN matches USING(agent,session_id) GROUP BY e.agent,e.session_id
+	), current AS (
+		SELECT g.*, e.rowid AS representative, f.rowid AS retry,
+			((e.reminder_read=0 AND ` + groupedAttention + `) OR coalesce(f.reminder_read=0,0)) AS unread,
+			(` + groupedAttention + ` OR f.rowid IS NOT NULL) AS attention,
+			e.status='failed' AS failed,f.rowid IS NOT NULL AS sync_failed,
+			` + recordAdoptable + ` AS protected
+		FROM summary g JOIN events e ON e.rowid=(
+			SELECT rowid FROM events e WHERE e.agent=g.agent AND e.session_id=g.session_id
+			ORDER BY (e.status='kept' AND e.decision_reason='pending_proposal') ASC,e.created DESC,e.rowid DESC LIMIT 1
+		)
+		LEFT JOIN events f ON f.rowid=(
+			SELECT e.rowid FROM events e WHERE e.agent=g.agent AND e.session_id=g.session_id AND ` + recordRetryable + `
+			ORDER BY e.created DESC,e.rowid DESC LIMIT 1
+		)
+	)`
+	result := recordList{Items: []record{}, TestAttempts: []attemptRecord{}}
+	err := tx.QueryRowContext(ctx, cte+` SELECT COUNT(*),coalesce(SUM(unread),0),coalesce(SUM(attention),0),
+		coalesce(SUM(failed),0),coalesce(SUM(sync_failed),0),coalesce(SUM(protected),0) FROM current`, args...).
+		Scan(&result.Counts.Total, &result.Counts.Unread, &result.Counts.Attention, &result.Counts.Failed, &result.Counts.SyncFailed, &result.Counts.Protected)
+	if err != nil {
+		return recordList{}, err
+	}
+	items, err := groupedPage(ctx, tx, local, cte, args, p, limit+1)
+	if err != nil {
+		return recordList{}, err
+	}
+	if len(items) > limit {
+		items = items[:limit]
+		result.Next = &items[limit-1].cursor
+	}
+	if err := listSessionAttempts(ctx, tx, local, items); err != nil {
+		return recordList{}, err
+	}
+	for i := range items {
+		items[i].addLegacyFailure()
+	}
+	if err := listChanges(ctx, tx, local, items); err != nil {
+		return recordList{}, err
+	}
+	result.Items = items
+	err = readAttempts(ctx, tx, local, attemptFields+` WHERE event_id IS NULL AND suggestion=0 ORDER BY id DESC LIMIT ?`,
+		[]any{limit}, func(_ string, item attemptRecord) { result.TestAttempts = append(result.TestAttempts, item) })
+	return result, err
+}
+
+const groupedAttention = `(e.status IN ('failed','needs_review')
+	OR (e.sync_status='blocked' AND ` + currentSyncSession + `) OR ` + recordAdoptable + `)`
+
+func groupedPage(ctx context.Context, tx *sql.Tx, local *time.Location, cte string, args []any, p listRequest, limit int) ([]record, error) {
+	where, order := " WHERE 1", "coalesce(g.changed,0)"
+	switch p.Filter {
+	case "all":
+		order = "g.checked"
+	case "attention":
+		where, order = " WHERE g.attention=1", "g.checked"
+	case "locked":
+		where = " WHERE s.protection_reason='manual_locked'"
+	case "", "changes":
+		where = " WHERE g.has_change=1"
+	default:
+		where += " AND g.agent=?"
+		args = append(args, p.Filter)
+	}
+	if p.Before != nil {
+		where += " AND (" + order + ",g.first_row)<(?,?)"
+		args = append(args, p.Before.Updated, p.Before.RowID)
+	}
+	rows, err := tx.QueryContext(ctx, cte+`
+		SELECT e.id,g.agent,g.session_id,e.revision,s.title,e.base,e.status,
+			coalesce(f.sync_status,CASE WHEN e.sync_status='failed' THEN '' ELSE e.sync_status END),
+			coalesce(f.sync_error,CASE WHEN e.sync_status='failed' THEN '' ELSE e.sync_error END),e.updated,
+			e.failure_code,e.failure_length,e.failure_limit,e.decision_reason,g.first_row,e.orca_origin,`+recordAdoptable+`,
+			s.orca_id,s.protection_reason,s.session_kind,g.checked,`+order+`,g.sync_failed,
+			CASE WHEN e.status='needs_review' THEN e.title ELSE '' END,coalesce(f.id,'')
+		FROM current g JOIN sessions s USING(agent,session_id)
+		JOIN events e ON e.rowid=g.representative LEFT JOIN events f ON f.rowid=g.retry`+where+`
+		ORDER BY `+order+` DESC,g.first_row DESC LIMIT ?`, append(args, limit)...)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []record{}
+	for rows.Next() {
+		var item record
+		var protection string
+		var canRetry bool
+		var checked, sortTime int64
+		if err := scanRecord(rows, &item, local, &item.orcaID, &protection, &item.Kind, &checked, &sortTime, &canRetry, &item.SuggestedTitle, &item.SyncRetryID); err != nil {
+			return nil, err
+		}
+		item.SessionKey = base64.RawURLEncoding.EncodeToString([]byte(item.Agent + "\x00" + item.SessionID))
+		item.Locked = protection == decisionManual
+		item.Protected = protection == decisionProtected
+		item.CanRetry = &canRetry
+		if checked > 0 {
+			item.CheckedAt = formatTime(checked, local)
+		}
+		if item.Kind == "" && item.orcaID != "" {
+			item.Kind = "orca"
+		}
+		item.cursor.Updated = sortTime
+		items = append(items, item)
+	}
+	return items, rows.Err()
+}
+
+func listSessionAttempts(ctx context.Context, tx *sql.Tx, local *time.Location, items []record) error {
+	if len(items) == 0 {
+		return nil
+	}
+	index := make(map[string]int, len(items))
+	args := make([]any, 0, 2*len(items))
+	for i, item := range items {
+		index[item.Agent+"\x00"+item.SessionID] = i
+		args = append(args, item.Agent, item.SessionID)
+	}
+	return readAttempts(ctx, tx, local, `SELECT e.agent || char(0) || e.session_id,a.event_id,`+attemptColumns+`
+		FROM events e JOIN attempts a ON a.event_id=e.id AND a.agent=e.agent
+		WHERE (e.agent,e.session_id) IN (VALUES `+strings.TrimSuffix(strings.Repeat("(?,?),", len(items)), ",")+`)
+		ORDER BY a.id`, args, func(key string, attempt attemptRecord) {
+		i := index[key]
+		items[i].Attempts = append(items[i].Attempts, attempt)
+	})
+}
+
+func listChanges(ctx context.Context, tx *sql.Tx, local *time.Location, items []record) error {
+	if len(items) == 0 {
+		return nil
+	}
+	index := make(map[[2]string]int, len(items))
+	args := make([]any, 0, 2*len(items))
+	for i, item := range items {
+		index[[2]string{item.Agent, item.SessionID}] = i
+		args = append(args, item.Agent, item.SessionID)
+	}
+	rows, err := tx.QueryContext(ctx, `
+		SELECT agent,session_id,id,base,title,status,decision_reason,`+renameTime+` AS change_time,coalesce(`+exactRenameTime+`,0) FROM events e
+		WHERE (agent,session_id) IN (VALUES `+strings.TrimSuffix(strings.Repeat("(?,?),", len(items)), ",")+`)
+			AND `+renameEvidence+`
+		ORDER BY change_time DESC,rowid DESC`, args...)
+	if err != nil {
+		return err
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var agent, sessionID, status, reason string
+		var at sql.NullInt64
+		var exact bool
+		var change recordChange
+		if err := rows.Scan(&agent, &sessionID, &change.ID, &change.From, &change.Title, &status, &reason, &at, &exact); err != nil {
+			return err
+		}
+		change.Source = "auto"
+		if status == "manual_change" {
+			change.Source = "manual"
+		} else if status == "observed_change" {
+			change.Source = "observed"
+			if reason == "orca_observation" {
+				change.Side = "orca"
+			}
+		}
+		if at.Valid {
+			change.At = formatTime(at.Int64, local)
+			change.Found = !exact && status != "applied"
+		}
+		item := &items[index[[2]string{agent, sessionID}]]
+		if len(item.Changes) == 0 {
+			item.ChangedAt, item.ChangedFound = change.At, change.Found
+		}
+		if n := len(item.Changes); n == 0 || item.Changes[n-1].Title != change.Title ||
+			item.Changes[n-1].From != change.From || item.Changes[n-1].Side != change.Side {
+			item.Changes = append(item.Changes, change)
+		}
+	}
+	return rows.Err()
+}

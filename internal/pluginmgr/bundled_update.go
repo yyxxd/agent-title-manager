@@ -88,6 +88,18 @@ func (m *Manager) replaceBuiltinRegistration(state registry, id string, old reco
 	if err != nil {
 		return nil, err
 	}
+	if stableCodexRelease(id, old.release) && stableCodexRelease(id, rel) {
+		if err := m.checkRegistration(id, old); err != nil {
+			return nil, err
+		}
+		if _, err := m.ensureCodexLauncher(); err != nil {
+			return nil, err
+		}
+		if err := m.writeRuntime(m.packageDir(rel)); err != nil {
+			return nil, err
+		}
+		return m.commitItem(state, id, next, nil)
+	}
 	changes, err := unregisterFrom(id, old, actual)
 	if err != nil {
 		return nil, err

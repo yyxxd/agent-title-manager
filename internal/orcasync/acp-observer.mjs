@@ -3,15 +3,15 @@ import { pathToFileURL } from "node:url";
 import { createInterface } from "node:readline";
 import { setTimeout as delay } from "node:timers/promises";
 
-const [pluginDir, home] = process.argv.slice(1);
+const [pluginDir] = process.argv.slice(1);
 const load = name => import(pathToFileURL(join(pluginDir, name)).href);
 const { transcriptPath } = await load("paths.mjs");
 const { completedTurn, identify, snapshot } = await load("transcript.mjs");
 const { processTurn } = await load("index.mjs");
 const { observeSettlements } = await load("settlements.mjs");
 const { diagnostic } = await load("diagnostics.mjs");
-function match(root, row, since) {
-  const identified = identify({ conversationId: row.native, transcriptPath: transcriptPath(root.dir, row.native) }, root.dir);
+function match(row, since) {
+  const identified = identify({ conversationId: row.native, transcriptPath: transcriptPath(row.root, row.native) }, row.root);
   if (!identified) return;
   const turn = completedTurn(identified);
   if (!turn?.answer.at || turn.answer.at < since || turn.answer.at > row.at || turn.user.at > row.at) return;
@@ -19,14 +19,12 @@ function match(root, row, since) {
   if (state?.revision === turn.revision) return { identified, state };
 }
 
-const accountHome = join(home, "antigravity-chat");
-const root = { dir: join(accountHome, "antigravity-acp"), accountHome };
 const input = createInterface({ input: process.stdin });
 const rpc = parentRPC(input, process.stdout, diagnostic);
 const observer = observeSettlements({
   started: Date.now(), read: since => rpc(null, "settlements.list", { since }),
-  match: (row, since) => match(root, row, since),
-  change: row => row.orca + "/" + row.at,
+  match,
+  change: row => JSON.stringify([row.orca, row.at, row.root]),
   process: (row, identified, state, options) =>
     processTurn({}, identified, state, (method, params, signal) => rpc(row, method, params, signal), options),
 });

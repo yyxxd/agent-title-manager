@@ -35,7 +35,6 @@ func TestLegacyProtectionKeepsHistoricalReasonsUnknown(t *testing.T) {
 	for _, step := range []struct{ revision, origin, reason string }{
 		{"unknown", "unknown", decisionProtected},
 		{"confirmed", "manual", decisionManual},
-		{"later", "unknown", decisionManual},
 	} {
 		p := event(step.revision, "已有标题")
 		p.TitleOrigin = step.origin
@@ -45,11 +44,12 @@ func TestLegacyProtectionKeepsHistoricalReasonsUnknown(t *testing.T) {
 			t.Fatalf("protection: %+v", result)
 		}
 	}
+	call[accepted](t, e, "event.submit", event("later", "现有标题"))
 	if old := revisionRecord(t, e, "old"); old.Reason != "" || old.Status != "kept" {
 		t.Fatalf("historical reason was inferred from the current lock: %+v", old)
 	}
 	page := call[recordList](t, e, "records.list", listRequest{Filter: "attention"})
-	if page.Counts.Total != 4 || page.Counts.Attention != 0 || len(page.Items) != 0 {
+	if page.Counts.Total != 3 || page.Counts.Attention != 0 || len(page.Items) != 0 {
 		t.Fatalf("legacy vs current protection counts: %+v", page.Counts)
 	}
 }

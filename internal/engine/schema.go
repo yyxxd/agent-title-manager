@@ -111,6 +111,32 @@ BEGIN
 END;
 PRAGMA user_version=11;`
 
+const schemaV12 = `
+ALTER TABLE sessions ADD COLUMN protection_epoch INTEGER NOT NULL DEFAULT 0;
+ALTER TABLE sessions ADD COLUMN orca_unlocked_base TEXT;
+ALTER TABLE sessions ADD COLUMN session_kind TEXT NOT NULL DEFAULT '';
+CREATE TRIGGER events_review_reminder AFTER UPDATE OF status,sync_status ON events
+WHEN NEW.reminder_read=1 AND ((NEW.status='needs_review' AND OLD.status<>NEW.status)
+ OR (NEW.sync_status='blocked' AND OLD.sync_status<>NEW.sync_status))
+BEGIN
+	UPDATE events SET reminder_read=0 WHERE id=NEW.id;
+END;
+PRAGMA user_version=12;`
+
+const schemaVersion = 15
+
+const schemaV13 = `
+ALTER TABLE events ADD COLUMN review_only INTEGER NOT NULL DEFAULT 0;
+PRAGMA user_version=13;`
+
+const schemaV14 = `
+ALTER TABLE events ADD COLUMN renamed_at INTEGER;
+PRAGMA user_version=14;`
+
+const schemaV15 = `
+ALTER TABLE attempts ADD COLUMN suggestion INTEGER NOT NULL DEFAULT 0;
+PRAGMA user_version=15;`
+
 func initialize(db *sql.DB) error {
 	for _, pragmas := range []string{"PRAGMA busy_timeout=2500", "PRAGMA foreign_keys=ON", "PRAGMA journal_mode=WAL", "PRAGMA secure_delete=ON"} {
 		if _, err := db.Exec(pragmas); err != nil {
@@ -186,6 +212,26 @@ func initialize(db *sql.DB) error {
 		}
 		fallthrough
 	case 11:
+		if _, err = tx.Exec(schemaV12); err != nil {
+			return err
+		}
+		fallthrough
+	case 12:
+		if _, err = tx.Exec(schemaV13); err != nil {
+			return err
+		}
+		fallthrough
+	case 13:
+		if _, err = tx.Exec(schemaV14); err != nil {
+			return err
+		}
+		fallthrough
+	case 14:
+		if _, err = tx.Exec(schemaV15); err != nil {
+			return err
+		}
+		fallthrough
+	case schemaVersion:
 	default:
 		return fmt.Errorf("无法读取数据库版本 %d", version)
 	}
@@ -196,6 +242,7 @@ func initialize(db *sql.DB) error {
 	}
 	for _, recovery := range []string{
 		"UPDATE attempts SET status='interrupted' WHERE status='running'",
+		"UPDATE events SET status='interrupted',payload=NULL WHERE review_only=1 AND status='queued'",
 		"UPDATE events SET status='interrupted',payload=NULL,updated=CAST(unixepoch('subsec')*1000 AS INTEGER) WHERE status='running'",
 		"UPDATE events SET sync_status='pending' WHERE sync_status='writing'",
 	} {
